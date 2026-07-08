@@ -1,122 +1,89 @@
+<div align="center">
+
+<img src="src-tauri/icons/icon.png" alt="Pyx" width="112" height="112">
+
 # Pyx
 
-**Editor LaTeX con celdas Python tipo Jupyter — el cálculo y el documento en el mismo archivo.**
+**El cálculo y el documento, en un mismo archivo.**
 
-Escribe como en TeXstudio (con todo el motor XeLaTeX detrás) e inserta celdas de cálculo Python en
-cualquier punto del documento. Los resultados se incorporan al PDF: cambias un dato de entrada y **toda la
-memoria se actualiza sola**. Pensado para memorias de cálculo de ingeniería, donde el cálculo y el informe
-son el mismo objeto vivo.
+Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-blue.svg)](LICENSE)
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
-![SolidJS](https://img.shields.io/badge/SolidJS-1.9-2C4F7C)
+![versión](https://img.shields.io/badge/versión-1.0.0-007ACC?style=flat-square)
+![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
+![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square)
+![SolidJS](https://img.shields.io/badge/SolidJS-2C4F7C?style=flat-square)
 
-```
-┌──────────────────────────────────────────────────┐
-│ Pyx  [Archivo][Inicio][Matemáticas][Python][Ver]  │  ← cinta estilo Office
-├───────────────────────────┬──────────────────────┤
-│  Editor LaTeX             │   Vista previa PDF    │
-│  (CodeMirror 6)           │   (PDF.js)            │
-│                           │                       │
-│  %#python                 │                       │
-│    D = 0.50   # diámetro  │                       │
-│    A = 3.1416*(D/2)**2    │                       │
-│  %#end   [▶]              │                       │
-│  El área es \py{A} m²     │                       │
-├───────────────────────────┴──────────────────────┤
-│ ● Kernel listo · Python 3.13 · xelatex     Ln,Col │  ← barra de estado
-└──────────────────────────────────────────────────┘
-```
+<br>
 
-## Características
+<a href="https://github.com/LorGIOO/Pyx/releases/latest"><img src="https://img.shields.io/badge/⬇%20Descargar%20para%20Windows-007ACC?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar para Windows"></a>
 
-- **Simbiosis LaTeX ↔ Python** — celdas `%#python … %#end` (comentarios LaTeX, el archivo sigue siendo un
-  `.tex` válido) y el puente **`\py{expresión}`** que inserta valores calculados en el documento.
-- **Texto que reacciona al cálculo** — `\pyif{condición}{…}{…}`: la redacción se adapta al resultado (p. ej.
-  escribir «CUMPLE» / «NO CUMPLE» automáticamente).
-- **Valores fantasma en vivo** — el resultado de cada `\py{}` aparece en gris junto a él mientras escribes,
-  sin compilar (estilo Mathcad / MATLAB Live).
-- **Kernel Python persistente** — numpy, pandas, sympy, matplotlib, handcalcs, pint… con errores estilo
-  VSCode (traza limpia y coloreada, línea exacta y clic para saltar a ella) y subrayado de sintaxis en vivo.
-- **Visor PDF profesional** — nítido a cualquier zoom, ajuste ancho/alto, búsqueda, enlaces clicables,
-  **SyncTeX** (Ctrl+clic ↔ código) y una **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
-- **Documentos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
-- **Comodidades de IDE** — autocompletado y snippets de Python/LaTeX, corrector ortográfico, plegado de
-  código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables, temas claro/oscuro/azul.
+</div>
 
-## La simbiosis LaTeX ↔ Python
+---
 
-Una celda es cualquier bloque entre `%#python` y `%#end`. Como ambos son comentarios de LaTeX, **el archivo
-sigue siendo un `.tex` 100 % válido** que compila igual en cualquier editor externo. Define variables:
+## ✨ ¿Por qué Pyx?
 
-```python
-%#python
-import math
-r = 5
-area = math.pi * r**2
-%#end
-```
-
-Y tráelas al documento con **`\py{expresión}`**, donde la expresión es cualquier código Python evaluado con
-esas variables:
+En ingeniería el **cálculo** vive en un sitio (Excel, Mathcad…) y el **informe** en otro (Word, LaTeX), y copiar valores a mano es lento y da errores. Pyx los une: el cálculo y la memoria son **el mismo objeto vivo**. Escribes Python donde lo necesitas, insertas el resultado en el texto con `\py{…}`, y al compilar obtienes un PDF con tipografía LaTeX y los números ya calculados. Cambia una carga, recompila, y **toda la memoria se recalcula sola**.
 
 ```latex
-El área es \py{round(area, 2)} cm², con formato \py{f"{area:.2f}"}.
-\pyif{area > 75}{Supera el umbral.}{Dentro de lo previsto.}
+%#python
+import math
+D = 0.50               # diámetro (m)
+A = math.pi * (D/2)**2 # área
+%#end
+
+El área de la sección es \py{round(A, 4)} m².
+\pyif{A > 0.15}{\textcolor{red}{Sección sobredimensionada.}}{Dentro de lo previsto.}
 ```
 
-Al **compilar**, Pyx ejecuta las celdas en orden → evalúa cada `\py{…}` en el kernel → escribe una copia de
-build con los valores ya sustituidos → ejecuta `xelatex` → muestra el PDF. Tu `.tex` original conserva los
-`\py{…}` intactos. Los documentos con celdas se guardan como **`.pltx`** (LaTeX + Python).
+## 🚀 Características
 
-Helper para figuras: `figure("nombre")` guarda la figura matplotlib actual y **devuelve** su ruta; úsala con
-`\includegraphics{\py{ruta}}`.
+- **Simbiosis LaTeX ↔ Python** — celdas `%#python … %#end` (el archivo sigue siendo un `.tex` válido) y el puente **`\py{expresión}`** que mete valores calculados en el documento.
+- **Texto que reacciona al cálculo** — `\pyif{condición}{…}{…}`: el informe se redacta solo según el resultado (p. ej. «CUMPLE / NO CUMPLE»).
+- **Valores en vivo** — el resultado de cada `\py{}` aparece en gris junto a él mientras escribes, sin compilar (estilo Mathcad / MATLAB Live).
+- **Kernel Python completo** — numpy, pandas, sympy, matplotlib, handcalcs, pint… con **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar) y subrayado de sintaxis en vivo.
+- **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
+- **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
+- **Comodidades de IDE** — autocompletado y snippets, corrector ortográfico, plegado de código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables y temas claro/oscuro/azul.
 
-## Requisitos
+## 📦 Instalación (Windows)
 
-- **Node.js 18+** y **Rust** (para compilar la app Tauri).
-- **Python 3** en el PATH (para las celdas). Opcional: `pip install numpy matplotlib pandas sympy`.
-- Una distribución **LaTeX** con `xelatex`/`pdflatex` — [MiKTeX](https://miktex.org/) o
-  [TeX Live](https://tug.org/texlive/).
+1. Descarga **[`Pyx_1.0.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest)** desde la última *release*.
+2. Ejecútalo. Como la app aún **no está firmada**, Windows mostrará SmartScreen: pulsa **«Más información» → «Ejecutar de todas formas»**.
 
-## Instalación
+Para que las celdas y la compilación funcionen, ten instalados aparte:
 
-**Descargar el instalador** (Windows): consulta la sección [Releases](../../releases) — cada versión publica
-un `.msi`/`.exe`. Necesitas Python y LaTeX instalados aparte.
+- **Python 3** en el PATH — opcional: `pip install numpy matplotlib pandas sympy`.
+- Una distribución **LaTeX** con `xelatex` — [MiKTeX](https://miktex.org/) o [TeX Live](https://tug.org/texlive/).
 
-**Compilar desde el código:**
+## ⚙️ Compilar desde el código
 
 ```bash
 npm install
-npm run tauri:dev     # app de escritorio completa (editor + compilación + kernel)
-npm run tauri:build   # genera el instalador
+npm run tauri:dev      # app de escritorio con recarga en caliente
+npm run tauri:build    # genera el instalador
 ```
 
-Solo la interfaz en el navegador (sin compilar ni ejecutar Python):
+Requiere **Node.js 18+**, **Rust**, **Python 3** y **LaTeX**. Solo la interfaz en el navegador: `npm run dev`.
 
-```bash
-npm run dev
-```
-
-## Atajos
+## ⌨️ Atajos
 
 | Atajo | Acción |
 |-------|--------|
 | `Mayús+Enter` | Ejecutar la celda bajo el cursor |
 | `Ctrl+Mayús+B` | Compilar el documento |
-| `Ctrl+S` | Guardar |
-| `Ctrl+N` / `Ctrl+O` | Nuevo / Abrir |
+| `Ctrl+S` · `Ctrl+N` · `Ctrl+O` | Guardar · Nuevo · Abrir |
 | `Ctrl+F` | Buscar (editor o PDF, según el foco) |
 | `Ctrl+T` | Comentar / descomentar |
 | `Ctrl+Alt+Z` | Modo zen |
 
-Todos los atajos son reconfigurables en **Configuración → Atajos**.
+Todos reconfigurables en **Configuración → Atajos**.
 
-## Stack
+## 🛠️ Stack
 
 Tauri 2 · SolidJS · Vite · CodeMirror 6 · PDF.js · kernel Python embebido gestionado desde Rust.
 
-## Licencia
+## 📄 Licencia
 
-[MIT](LICENSE) — libre para usar, modificar y distribuir. ¿Ideas o problemas? Abre un *issue*; las
-contribuciones son bienvenidas (ver [CONTRIBUTING.md](CONTRIBUTING.md)).
+[MIT](LICENSE) — libre para usar, modificar y distribuir. Las contribuciones son bienvenidas (ver [CONTRIBUTING.md](CONTRIBUTING.md)); abre un *issue* con ideas o problemas.

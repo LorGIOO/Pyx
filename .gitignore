@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+dist/
+
+# rust / tauri
+src-tauri/target/
+src-tauri/gen/
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# latex build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.build.tex
+*.pdf
+*.pltx
+*.mtc*
+*.maf
+*.toc[AB]
+_calc_figs/
+.pyx-word/
+
+# keep the example documents even though *.pdf/*.pltx are ignored above
+!examples/**
+
+# scratch / local dev files
+prueba-*.*
+
+# internal AI-assistant instructions (not part of the public project)
+CLAUDE.md
+.github/copilot-instructions.md
+
+# os
+.DS_Store
+Thumbs.db

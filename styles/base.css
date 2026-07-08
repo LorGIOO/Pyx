@@ -1,0 +1,57 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  color: var(--theme-text);
+  background: var(--theme-bg);
+  /* Default cursor everywhere except the editor/preview surfaces. */
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  cursor: default;
+}
+
+/* Squared, Windows-Forms-like controls — no rounded corners anywhere by default. */
+input, select, textarea, button {
+  border-radius: 0;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--theme-border);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-text-secondary);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}

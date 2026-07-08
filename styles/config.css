@@ -1,0 +1,262 @@
+/* Configuración dialog — Windows-style, movable, stays open on outside click. */
+.cfg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  pointer-events: none; /* don't block the app; the modal stays until closed */
+}
+.cfg-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 1060px;
+  max-width: 95vw;
+  height: 760px;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-titlebar-border);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+.cfg-main { display: flex; flex: 1; min-height: 0; }
+.cfg-sidebar {
+  width: 170px;
+  flex-shrink: 0;
+  background: var(--theme-panel-bg);
+  border-right: 1px solid var(--theme-border);
+  padding: 6px 0;
+  overflow-y: auto;
+}
+.cfg-cat {
+  padding: 7px 14px;
+  font-size: 12px;
+  color: var(--theme-text);
+  cursor: default;
+  border-left: 2px solid transparent;
+}
+.cfg-cat:hover { background: var(--theme-hover); }
+.cfg-cat.active {
+  background: var(--theme-hover);
+  border-left-color: var(--theme-accent);
+  color: var(--theme-accent);
+  font-weight: 600;
+}
+.cfg-theme-row { display: flex; gap: 8px; margin: 4px 0 6px; }
+.cfg-theme {
+  height: 30px; padding: 0 12px;
+  border: 1px solid var(--theme-border);
+  color: #fff; font-size: 11px; font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6); cursor: default;
+}
+.cfg-theme.active { outline: 2px solid var(--theme-accent); outline-offset: 1px; }
+.cfg-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  /* Follows the active theme (white in light, dark in dark/blue) instead of a
+     hardcoded white gradient, so the modal frame matches the rest of the UI. */
+  background: var(--theme-titlebar-bg-start);
+  border-bottom: 1px solid var(--theme-titlebar-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--theme-titlebar-text);
+  cursor: default;
+  user-select: none;
+}
+.cfg-close {
+  width: 34px; height: 24px;
+  border: none; background: transparent;
+  color: var(--theme-titlebar-text); font-size: 13px; cursor: default;
+}
+.cfg-close:hover { background: #e81123; color: #fff; }
+
+.cfg-body {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 14px 12px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+}
+.cfg-hint { font-size: 11px; color: var(--theme-text-secondary); margin: 4px 0 10px; }
+.cfg-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--theme-accent);
+  margin: 10px 0 4px;
+  border-bottom: 1px solid var(--theme-border);
+  padding-bottom: 2px;
+}
+.cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 2px;
+  font-size: 12px;
+}
+.cfg-row:hover { background: var(--theme-hover); }
+.cfg-label { flex: 1; color: var(--theme-text); }
+.cfg-row input[type="color"] {
+  width: 34px; height: 22px; padding: 0;
+  border: 1px solid var(--theme-border); background: var(--theme-surface);
+  cursor: default;
+}
+.cfg-chk {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12px; color: var(--theme-text-secondary); cursor: default;
+  width: 36px;
+}
+.cfg-chk input { cursor: default; }
+.cfg-bg { opacity: 0.9; }
+.cfg-clear {
+  width: 20px; height: 20px;
+  border: 1px solid var(--theme-border);
+  background: transparent; color: var(--theme-text-secondary);
+  font-size: 11px; cursor: default;
+}
+.cfg-clear:hover { background: var(--theme-hover); color: var(--theme-text); }
+.cfg-select {
+  height: 24px;
+  min-width: 150px;
+  font-size: 12px;
+  padding: 0 6px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  cursor: default;
+}
+.cfg-select:focus { outline: none; border-color: var(--theme-accent); }
+
+.cfg-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--theme-border);
+  background: var(--theme-panel-bg);
+}
+.cfg-footer button {
+  height: 26px; padding: 0 14px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface); color: var(--theme-text);
+  font-size: 12px; cursor: default;
+}
+.cfg-footer button:hover { background: var(--theme-hover); }
+.cfg-footer button.primary { background: var(--theme-accent); color: #fff; border-color: var(--theme-accent); }
+.cfg-footer button.primary:hover { filter: brightness(1.08); }
+
+/* ---- table / figure wizards (reuse the dialog chrome) ---- */
+.wz-modal { width: 460px; height: auto; max-height: 80vh; }
+.wz-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; color: var(--theme-text); overflow: auto; }
+.wz-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.wz-label { width: 110px; flex-shrink: 0; color: var(--theme-text); }
+.wz-row input[type="text"], .wz-row input[type="number"], .wz-row select {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-ribbon-input-bg);
+  color: var(--theme-text);
+  font-size: 12px;
+  outline: none;
+}
+.wz-row input[type="number"] { flex: 0 0 70px; }
+.wz-row input[type="range"] { flex: 1; }
+.wz-row input:focus, .wz-row select:focus { border-color: var(--theme-accent); }
+.wz-val { width: 110px; font-size: 11px; color: var(--theme-text-secondary); }
+.wz-hint { font-size: 11px; color: var(--theme-text-secondary); }
+.wz-browse {
+  height: 24px; padding: 0 10px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface); color: var(--theme-text);
+  font-size: 12px; cursor: default;
+}
+.wz-browse:hover { background: var(--theme-hover); border-color: var(--theme-accent); }
+
+/* ---- keyboard shortcuts tab (TeXstudio-like table) ---- */
+.cfg-keys-head, .cfg-keys-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 150px 170px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 8px;
+}
+.cfg-keys-head {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--theme-text-secondary);
+  border-bottom: 1px solid var(--theme-border);
+  position: sticky;
+  top: 0;
+  background: var(--theme-surface);
+  z-index: 1;
+}
+.cfg-keys-row:hover { background: var(--theme-hover); }
+.cfg-keys-row .cfg-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.cfg-kbd-default {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  color: var(--theme-text-secondary);
+}
+.cfg-kbd {
+  padding: 3px 10px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-panel-bg);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cfg-kbd.capturing {
+  border-color: var(--theme-accent, #3794ff);
+  color: var(--theme-accent, #3794ff);
+  font-style: italic;
+}
+.cfg-kbd.conflict { border-color: #d16969; color: #d16969; }
+.cfg-btn {
+  padding: 3px 12px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-panel-bg);
+  color: var(--theme-text);
+  font-size: 12px;
+  cursor: default;
+  white-space: nowrap;
+}
+.cfg-btn:hover { background: var(--theme-hover); border-color: var(--theme-accent, #3794ff); }
+.cfg-btn.icon { width: 26px; padding: 3px 0; text-align: center; }
+
+/* Searchable font picker (type to filter; each suggestion in its own face). */
+.cfg-fontpick { position: relative; flex: 0 0 240px; }
+.cfg-fontpick .cfg-select { width: 100%; }
+.cfg-font-list {
+  position: absolute;
+  top: 100%; left: 0; right: 0;
+  z-index: 20;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.cfg-font-item {
+  padding: 4px 10px;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  color: var(--theme-text);
+}
+.cfg-font-item:hover { background: var(--theme-hover); }

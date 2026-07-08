@@ -1,0 +1,78 @@
+/* Document tab strip (one tab per open .tex file). */
+.document-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 30px;
+  background: var(--theme-tab-bg);
+  border-bottom: 1px solid var(--theme-tab-border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.document-tabs::-webkit-scrollbar { height: 0; }
+
+.doc-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 14px;
+  min-width: 120px;
+  max-width: 220px;
+  height: 100%;
+  background: var(--theme-tab-bg);
+  border-right: 1px solid var(--theme-tab-border);
+  color: var(--theme-tab-text);
+  font-size: 12px;
+  cursor: default;
+  position: relative;
+  white-space: nowrap;
+}
+.doc-tab:hover { background: var(--theme-tab-hover); }
+.doc-tab.active {
+  background: var(--theme-tab-active-bg);
+  color: var(--theme-tab-active-text);
+}
+.doc-tab.active::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--theme-tab-active-accent);
+}
+.doc-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.doc-tab.modified .doc-tab-name::after {
+  content: " •";
+  color: var(--theme-tab-modified);
+}
+.doc-tab-close {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--theme-tab-close-color);
+  font-size: 14px;
+  line-height: 1;
+  cursor: default;
+  flex-shrink: 0;
+}
+.doc-tab-close:hover { background: #e81123; color: #fff; }
+
+.doc-tab-add {
+  width: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--theme-tab-add-color);
+  font-size: 18px;
+  cursor: default;
+}
+.doc-tab-add:hover { background: var(--theme-tab-add-hover); }

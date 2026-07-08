@@ -1,0 +1,299 @@
+/* VSCode/Jupyter notebook cells. The %#python / %#end markers are hidden
+   (replaced by these blocks); the cell reads as one rounded box:
+     toolbar (run/actions/Python/collapse) → code → output. */
+
+/* Marker lines (%#python / %#end) host the toolbar/output widgets inline;
+   collapse their empty-text height so the widget alone sets the row height. */
+.editor-host .cm-cell-shell {
+  font-size: 0;
+  line-height: 0;
+  padding: 0;
+}
+
+/* ---- toolbar (top of the box; replaces the %#python line) ---- */
+.cell-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  /* Small gap from the line-number gutter on the left; flush to the right so the
+     selection layer (which fills to the content's right edge) stays contained. */
+  margin: 10px 0 0 10px;
+  padding: 0 6px 0 4px;
+  background: var(--theme-cell-toolbar-bg);
+  border: 1px solid var(--theme-cell-border);
+  border-left: 3px solid var(--theme-cell-border);
+  border-bottom: none;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  font-size: 11px;
+  user-select: none;
+}
+.cell-bar.active { border-left-color: var(--theme-cell-accent); }
+.cell-bar.collapsed {
+  border-bottom: 1px solid var(--theme-cell-border);
+  border-radius: 6px;
+}
+.cell-bar-left, .cell-bar-right { display: flex; align-items: center; gap: 2px; }
+
+.cell-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--theme-text-secondary);
+  cursor: default;
+}
+.cell-ico svg { width: 14px; height: 14px; fill: currentColor; }
+.cell-ico:hover { background: var(--theme-hover); color: var(--theme-text); }
+.cell-ico.run { color: #3fb950; }
+.cell-ico.run:hover { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+.cell-ico.danger:hover { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+.cell-ico.collapse { color: var(--theme-text-secondary); }
+
+.cell-count {
+  font-family: "Cascadia Code", Consolas, monospace;
+  color: var(--theme-cell-header);
+  min-width: 26px;
+  text-align: center;
+}
+.cell-status { font-size: 11px; margin-left: 4px; color: var(--theme-text-secondary); }
+.cell-status.ok { color: #3fb950; }
+.cell-status.err { color: var(--theme-cell-error); }
+.cell-status.running { color: var(--theme-cell-accent); }
+.cell-preview {
+  margin-left: 8px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--theme-text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 60ch;
+}
+.cell-lang {
+  font-size: 10px;
+  color: var(--theme-text-secondary);
+  padding: 0 6px;
+  opacity: 0.8;
+}
+
+/* ---- code band (the cell's editable lines) ---- */
+.editor-host .cm-cell-code {
+  background: var(--theme-cell-bg);
+  margin-left: 10px;
+  border-left: 3px solid var(--theme-cell-border);
+  border-right: 1px solid var(--theme-cell-border);
+}
+.editor-host .cm-cell-code.active { border-left-color: var(--theme-cell-accent); }
+
+/* ---- output (bottom of the box; replaces the %#end line) ---- */
+.cell-out {
+  display: flex;
+  margin: 0 0 10px 10px;      /* left gap from gutter, flush right */
+  background: var(--theme-cell-output-bg);
+  border: 1px solid var(--theme-cell-border);
+  border-left: 3px solid var(--theme-cell-border);
+  border-top: none;
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+.cell-out.active { border-left-color: var(--theme-cell-accent); }
+/* keep the empty cap aligned with the box */
+.cell-out.empty { margin: 0 0 10px 10px; }
+/* Empty output still caps the box (thin rounded bottom). */
+.cell-out.empty {
+  display: block;
+  height: 4px;
+  background: var(--theme-cell-bg);
+}
+.cell-out-gutter {
+  flex-shrink: 0;
+  width: 52px;
+  padding: 5px 6px 5px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  text-align: right;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--theme-cell-header);
+}
+.cell-out-gutter .out-count { line-height: 1.3; }
+/* Execution time, bottom-left of the cell. */
+.cell-time {
+  margin-top: auto;
+  font-size: 10px;
+  color: var(--theme-text-secondary);
+  white-space: nowrap;
+}
+/* Output minimized to a slim strip (independent of the code collapse). */
+.cell-out.out-collapsed .cell-out-body.slim {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--theme-text-secondary);
+}
+.cell-out-body {
+  flex: 1; min-width: 0;
+  padding: 7px 12px 9px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px; line-height: 1.5;
+  color: var(--theme-cell-output-text);
+  white-space: pre-wrap; word-break: break-word;
+  /* Grow to fit ALL output — no inner scrollbar. Long outputs are minimized
+     with the output collapse button, not scrolled. */
+  overflow: visible;
+}
+.cell-out-body .out-err { color: var(--theme-cell-error); }
+/* Clickable VSCode-style error header: type + exact document line. */
+.cell-out-body .out-errline {
+  color: var(--theme-cell-error);
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+.cell-out-body .out-errline:hover { text-decoration: underline; }
+/* Colored traceback (Jupyter/VSCode-style): every part classified by color —
+   location cyan, line = clickable link, function yellow, code plain, caret
+   green, error type bold red. Colors ride the theme's syntax variables. */
+.cell-out-body .out-tb { line-height: 1.45; margin: 2px 0; }
+.cell-out-body .tb-head { color: var(--theme-text-secondary); }
+.cell-out-body .tb-loc { color: var(--theme-cell-accent); }
+.cell-out-body .tb-line { color: var(--theme-accent); }
+.cell-out-body .tb-line.clickable { cursor: pointer; text-decoration: underline; }
+.cell-out-body .tb-func { color: var(--py-func, #dcdcaa); }
+.cell-out-body .tb-code { color: var(--theme-cell-output-text); white-space: pre; }
+.cell-out-body .tb-caret { color: var(--py-comment, #6a9955); font-weight: 700; white-space: pre; }
+.cell-out-body .tb-type { color: var(--theme-cell-error); font-weight: 700; }
+.cell-out-body .tb-msg { color: var(--theme-cell-error); }
+.cell-out-body .out-result { color: var(--theme-cell-accent); display: block; margin-top: 2px; }
+
+/* handcalcs render cells: the math renders inline (KaTeX) and is also typeset
+   into the PDF document in place of the cell. */
+
+/* Interactive output (plotly/3D, handcalcs KaTeX) rendered inline: the iframe
+   runs its scripts and is auto-sized to its content, so no inner scrollbar. */
+.out-iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  min-height: 32px;
+}
+
+/* Figures and rich tables host a little "expand" button (top-right on hover). */
+.out-fig, .out-rich-holder { position: relative; margin-top: 6px; }
+.out-fig img { display: block; max-width: 100%; background: #fff; border: 1px solid var(--theme-cell-border); }
+/* Tables: Excel-like grid that follows the THEME (no white flash in dark UI):
+   sticky header band, alternating row stripes, tabular numerals. The table
+   shows in full — only very wide tables scroll horizontally. */
+.out-rich { overflow-x: auto; overflow-y: visible; max-width: 100%; }
+.out-rich table {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  background: var(--theme-cell-output-bg);
+  color: var(--theme-cell-output-text);
+}
+.out-rich th, .out-rich td {
+  border: 1px solid var(--theme-cell-border);
+  padding: 3px 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+.out-rich thead th, .out-rich th {
+  background: var(--theme-cell-toolbar-bg);
+  color: var(--theme-text);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.out-rich tbody tr:nth-child(even) td { background: var(--theme-cell-bg); }
+.out-rich tbody tr:hover td { background: var(--theme-hover); }
+.cell-expand {
+  position: absolute;
+  top: 4px; right: 4px;
+  z-index: 2;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--theme-cell-border);
+  background: var(--theme-cell-toolbar-bg);
+  color: var(--theme-text-secondary);
+  cursor: default;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.out-fig:hover .cell-expand, .out-rich-holder:hover .cell-expand { opacity: 1; }
+.cell-expand svg { width: 14px; height: 14px; }
+.cell-expand:hover { color: var(--theme-text); background: var(--theme-hover); border-color: var(--theme-cell-accent); }
+
+/* ---- detached output viewer (zoom/pan figures, inspect tables) ---- */
+.cell-viewer { position: fixed; inset: 0; z-index: 6000; }
+.cell-viewer-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); }
+.cell-viewer-panel {
+  position: absolute;
+  top: 4%; left: 4%; right: 4%; bottom: 4%;
+  display: flex; flex-direction: column;
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.cell-viewer-bar {
+  display: flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 8px;
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-border);
+  font-size: 12px; color: var(--theme-text);
+}
+.cell-viewer-title { font-weight: 600; }
+.cell-viewer-spacer { flex: 1; }
+.cell-viewer-zoom { min-width: 44px; text-align: right; color: var(--theme-text-secondary); font-variant-numeric: tabular-nums; }
+.cell-viewer-coord {
+  min-width: 130px; text-align: center;
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 11px;
+  color: var(--theme-text-secondary);
+}
+.cell-viewer-btn {
+  min-width: 26px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface); color: var(--theme-text);
+  font-size: 12px; cursor: default;
+}
+.cell-viewer-btn:hover { background: var(--theme-hover); border-color: var(--theme-accent); }
+.cell-viewer-viewport {
+  flex: 1; min-height: 0; position: relative; overflow: hidden;
+  background: var(--theme-content-bg);
+}
+.cell-viewer-viewport.grabbing { cursor: grabbing; }
+.cell-viewer-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.cell-viewer-stage img { display: block; background: #fff; user-select: none; -webkit-user-drag: none; }
+.cell-viewer-viewport.html { overflow: auto; padding: 16px; }
+.cell-viewer-viewport.iframe { background: #fff; }
+.cell-viewer-frame { width: 100%; height: 100%; border: none; display: block; background: #fff; }
+.cell-viewer-html { background: #fff; color: #111; padding: 12px; display: inline-block; min-width: 100%; }
+.cell-viewer-html table { border-collapse: collapse; font-size: 13px; }
+.cell-viewer-html th, .cell-viewer-html td { border: 1px solid #d0d0d0; padding: 4px 12px; text-align: right; }
+.cell-viewer-html th { background: #f0f0f0; }
+
+/* ---- Python syntax colors — exact VSCode Dark+/Light+ via --py-* vars
+        (loaded after editor.css to win over the LaTeX token colors) ---- */
+.editor-host .cm-py-control { color: var(--py-control); }
+.editor-host .cm-py-storage { color: var(--py-storage); }
+.editor-host .cm-py-keyword { color: var(--py-keyword); }
+.editor-host .cm-py-builtin { color: var(--py-builtin); }
+.editor-host .cm-py-type { color: var(--py-type); }
+.editor-host .cm-py-func { color: var(--py-func); }
+.editor-host .cm-py-string { color: var(--py-string); }
+.editor-host .cm-py-number { color: var(--py-number); }
+.editor-host .cm-py-comment { color: var(--py-comment); font-style: italic; }
+.editor-host .cm-py-operator { color: var(--py-operator); }
+.editor-host .cm-py-decorator { color: var(--py-decorator); }
+.editor-host .cm-py-variable { color: var(--py-variable); }
+.editor-host .cm-py-self { color: var(--py-self); }
+.editor-host .cm-py-property { color: var(--py-property); }
+.editor-host .cm-py-atom { color: var(--py-atom); }

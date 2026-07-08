@@ -1,0 +1,656 @@
+/* Main work area: editor pane | divider | PDF preview pane. */
+.content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--theme-content-bg);
+  overflow: hidden;
+}
+
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--theme-editor-bg);
+  position: relative;
+}
+
+/* ---------- editor splits (VSCode-style vertical panes) ---------- */
+.editor-splits {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.editor-split {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--theme-panel-border);
+  overflow: hidden;
+}
+.editor-split:first-child { border-left: none; }
+.editor-split .editor-host { flex: 1; min-height: 0; }
+.split-close {
+  position: absolute;
+  top: 3px; right: 6px;
+  z-index: 15;
+  width: 20px; height: 20px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface);
+  color: var(--theme-text-secondary);
+  font-size: 13px; line-height: 1;
+  cursor: default;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.editor-split:hover .split-close { opacity: 1; }
+.split-close:hover { color: #fff; background: #e81123; border-color: #e81123; }
+/* Tab drag-and-drop hints: middle = open here, right strip = split. */
+.drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  pointer-events: none;
+  background: rgba(0, 122, 204, 0.14);
+  border: 2px solid var(--theme-accent);
+}
+.drop-hint.right { left: 75%; }
+
+/* ---------- viewer tabs (image / interactive HTML as documents) ---------- */
+.viewer-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--theme-content-bg);
+}
+.viewer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-panel-border);
+  font-size: 12px;
+  color: var(--theme-text);
+}
+.viewer-zoom { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.viewer-btn {
+  height: 22px; padding: 0 10px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface); color: var(--theme-text);
+  font-size: 11px; cursor: default;
+}
+.viewer-btn:hover { background: var(--theme-hover); border-color: var(--theme-accent); }
+.viewer-coord {
+  margin-left: auto;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--theme-text-secondary);
+}
+.viewer-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.viewer-viewport.grabbing { cursor: grabbing; }
+.viewer-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.viewer-stage img { display: block; background: #fff; user-select: none; -webkit-user-drag: none; }
+.viewer-frame { flex: 1; width: 100%; border: none; background: var(--theme-surface); }
+
+.preview-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative; /* anchors the floating PDF search bar */
+  background: var(--theme-preview-bg);
+  border-left: 1px solid var(--theme-panel-border);
+}
+
+/* ---------- TeXstudio-style side panel (structure / TOC / symbols / files) ---------- */
+.side-wrap { display: flex; flex-shrink: 0; min-height: 0; }
+.side-strip {
+  display: flex;
+  flex-direction: column;
+  width: 38px;
+  flex-shrink: 0;
+  background: var(--theme-panel-bg);
+  border-right: 1px solid var(--theme-panel-border);
+  padding-top: 4px;
+}
+.side-ico {
+  width: 38px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--theme-text-secondary);
+  cursor: default;
+}
+.side-ico svg { width: 20px; height: 20px; }
+.side-ico:hover { background: var(--theme-hover); color: var(--theme-text); }
+.side-ico.active {
+  background: var(--theme-hover);
+  border-left-color: var(--theme-accent);
+  color: var(--theme-accent);
+}
+.side-body {
+  width: 264px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--theme-surface);
+  border-right: 1px solid var(--theme-panel-border);
+}
+.side-title {
+  height: 28px;
+  display: flex; align-items: center;
+  padding: 0 10px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--theme-text-secondary);
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-panel-border);
+}
+.side-content { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 8px; font-size: 12px; color: var(--theme-text); }
+.side-empty { padding: 10px 12px; color: var(--theme-text-secondary); font-size: 11.5px; line-height: 1.5; }
+
+/* TOC */
+.toc-row { display: flex; gap: 6px; align-items: baseline; padding: 3px 10px 3px 6px; cursor: default; white-space: nowrap; overflow: hidden; }
+.toc-row:hover { background: var(--theme-hover); }
+.toc-kind { flex-shrink: 0; min-width: 22px; font-size: 10px; font-weight: 700; color: var(--theme-accent); }
+.toc-title { overflow: hidden; text-overflow: ellipsis; }
+
+/* Estructura */
+.struct-root { padding: 6px 10px; font-weight: 600; border-bottom: 1px solid var(--theme-border); }
+.struct-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 10px 4px 20px; cursor: default; }
+.struct-row:hover { background: var(--theme-hover); color: var(--theme-accent); }
+.struct-cmd { font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; color: var(--theme-text-secondary); }
+.struct-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Símbolos */
+.sym-cat { margin-bottom: 6px; }
+.sym-cat-name {
+  position: sticky; top: 0;
+  padding: 4px 10px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--theme-text-secondary);
+  background: var(--theme-surface);
+}
+.sym-grid { display: flex; flex-wrap: wrap; gap: 3px; padding: 0 8px; }
+.sym-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--theme-text);
+  font-size: 21px;
+  line-height: 1;
+  cursor: default;
+}
+.sym-btn:hover { background: var(--theme-hover); border-color: var(--theme-cell-border); color: var(--theme-accent); }
+
+/* Archivos — VSCode-style explorer tree */
+.file-tree { outline: none; min-height: 60px; }
+.ft-actions {
+  display: flex; gap: 4px; justify-content: flex-end;
+  padding: 2px 8px 4px;
+  border-bottom: 1px solid var(--theme-border);
+  margin-bottom: 2px;
+}
+.ft-actions button {
+  height: 20px; padding: 0 6px;
+  border: 1px solid transparent; background: transparent;
+  color: var(--theme-text-secondary); font-size: 11px; cursor: default;
+}
+.ft-actions button:hover { background: var(--theme-hover); border-color: var(--theme-border); color: var(--theme-text); }
+.ft-row {
+  display: flex; align-items: center; gap: 4px;
+  height: 22px; padding-right: 8px;
+  cursor: default; white-space: nowrap; overflow: hidden;
+  border: 1px solid transparent;
+}
+.ft-row:hover { background: var(--theme-hover); }
+.ft-row.selected { background: var(--theme-ribbon-btn-active-bg); border-color: var(--theme-accent); }
+.ft-arrow {
+  width: 12px; flex-shrink: 0; text-align: center;
+  font-size: 9px; color: var(--theme-text-secondary);
+  transition: transform 0.1s;
+}
+.ft-arrow.open { transform: rotate(90deg); }
+.ft-icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; }
+.ft-icon svg { width: 16px; height: 16px; }
+.ft-name { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.ft-input {
+  flex: 1; min-width: 40px;
+  height: 18px; padding: 0 4px;
+  border: 1px solid var(--theme-accent);
+  background: var(--theme-surface); color: var(--theme-text);
+  font-size: 12px; outline: none;
+}
+
+/* ---------- professional context menu (app-wide) ---------- */
+.ctx-overlay { position: fixed; inset: 0; z-index: 7000; }
+.ctx-menu {
+  position: fixed;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.ctx-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  width: 100%; height: 26px; padding: 0 10px;
+  border: none; background: transparent;
+  color: var(--theme-text); font-size: 12px; text-align: left;
+  cursor: default;
+}
+.ctx-item:hover:not(:disabled) { background: var(--theme-accent); color: #fff; }
+.ctx-item:hover:not(:disabled) .ctx-shortcut { color: rgba(255, 255, 255, 0.75); }
+.ctx-item:disabled { opacity: 0.45; }
+.ctx-item.danger:hover:not(:disabled) { background: #c42b1c; }
+.ctx-shortcut { font-size: 11px; color: var(--theme-text-secondary); }
+.ctx-sep { height: 1px; margin: 4px 8px; background: var(--theme-border); }
+
+/* Split divider between editor and preview. */
+.pane-divider {
+  width: 6px;
+  flex-shrink: 0;
+  background: var(--theme-panel-border);
+  cursor: col-resize;
+  position: relative;
+}
+.pane-divider:hover { background: var(--theme-accent); }
+
+/* Empty state when no document is open. */
+.placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--theme-text-secondary);
+  background: var(--theme-content-bg);
+}
+.placeholder svg { width: 56px; height: 56px; opacity: 0.5; }
+.placeholder h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--theme-text); }
+.placeholder p { margin: 0; font-size: 13px; }
+.placeholder .hint-keys {
+  margin-top: 8px;
+  font-size: 12px;
+  display: flex;
+  gap: 16px;
+}
+.placeholder kbd {
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-border);
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+/* PDF viewer toolbar (TeXstudio-like). */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 32px;
+  padding: 0 6px;
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-panel-border);
+  flex-shrink: 0;
+  color: var(--theme-text-secondary);
+}
+.pv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 24px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--theme-text);
+  cursor: default;
+}
+.pv-btn svg { width: 18px; height: 18px; }
+.pv-btn:hover { background: var(--theme-hover); border-color: var(--theme-ribbon-btn-hover-border); }
+.pv-btn.active { background: var(--theme-ribbon-btn-active-bg); border-color: var(--theme-ribbon-btn-active-border); color: var(--theme-accent); }
+.pv-btn:disabled { opacity: 0.4; }
+.pv-sep { width: 1px; height: 18px; background: var(--theme-border); margin: 0 4px; }
+.pv-zoom {
+  min-width: 46px; height: 24px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  font-size: 11px; cursor: default;
+}
+.pv-zoom:hover { background: var(--theme-hover); }
+.pv-page { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--theme-text-secondary); }
+.pv-page input {
+  width: 36px; height: 22px; text-align: center;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-surface); color: var(--theme-text);
+  font-size: 11px;
+}
+.pv-spacer { flex: 1; }
+.pv-file { font-size: 11px; color: var(--theme-text-secondary); margin-right: 6px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Scroll area + pages. */
+.preview-scroll {
+  flex: 1;
+  overflow: auto;
+  /* The zoom anchor math reads each page's offsetTop/offsetLeft, which are
+     measured against the nearest POSITIONED ancestor — this must be the scroll
+     container itself or zoom-to-cursor drifts to the top-left. */
+  position: relative;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  /* "safe" keeps a page wider than the viewport scrollable to its left edge
+     instead of clipping it (so you can pan to see the left when zoomed in). */
+  align-items: safe center;
+  gap: 14px;
+}
+.preview-scroll { touch-action: pan-x pan-y; } /* pinch reaches the app; touch panning stays native */
+.preview-scroll.tool-pan { cursor: grab; }
+.preview-scroll.tool-pan .pdf-textlayer { pointer-events: none; }
+.preview-scroll.tool-magnify { cursor: zoom-in; }
+.preview-scroll.tool-magnify .pdf-textlayer { pointer-events: none; }
+.preview-scroll.panning { cursor: grabbing; }
+.preview-scroll.panning .pdf-textlayer { pointer-events: none; }
+
+/* Clickable PDF link annotations (TOC, \ref, \url) — TeXstudio-style. The
+   layer sits ABOVE the text layer so links win the click (the text layer's
+   spans would otherwise intercept it). */
+.pdf-linklayer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+.pdf-link { position: absolute; pointer-events: auto; cursor: pointer; }
+.pdf-link:hover { background: rgba(55, 148, 255, 0.14); outline: 1px solid rgba(55, 148, 255, 0.45); }
+.preview-scroll.tool-pan .pdf-linklayer,
+.preview-scroll.tool-magnify .pdf-linklayer,
+.preview-scroll.panning .pdf-linklayer { pointer-events: none; }
+
+.pdf-page {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+}
+.pdf-page canvas { display: block; position: relative; z-index: 1; }
+/* Canvas + text layer wrapper: GPU-stretched during zoom, crisp after settle. */
+.pdf-page-content { position: relative; will-change: transform; }
+
+/* Contrast / night-mode: soft GRAY folio with light text (not pure black, so
+   it's easy on the eyes). A partial invert maps white paper to a dark gray
+   (~#292929) and black text to a light gray (~#d6d6d6) instead of harsh B/W. */
+.preview-scroll.pdf-invert { background: #3a3a3a; }
+.preview-scroll.pdf-invert .pdf-page { background: #2b2b2b; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.5); }
+.preview-scroll.pdf-invert .pdf-page canvas { filter: invert(0.84) hue-rotate(180deg); }
+
+.pdf-textlayer {
+  position: absolute;
+  top: 0; left: 0;
+  overflow: hidden;
+  line-height: 1;
+  z-index: 2;               /* above the canvas so the selection is visible */
+  /* Only the glyph spans are interactive: the layer itself ignores the mouse,
+     so selections don't jump across the empty gaps between text runs. */
+  pointer-events: none;
+  /* The app body sets user-select:none; re-enable it here so PDF text selects. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+.pdf-textlayer span {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  line-height: 1;
+  transform-origin: 0 0;
+  pointer-events: all;
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* Soft, stable selection highlight over the (transparent) text — translucent
+   enough that the page text stays readable under it. */
+.pdf-textlayer span::selection { background: rgba(0, 120, 215, 0.35); }
+.pdf-textlayer span::-moz-selection { background: rgba(0, 120, 215, 0.35); }
+
+/* PDF search bar (focus-aware Ctrl+F) + match highlights. */
+.pdf-search {
+  position: absolute;
+  top: 36px; right: 18px;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  background: var(--theme-panel-bg);
+  border: 1px solid var(--theme-border);
+  border-left: 2px solid var(--theme-accent);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
+}
+.pdf-search input {
+  width: 170px; height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-ribbon-input-bg);
+  color: var(--theme-text);
+  font-size: 12px;
+  outline: none;
+}
+.pdf-search input:focus { border-color: var(--theme-accent); }
+.pdf-search-count { min-width: 86px; font-size: 11px; color: var(--theme-text-secondary); }
+.pdf-search button {
+  min-width: 24px; height: 24px;
+  border: none; background: transparent;
+  color: var(--theme-text-secondary);
+  font-size: 12px; cursor: default;
+}
+.pdf-search button:hover { background: var(--theme-hover); color: var(--theme-text); }
+.pdf-textlayer span.pdf-find { background: rgba(255, 200, 0, 0.35); }
+.pdf-textlayer span.pdf-find-current { background: rgba(255, 145, 0, 0.55); outline: 1px solid rgba(255, 120, 0, 0.9); }
+
+/* ---------- annotation layer + toolbar (drawing/markup tools) ---------- */
+/* The overlay sits ABOVE the canvas/text/link layers. Inactive by default so
+   text selection and links still work; only when a tool is active does it
+   capture the pointer to draw. Coordinates are in point space → scales w/ zoom. */
+.pdf-annotlayer {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 4;
+  pointer-events: none;
+  overflow: visible;
+}
+.preview-scroll.annot-active .pdf-annotlayer { pointer-events: auto; cursor: crosshair; }
+.preview-scroll.annot-active .pdf-textlayer,
+.preview-scroll.annot-active .pdf-linklayer { pointer-events: none; }
+
+.pdf-annotbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px 6px;
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-panel-border);
+  flex-wrap: wrap;
+}
+.annot-swatch {
+  width: 16px; height: 16px;
+  border: 1px solid rgba(127, 127, 127, 0.5);
+  cursor: pointer; padding: 0;
+}
+.annot-swatch.active { outline: 2px solid var(--theme-accent); outline-offset: 1px; }
+.annot-color {
+  width: 26px; height: 22px;
+  padding: 0; border: 1px solid var(--theme-border);
+  background: var(--theme-surface); cursor: pointer;
+}
+.annot-width {
+  height: 24px; font-size: 12px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-ribbon-input-bg); color: var(--theme-text);
+}
+
+/* Circular magnifier loupe (hold to show). */
+.pdf-loupe {
+  position: fixed;
+  z-index: 5000;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 2px solid var(--theme-accent);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+  background: #fff;
+}
+
+.preview-empty {
+  margin: auto;
+  color: var(--theme-text-secondary);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+/* Compile log overlay (toggled from the Build tab). */
+.log-panel {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 40%;
+  background: var(--theme-surface);
+  border-top: 1px solid var(--theme-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+}
+.log-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--theme-text);
+}
+.log-panel-header button {
+  border: none; background: transparent; color: var(--theme-text-secondary);
+  cursor: default; font-size: 14px;
+}
+.log-panel-header button:hover { color: var(--theme-text); }
+.log-panel pre {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--theme-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Problems view of the log panel (clickable errors/warnings → jump to line). */
+.log-tabs { display: flex; gap: 2px; }
+.log-tabs button {
+  font-size: 11px; font-weight: 600; padding: 1px 8px;
+  border: 1px solid transparent !important; cursor: default;
+  color: var(--theme-text-secondary) !important;
+}
+.log-tabs button.active { color: var(--theme-text) !important; border-bottom: 2px solid var(--theme-accent) !important; }
+.log-tabs button:hover { color: var(--theme-text) !important; }
+.log-badge {
+  margin-left: 5px; font-size: 10px; padding: 0 5px; border-radius: 8px;
+  background: var(--theme-accent); color: #fff;
+}
+.log-status { margin-left: auto; margin-right: 8px; font-weight: 400; color: var(--theme-text-secondary); }
+.log-problems { flex: 1; overflow: auto; }
+.log-empty { padding: 18px; text-align: center; color: var(--theme-text-secondary); font-size: 12px; }
+.log-item {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 3px 10px; font-size: 12px;
+  border-bottom: 1px solid var(--theme-border);
+}
+.log-item.clickable { cursor: default; }
+.log-item.clickable:hover { background: var(--theme-hover); }
+.log-sev { flex: 0 0 auto; width: 14px; text-align: center; font-weight: 700; }
+.log-item.error .log-sev { color: #e0654a; }
+.log-item.warning .log-sev { color: #d9a528; }
+.log-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); }
+.log-line {
+  flex: 0 0 auto; font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px; color: var(--theme-accent);
+}
+
+/* In-app terminal (pip install, etc.) — bottom panel in the editor pane. */
+.terminal-panel {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 45%;
+  background: var(--theme-surface);
+  border-top: 1px solid var(--theme-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 21;
+}
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--theme-panel-bg);
+  border-bottom: 1px solid var(--theme-border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--theme-text);
+}
+.terminal-header-actions { display: flex; align-items: center; gap: 8px; }
+.terminal-header button {
+  border: none; background: transparent; color: var(--theme-text-secondary);
+  cursor: default; font-size: 12px;
+}
+.terminal-header button:hover { color: var(--theme-text); }
+.terminal-body {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--theme-text);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.terminal-body .term-line { white-space: pre-wrap; word-break: break-word; }
+.terminal-body .term-line.cmd { color: var(--theme-accent); font-weight: 600; }
+.terminal-body .term-line.sys { color: var(--theme-text-secondary); font-style: italic; }
+.terminal-body .term-hint { color: var(--theme-text-secondary); line-height: 1.6; }
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--theme-panel-bg);
+  border-top: 1px solid var(--theme-border);
+}
+.terminal-prompt {
+  color: var(--theme-accent);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-weight: 600;
+}
+.terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--theme-text);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+.terminal-input:disabled { opacity: 0.6; }

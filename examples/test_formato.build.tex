@@ -1,0 +1,65 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[margin=2.3cm]{geometry}
+
+\title{Formato total Python $\to$ \LaTeX{} con \texttt{tex()}}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+La función \verb|tex(obj, prec, env)| convierte cualquier objeto de Python en
+\LaTeX{} listo para el documento; \verb|texesc(s)| escapa texto plano de forma
+segura. Así el formato lo decides tú desde el propio documento.
+
+%#python
+%import numpy as np
+%import pandas as pd
+%import sympy as sp
+%
+%A = np.array([[2.0, 1.0], [3.0, 4.0]])
+%autovalores = np.linalg.eigvals(A)
+%
+%x = sp.symbols("x")
+%integral = sp.integrate(sp.sin(x)**2, x)
+%
+%tabla = pd.DataFrame({
+%    "Pieza": ["Viga", "Pilar", "Zapata"],
+%    "L (m)": [6.0, 3.2, 1.5],
+%    "Coste": [1250.5, 890.25, 410.0],
+%})
+%
+%v = ureg.Quantity(25.456, "m/s")
+%nota = "Coste del 50% & margen #1"
+%#end
+
+\section{Matrices (numpy)}
+\[ A = \begin{bmatrix} 2 & 1 \\ 3 & 4 \end{bmatrix} , \qquad
+   \lambda = \begin{pmatrix} 1 & 5 \end{pmatrix} \]
+
+\section{Cálculo simbólico (sympy)}
+\[ \int \sin^2 x \, dx = \frac{x}{2} - \frac{\sin{\left(x \right)} \cos{\left(x \right)}}{2} + C \]
+
+\section{Tabla (pandas)}
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Pieza & L (m) & Coste \\
+\midrule
+Viga & 6 & 1250 \\
+Pilar & 3.2 & 890.2 \\
+Zapata & 1.5 & 410 \\
+\bottomrule
+\end{tabular}
+
+\end{center}
+
+\section{Unidades (pint) y texto seguro}
+La velocidad es $v = 25.46\ \frac{\mathrm{m}}{\mathrm{s}}$ y la nota dice:
+«Coste del 50\% \& margen \#1».
+
+También puedes formatear a mano con f-strings: 25.5 m/s.
+
+\end{document}

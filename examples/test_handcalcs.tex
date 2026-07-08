@@ -1,0 +1,69 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=2.3cm]{geometry}
+
+\title{Cálculos tipo «hechos a mano» con \texttt{handcalcs} + \texttt{pint}}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+Con \texttt{handcalcs} cada cálculo se muestra como en un examen: la fórmula, la
+sustitución de valores y el resultado. El patrón en Calc es:
+
+\begin{enumerate}
+  \item En una celda defines una función de cálculo y la pasas a \verb|hc(func, args)|.
+  \item \verb|hc| devuelve el LaTeX (no se imprime: solo aparece en el documento).
+  \item En el cuerpo escribes \verb|\py{nombre}| donde quieras el resultado.
+\end{enumerate}
+
+\section{Viga simplemente apoyada}
+Momento y cortante máximos de una viga con carga uniforme:
+
+%#python
+def viga(w, L):
+    M_max = w * L**2 / 8      # momento máximo
+    V_max = w * L / 2         # cortante máximo
+    return M_max, V_max
+
+# hc(...) devuelve LaTeX listo (display math); no se imprime -> sin doble render
+calc_viga = hc(viga, 12.0, 6.0)
+%#end
+
+\py{calc_viga}
+
+con $w = 12\ \mathrm{kN/m}$ y $L = 6\ \mathrm{m}$.
+
+\section{Cálculo con unidades (\texttt{pint})}
+\texttt{pint} arrastra las unidades automáticamente y \texttt{handcalcs} las
+muestra en el resultado:
+
+%#python
+def energia(m, v):
+    E_c = (m * v**2) / 2       # energía cinética
+    return E_c
+
+calc_energia = hc(energia, 1500 * ureg.kg, 25 * ureg.m / ureg.s)
+%#end
+
+\py{calc_energia}
+
+\section{Tensión normal}
+Combinando varias líneas en un solo bloque renderizado:
+
+%#python
+def tension(P, b, h):
+    A = b * h          # área de la sección rectangular
+    sigma = P / A      # tensión normal
+    return sigma
+
+calc_tension = hc(tension, 50 * ureg.kN, 20 * ureg.mm, 30 * ureg.mm)
+%#end
+
+\py{calc_tension}
+
+\medskip
+Todo esto se calcula en Python y se tipografía en \LaTeX{} sin salir del documento.
+
+\end{document}

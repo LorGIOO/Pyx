@@ -1,0 +1,48 @@
+name: Release
+
+# Publica un instalador de Windows cuando se empuja una etiqueta de versión
+# (por ejemplo `v1.0.0`). Crea un borrador de Release con el .msi/.exe adjunto.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Configurar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Caché de Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # tauri-action ejecuta `npm run build` (beforeBuildCommand) + `tauri build`
+      # y sube el instalador al borrador de release de la etiqueta.
+      - name: Compilar y publicar el instalador
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Pyx ${{ github.ref_name }}'
+          releaseBody: |
+            Instalador de Windows adjunto abajo.
+            Requiere **Python 3** y una distribución **LaTeX** (MiKTeX o TeX Live) instalados aparte.
+          releaseDraft: true
+          prerelease: false

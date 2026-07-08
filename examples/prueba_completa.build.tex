@@ -1,0 +1,231 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{graphicx}
+
+\geometry{margin=2.5cm}
+
+\title{\textbf{Prueba Calc}\\[0.5em]
+\large LaTeX + celdas Python con \texttt{\textbackslash py\{\}}}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ===========================================================
+\section{Cálculos básicos}
+% ===========================================================
+
+%#python
+%import math
+%
+%# Variables básicas
+%radio       = 5.0
+%altura      = 10.0
+%gravedad    = 9.81   # m/s²
+%masa        = 70.0   # kg
+%
+%# Cálculos
+%area_circulo    = math.pi * radio**2
+%perimetro       = 2 * math.pi * radio
+%vol_cilindro    = area_circulo * altura
+%peso            = masa * gravedad
+%
+%print(f"Área círculo  : {area_circulo:.4f} m²")
+%print(f"Volumen cil.  : {vol_cilindro:.4f} m³")
+%print(f"Peso          : {peso:.2f} N")
+%#end
+
+Para un círculo de radio $r = 5$ m:
+
+\[
+  A = \pi r^2 = 78.5398 \text{ m}^2
+  \qquad
+  P = 2\pi r = 31.4159 \text{ m}
+\]
+
+El volumen del cilindro de altura $h = 10$ m es:
+
+\[
+  V = A \cdot h = 78.5398 \times 10
+    = 785.3982 \text{ m}^3
+\]
+
+Una persona de 70 kg pesa $686.7$ N
+($0.687$ kN). También puedes operar directamente
+en el documento: $2A - \tfrac{3}{2} = 155.579632679$.
+
+
+% ===========================================================
+\section{Secuencias y tablas}
+% ===========================================================
+
+%#python
+%# Tabla de potencias (devuelve filas LaTeX como cadena)
+%filas_potencias = "\n    ".join(
+%    f"{n} & {n**2} & {n**3} & {n**4} \\\\"
+%    for n in range(1, 8)
+%)
+%
+%# Números de Fibonacci
+%def fib(n):
+%    a, b = 0, 1
+%    seq = []
+%    for _ in range(n):
+%        seq.append(a)
+%        a, b = b, a + b
+%    return seq
+%
+%fib10 = fib(10)
+%fib_str = ", ".join(str(x) for x in fib10)
+%fib_sum = sum(fib10)
+%
+%print("Fibonacci (10):", fib_str)
+%print("Suma:", fib_sum)
+%#end
+
+\subsection{Potencias}
+
+\begin{table}[h]
+  \centering
+  \caption{Potencias de $n$ calculadas en Python}
+  \begin{tabular}{c c c c}
+    \toprule
+    $n$ & $n^2$ & $n^3$ & $n^4$ \\
+    \midrule
+    1 & 1 & 1 & 1 \\
+    2 & 4 & 8 & 16 \\
+    3 & 9 & 27 & 81 \\
+    4 & 16 & 64 & 256 \\
+    5 & 25 & 125 & 625 \\
+    6 & 36 & 216 & 1296 \\
+    7 & 49 & 343 & 2401 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Sucesión de Fibonacci}
+
+Los primeros 10 términos de la sucesión de Fibonacci son:
+
+\[
+  0, 1, 1, 2, 3, 5, 8, 13, 21, 34
+\]
+
+Su suma es $88$.
+
+
+% ===========================================================
+\section{Trigonometría}
+% ===========================================================
+
+%#python
+%import math
+%
+%angulos_deg = [0, 30, 45, 60, 90]
+%
+%# Tabla trigonométrica (notación matemática: ^{\circ} para grados)
+%filas_trig = ""
+%for deg in angulos_deg:
+%    rad = math.radians(deg)
+%    s   = round(math.sin(rad), 4)
+%    c   = round(math.cos(rad), 4)
+%    t   = r"\infty" if deg == 90 else str(round(math.tan(rad), 4))
+%    filas_trig += f"    ${deg}^{{\\circ}}$ & ${s}$ & ${c}$ & ${t}$ \\\\\n"
+%
+%# Identidad de Euler evaluada en pi
+%euler_re = round(math.cos(math.pi), 6)   # = -1
+%euler_im = round(math.sin(math.pi), 6)   # ≈ 0
+%
+%print("Tabla trig. generada.")
+%print(f"e^(iπ) = {euler_re} + {euler_im}i")
+%#end
+
+\subsection{Tabla trigonométrica}
+
+\begin{table}[h]
+  \centering
+  \caption{Valores de seno, coseno y tangente}
+  \begin{tabular}{c c c c}
+    \toprule
+    Ángulo & $\sin$ & $\cos$ & $\tan$ \\
+    \midrule
+    $0^{\circ}$ & $0.0$ & $1.0$ & $0.0$ \\
+    $30^{\circ}$ & $0.5$ & $0.866$ & $0.5774$ \\
+    $45^{\circ}$ & $0.7071$ & $0.7071$ & $1.0$ \\
+    $60^{\circ}$ & $0.866$ & $0.5$ & $1.7321$ \\
+    $90^{\circ}$ & $1.0$ & $0.0$ & $\infty$ \\
+
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Identidad de Euler}
+
+La famosa identidad $e^{i\pi} + 1 = 0$ verificada numéricamente:
+
+\[
+  e^{i\pi} = \cos(\pi) + i\sin(\pi)
+           = -1 + 0\,i
+\]
+
+
+% ===========================================================
+\section{Estadística}
+% ===========================================================
+
+%#python
+%import math
+%
+%datos = [12.3, 15.7, 9.8, 22.1, 18.4, 11.2, 25.6, 14.9, 17.3, 20.0]
+%n     = len(datos)
+%media = sum(datos) / n
+%varianza = sum((x - media)**2 for x in datos) / n
+%desv_std = math.sqrt(varianza)
+%minimo   = min(datos)
+%maximo   = max(datos)
+%rango    = maximo - minimo
+%datos_ord = sorted(datos)
+%mediana = (datos_ord[n//2 - 1] + datos_ord[n//2]) / 2
+%
+%datos_str = ", ".join(f"{x}" for x in datos)
+%
+%print(f"N={n}  media={media:.3f}  σ={desv_std:.3f}  mediana={mediana:.1f}")
+%#end
+
+Para el conjunto de datos $\{\ 12.3, 15.7, 9.8, 22.1, 18.4, 11.2, 25.6, 14.9, 17.3, 20.0\ \}$ ($n = 10$):
+
+\[
+  \bar{x} = 16.730
+  \qquad
+  \sigma  = 4.732
+  \qquad
+  \tilde{x} = 16.5
+\]
+
+Rango: $[9.8,\ 25.6]$, amplitud $= 15.8$.
+
+
+% ===========================================================
+\section{Expresiones directas en el texto}
+% ===========================================================
+
+También puedes escribir expresiones Python directamente en el texto
+sin declarar nada en una celda:
+
+\begin{itemize}
+  \item $\sqrt{2} = 1.414214$
+  \item $\ln(e^3) = 3$
+  \item $100! \mod 97 = 0$
+  \item Longitud de la lista anterior: 10 elementos
+\end{itemize}
+
+\end{document}

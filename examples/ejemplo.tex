@@ -1,0 +1,72 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\title{Ejemplo Calc: LaTeX + Python}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Cálculo simple}
+Define variables en una celda y úsalas en el texto con \verb|\py{expresión}|.
+Pulsa \textbf{Shift+Enter} dentro de la celda para ejecutarla.
+
+%#python
+import math
+g = 9.81          # m/s^2
+t = 3.0           # s
+v = g * t
+d = 0.5 * g * t**2
+print(f"v = {v:.2f} m/s, d = {d:.2f} m")
+%#end
+
+Tras $t = \py{t}\,$s de caída libre, la velocidad es $\py{round(v,2)}\,$m/s y la
+distancia recorrida $\py{round(d,2)}\,$m. Puedes operar dentro de \verb|\py{}|:
+el doble menos tres medios es $\py{v*2 - 3/2}$.
+
+\section{Una tabla generada en Python}
+Una celda puede construir LaTeX completo y traerlo con \verb|\py{}|:
+
+%#python
+filas = "\n".join(f"{n} & {n**2} & {n**3} \\\\" for n in range(1, 6))
+%#end
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{c c c}
+    \toprule
+    $n$ & $n^2$ & $n^3$ \\
+    \midrule
+    \py{filas}
+    \bottomrule
+  \end{tabular}
+  \caption{Potencias calculadas en Python.}
+\end{table}
+
+\section{Figuras con matplotlib (opcional)}
+Si tienes \texttt{matplotlib}, \verb|figure("nombre")| guarda la figura y
+devuelve su ruta, que puedes incluir con \verb|\py{}|:
+
+%#python
+# Requiere: pip install matplotlib
+ruta = None
+try:
+    import matplotlib.pyplot as plt
+    xs = [i/10 for i in range(0, 63)]
+    plt.figure(figsize=(5, 3))
+    plt.plot(xs, [math.sin(x) for x in xs])
+    plt.title("sin(x)")
+    ruta = figure("grafico")
+    print("Figura guardada en", ruta)
+except ImportError:
+    print("matplotlib no instalado; omito la figura.")
+%#end
+
+% Descomenta si generaste la figura:
+% \begin{figure}[h]\centering\includegraphics[width=0.6\linewidth]{\py{ruta}}\caption{}\end{figure}
+
+\end{document}

@@ -1,0 +1,227 @@
+/* CodeMirror host + theming via CSS variables (follows the active theme). */
+.editor-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-host .cm-editor {
+  height: 100%;
+  position: relative; /* anchor the floating search widget to the editor */
+  background: var(--theme-editor-bg);
+  color: var(--theme-editor-text);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 13.5px;
+}
+/* The editor and preview are the only places with a text/PDF cursor. */
+.editor-host .cm-content {
+  cursor: text;
+  caret-color: var(--theme-editor-cursor);
+  -webkit-user-select: text;
+  user-select: text;
+  padding: 8px 0;
+}
+.editor-host .cm-editor.cm-focused { outline: none; }
+
+.editor-host .cm-gutters {
+  background: var(--theme-editor-gutter-bg);
+  color: var(--theme-editor-gutter-text);
+  border-right: 1px solid var(--theme-border);
+}
+.editor-host .cm-foldGutter span {
+  color: var(--theme-editor-gutter-text);
+  cursor: default;
+  padding: 0 2px;
+}
+.editor-host .cm-foldGutter span:hover { color: var(--theme-accent); }
+.editor-host .cm-foldPlaceholder {
+  background: var(--theme-cell-bg);
+  border: 1px solid var(--theme-cell-border);
+  color: var(--theme-cell-header);
+  padding: 0 6px;
+  margin: 0 4px;
+}
+.editor-host .cm-activeLineGutter { background: var(--theme-editor-active-line); }
+.editor-host .cm-activeLine { background: var(--theme-editor-active-line); }
+
+.editor-host .cm-cursor { border-left-color: var(--theme-editor-cursor); }
+.editor-host .cm-selectionBackground,
+.editor-host .cm-content ::selection { background: var(--theme-editor-selection) !important; }
+.editor-host .cm-focused .cm-selectionBackground { background: var(--theme-editor-selection) !important; }
+
+.editor-host .cm-line { padding: 0 8px; }
+
+/* Live "ghost" result shown after a \py{…} (Mathcad/MATLAB style): faint,
+   non-selectable, never interferes with editing. */
+.editor-host .cm-py-ghost {
+  color: var(--theme-text-secondary, #888);
+  opacity: 0.7;
+  font-style: italic;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  white-space: pre;
+}
+
+/* Syntax colors driven by theme variables. */
+.editor-host .tok-keyword { color: var(--cm-keyword); }
+.editor-host .tok-comment { color: var(--cm-comment); font-style: italic; }
+.editor-host .tok-string { color: var(--cm-string); }
+.editor-host .tok-number { color: var(--cm-number); }
+.editor-host .tok-tag { color: var(--cm-tag); }
+.editor-host .tok-bracket { color: var(--cm-bracket); }
+
+/* LaTeX granular overlay (after tok-* so it wins on shared spans):
+   every construct gets its own color, TeXstudio-grade. */
+/* Defaults follow the TeXstudio "Formatos" inventory: keywords bold, env
+   names bold, links underlined, escape-next bold, ampersand bold… Every
+   property is user-overridable from Configuración. */
+.editor-host .cm-lx-cmd { color: var(--lx-cmd); font-weight: 700; }
+.editor-host .cm-lx-section { color: var(--lx-section); font-weight: 700; }
+.editor-host .cm-lx-envkw { color: var(--lx-envkw); font-weight: 700; }
+.editor-host .cm-lx-envname { color: var(--lx-envname); font-weight: 700; }
+.editor-host .cm-lx-preamble { color: var(--lx-preamble); font-weight: 700; }
+.editor-host .cm-lx-ref { color: var(--lx-ref); }
+.editor-host .cm-lx-url { color: var(--lx-url); text-decoration: underline; }
+.editor-host .cm-lx-textfmt { color: var(--lx-textfmt); }
+.editor-host .cm-lx-mathcmd { color: var(--lx-mathcmd); }
+.editor-host .cm-lx-mathdelim { color: var(--lx-mathdelim); font-weight: 700; }
+.editor-host .cm-lx-math { background: var(--lx-math-bg); }
+.editor-host .cm-lx-opt { color: var(--lx-opt); }
+.editor-host .cm-lx-brace { color: var(--lx-brace); }
+.editor-host .cm-lx-number { color: var(--lx-number); }
+.editor-host .cm-lx-comment { color: var(--lx-comment); font-style: italic; }
+.editor-host .cm-lx-escape { color: var(--lx-escape); font-weight: 700; }
+.editor-host .cm-lx-py { color: var(--lx-py); font-weight: 700; }
+.editor-host .cm-lx-amp { color: var(--lx-amp); font-weight: 700; }
+
+/* ---- autocomplete dropdown: theme-aware, VSCode-style ---- */
+.cm-tooltip {
+  background: var(--theme-surface) !important;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text);
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  max-height: 260px;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 4px;
+  color: var(--theme-text);
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--theme-accent) !important;
+  color: #fff !important;
+}
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionMatchedText {
+  text-decoration: none;
+  font-weight: 700;
+  color: var(--theme-accent);
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText { color: #fff; }
+/* VSCode-style kind icons (letter badges, colored per kind) */
+.cm-completionIcon {
+  width: 16px;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 1;
+  text-align: center;
+}
+.cm-completionIcon::after { content: '·'; }
+.cm-completionIcon-keyword::after { content: 'K'; color: #c586c0; }
+.cm-completionIcon-function::after { content: 'ƒ'; color: #dcdcaa; }
+.cm-completionIcon-class::after { content: 'E'; color: #4ec9b0; }
+.cm-completionIcon-variable::after { content: 'V'; color: #9cdcfe; }
+.cm-completionIcon-constant::after { content: 'C'; color: #569cd6; }
+.cm-completionIcon-text::after { content: 'T'; color: #8a919c; }
+
+/* ---- minimal VSCode-style search panel (custom createPanel) ---- */
+.editor-host .cm-panels.cm-panels-top {
+  position: absolute;
+  top: 0; right: 0; left: auto;
+  width: auto;
+  z-index: 12;
+  background: transparent;
+  border: none;
+}
+.pyx-search {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 14px 0 0;
+  padding: 5px 6px;
+  background: var(--theme-panel-bg);
+  border: 1px solid var(--theme-border);
+  border-left: 2px solid var(--theme-accent);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
+}
+.ps-row { display: flex; align-items: center; gap: 3px; }
+.ps-input {
+  width: 180px; height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-ribbon-input-bg);
+  color: var(--theme-text);
+  font-size: 12px;
+  outline: none;
+}
+.ps-input:focus { border-color: var(--theme-accent); }
+.ps-count {
+  min-width: 78px;
+  font-size: 11px;
+  color: var(--theme-text-secondary);
+  text-align: left;
+  padding: 0 2px;
+}
+.ps-btn {
+  min-width: 24px; height: 24px;
+  border: none; background: transparent;
+  color: var(--theme-text-secondary);
+  font-size: 12px; cursor: default;
+}
+.ps-btn:hover { background: var(--theme-hover); color: var(--theme-text); }
+.ps-btn.ps-expand { min-width: 16px; }
+.ps-toggle.on { background: var(--theme-ribbon-btn-active-bg); color: var(--theme-accent); outline: 1px solid var(--theme-accent); }
+
+/* Search panel squared off to match the Windows look. */
+.editor-host .cm-panels {
+  background: var(--theme-panel-bg);
+  color: var(--theme-text);
+  border-color: var(--theme-border);
+}
+.editor-host .cm-textfield {
+  background: var(--theme-ribbon-input-bg);
+  color: var(--theme-text);
+  border: 1px solid var(--theme-border);
+  border-radius: 0;
+}
+.editor-host .cm-button {
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  border: 1px solid var(--theme-border);
+  border-radius: 0;
+}
+
+/* (default CM search panel CSS removed — the custom .pyx-search panel replaced it) */
+
+/* Ctrl+hover over an \input/\includegraphics path: link affordance (the file
+   opens with Ctrl+click). Underline only — the cursor stays default. */
+.editor-host .cm-path-link { text-decoration: underline; }
+
+/* Word-style proofing underlines (spell = red, grammar = blue), wavy. */
+.editor-host .cm-spell-bad {
+  text-decoration: underline wavy #e5484d;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+.editor-host .cm-grammar-bad {
+  text-decoration: underline wavy #3b82f6;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
+/* Spelling suggestions in the context menu render in italic to stand out. */
+.ctx-menu .ctx-item .ctx-label { }

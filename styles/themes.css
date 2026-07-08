@@ -1,0 +1,416 @@
+/* ============================================================
+   THEME SYSTEM — every surface reads from these CSS variables so
+   the whole UI (titlebar, ribbon, editor, cells, preview) follows
+   the active light/dark theme. Add a theme by cloning a block.
+   ============================================================ */
+
+/* ---------- Light (default) ---------- */
+:root,
+[data-theme="light"] {
+  --theme-bg: #f3f3f3;
+  --theme-surface: #ffffff;
+  --theme-border: #d0d0d0;
+  --theme-text: #1e1e1e;
+  --theme-text-secondary: #5f6b7a;
+  --theme-accent: #007acc;
+  --theme-accent-hover: #1f7fc4;
+  --theme-hover: rgba(0, 122, 204, 0.08);
+
+  --theme-titlebar-bg-start: #ffffff;
+  --theme-titlebar-border: #d0d0d0;
+  --theme-titlebar-text: #1e1e1e;
+  --theme-titlebar-text-secondary: #5f6b7a;
+  --theme-titlebar-btn-color: #1e1e1e;
+  --theme-titlebar-btn-hover: rgba(0, 122, 204, 0.08);
+  --theme-titlebar-btn-active: rgba(0, 122, 204, 0.16);
+  --theme-titlebar-btn-disabled: #9aa0a6;
+  --theme-window-btn-color: #1e1e1e;
+  --theme-window-btn-hover: rgba(0, 0, 0, 0.08);
+
+  --theme-file-tab-bg: #007acc;
+  --theme-file-tab-hover: #1f7fc4;
+  --theme-file-tab-text: #ffffff;
+
+  --theme-ribbon-bg-start: #ffffff;
+  --theme-ribbon-border: #d0d0d0;
+  --theme-ribbon-tabs-bg-start: #f3f3f3;
+  --theme-ribbon-content-bg: #ffffff;
+  --theme-ribbon-text: #5f6b7a;
+  --theme-ribbon-text-hover: #1e1e1e;
+  --theme-ribbon-tab-hover: rgba(0, 122, 204, 0.08);
+  --theme-ribbon-tab-active-bg: #ffffff;
+  --theme-ribbon-tab-active-border: #007acc;
+  --theme-ribbon-btn-hover: rgba(0, 122, 204, 0.08);
+  --theme-ribbon-btn-hover-border: #cfd8e3;
+  --theme-ribbon-btn-active-bg: rgba(0, 122, 204, 0.12);
+  --theme-ribbon-btn-active-border: #007acc;
+  --theme-ribbon-btn-active-text: #007acc;
+  --theme-ribbon-icon-stroke: #5f6b7a;
+  --theme-ribbon-group-label: #6b7280;
+  --theme-ribbon-group-border: #d0d0d0;
+  --theme-ribbon-input-bg: #ffffff;
+  --theme-ribbon-input-border: #d0d0d0;
+  --theme-ribbon-input-text: #1e1e1e;
+  --theme-ribbon-input-focus-border: #007acc;
+  --theme-ribbon-dropdown-arrow: #6b7280;
+
+  --theme-tab-bg: #f5f5f5;
+  --theme-tab-border: #d0d0d0;
+  --theme-tab-hover: rgba(0, 122, 204, 0.08);
+  --theme-tab-active-bg: #ffffff;
+  --theme-tab-active-accent: #007acc;
+  --theme-tab-text: #5f6b7a;
+  --theme-tab-active-text: #1e1e1e;
+  --theme-tab-close-color: #6b7280;
+  --theme-tab-modified: #007acc;
+  --theme-tab-add-color: #6b7280;
+  --theme-tab-add-hover: rgba(0, 122, 204, 0.08);
+
+  --theme-content-bg: #f3f3f3;
+  --theme-panel-bg: #ffffff;
+  --theme-panel-border: #d0d0d0;
+  --theme-preview-bg: #8a8a8a;
+
+  --theme-editor-bg: #ffffff;
+  --theme-editor-text: #1e1e1e;
+  --theme-editor-gutter-bg: #f7f7f7;
+  --theme-editor-gutter-text: #9aa0a6;
+  --theme-editor-active-line: #f3f8ff;
+  --theme-editor-selection: rgba(0, 122, 204, 0.18);
+  --theme-editor-cursor: #007acc;
+
+  --theme-cell-bg: #eef1f6;        /* distinct from the white editor background */
+  --theme-cell-border: #d7dde6;
+  --theme-cell-toolbar-bg: #e6eaf0;
+  --theme-cell-accent: #2b7fff;
+  --theme-cell-header: #6a737d;
+  --theme-cell-output-bg: #ffffff;
+  --theme-cell-output-text: #1e1e1e;
+  --theme-cell-error: #c72e2e;
+  --theme-cell-run-text: #2b7fff;
+
+  --theme-status-bg: #f5f5f5;
+  --theme-status-border: #d0d0d0;
+  --theme-status-text: #5f6b7a;
+  --theme-status-text-value: #1e1e1e;
+  --theme-status-hover: rgba(0, 122, 204, 0.08);
+
+  /* Syntax (CodeMirror) */
+  /* LaTeX syntax — TeXstudio-like palette (commands blue, comments gray). */
+  --cm-keyword: #0030c0;
+  --cm-comment: #7f7f7f;
+  --cm-string: #a31515;
+  --cm-number: #9a6700;
+  --cm-tag: #0030c0;
+  --cm-bracket: #6a737d;
+
+  /* LaTeX granular overlay — one color per construct */
+  --lx-cmd: #0030c0;          /* generic \command */
+  --lx-section: #aa0d91;      /* \section, \chapter… */
+  --lx-envkw: #008080;        /* \begin / \end */
+  --lx-envname: #2f7d32;      /* environment name */
+  --lx-preamble: #7a3e9d;     /* \usepackage, \documentclass… */
+  --lx-ref: #b26a00;          /* \label, \ref, \cite… */
+  --lx-textfmt: #5b2da0;      /* \textbf, \emph, sizes… */
+  --lx-mathcmd: #00627a;      /* \frac, greeks, operators */
+  --lx-mathdelim: #9a6700;    /* $ delimiters */
+  --lx-math-bg: rgba(255, 228, 138, 0.35); /* $…$ region tint */
+  --lx-opt: #b05a00;          /* [options] */
+  --lx-brace: #687387;        /* { } */
+  --lx-number: #098658;       /* numbers + units */
+  --lx-comment: #7f8c7f;      /* % comments */
+  --lx-py: #d6336c;           /* \py — the Python bridge */
+  --lx-amp: #1b56d6;          /* & column separator (electric blue) */
+  --lx-url: #1a52c4;          /* \url, \href — underlined link */
+  --lx-escape: #c2187c;       /* \%, \&, \\ — escape-next */
+
+  /* Python tokens — VSCode Light+ exact values */
+  --py-control: #af00db;   /* import, for, if, return … */
+  --py-storage: #0000ff;   /* def, class, lambda */
+  --py-keyword: #0000ff;
+  --py-builtin: #795e26;   /* builtin functions */
+  --py-type: #267f99;      /* builtin types / classes */
+  --py-func: #795e26;
+  --py-string: #a31515;
+  --py-number: #098658;
+  --py-comment: #008000;
+  --py-operator: #000000;
+  --py-decorator: #795e26;
+  --py-variable: #001080;
+  --py-self: #0000ff;
+  --py-property: #001080;
+  --py-atom: #0000ff;
+}
+
+/* ---------- Dark ---------- */
+[data-theme="dark"] {
+  --theme-bg: #1e1e1e;
+  --theme-surface: #252526;
+  --theme-border: #3c3c3c;
+  --theme-text: #cccccc;
+  --theme-text-secondary: #9da3a8;
+  --theme-accent: #007acc;
+  --theme-accent-hover: #1f7fc4;
+  --theme-hover: rgba(255, 255, 255, 0.05);
+
+  --theme-titlebar-bg-start: #2b2b2b;
+  --theme-titlebar-border: #3c3c3c;
+  --theme-titlebar-text: #cccccc;
+  --theme-titlebar-text-secondary: #9da3a8;
+  --theme-titlebar-btn-color: #cccccc;
+  --theme-titlebar-btn-hover: rgba(255, 255, 255, 0.06);
+  --theme-titlebar-btn-active: rgba(0, 122, 204, 0.18);
+  --theme-titlebar-btn-disabled: #6b6b6b;
+  --theme-window-btn-color: #cccccc;
+  --theme-window-btn-hover: rgba(255, 255, 255, 0.06);
+
+  --theme-file-tab-bg: #007acc;
+  --theme-file-tab-hover: #1f7fc4;
+  --theme-file-tab-text: #ffffff;
+
+  --theme-ribbon-bg-start: #2b2b2b;
+  --theme-ribbon-border: #3c3c3c;
+  --theme-ribbon-tabs-bg-start: #2b2b2b;
+  --theme-ribbon-content-bg: #1f1f1f;
+  --theme-ribbon-text: #9da3a8;
+  --theme-ribbon-text-hover: #cccccc;
+  --theme-ribbon-tab-hover: rgba(0, 122, 204, 0.08);
+  --theme-ribbon-tab-active-bg: #1f1f1f;
+  --theme-ribbon-tab-active-border: #007acc;
+  --theme-ribbon-btn-hover: rgba(255, 255, 255, 0.05);
+  --theme-ribbon-btn-hover-border: rgba(255, 255, 255, 0.08);
+  --theme-ribbon-btn-active-bg: rgba(0, 122, 204, 0.16);
+  --theme-ribbon-btn-active-border: #007acc;
+  --theme-ribbon-btn-active-text: #8fd0ff;
+  --theme-ribbon-icon-stroke: #9da3a8;
+  --theme-ribbon-group-label: #9da3a8;
+  --theme-ribbon-group-border: #3c3c3c;
+  --theme-ribbon-input-bg: #1e1e1e;
+  --theme-ribbon-input-border: #3c3c3c;
+  --theme-ribbon-input-text: #cccccc;
+  --theme-ribbon-input-focus-border: #007acc;
+  --theme-ribbon-dropdown-arrow: #9da3a8;
+
+  --theme-tab-bg: #1f1f1f;
+  --theme-tab-border: #3c3c3c;
+  --theme-tab-hover: rgba(0, 122, 204, 0.08);
+  --theme-tab-active-bg: #252526;
+  --theme-tab-active-accent: #007acc;
+  --theme-tab-text: #9da3a8;
+  --theme-tab-active-text: #cccccc;
+  --theme-tab-close-color: #858585;
+  --theme-tab-modified: #007acc;
+  --theme-tab-add-color: #9da3a8;
+  --theme-tab-add-hover: rgba(255, 255, 255, 0.05);
+
+  --theme-content-bg: #1b1b1b;
+  --theme-panel-bg: #252526;
+  --theme-panel-border: #3c3c3c;
+  --theme-preview-bg: #2a2a2a;
+
+  --theme-editor-bg: #1e1e1e;
+  --theme-editor-text: #d4d4d4;
+  --theme-editor-gutter-bg: #1e1e1e;
+  --theme-editor-gutter-text: #6b6b6b;
+  --theme-editor-active-line: #2a2a2a;
+  --theme-editor-selection: rgba(0, 122, 204, 0.30);
+  --theme-editor-cursor: #5fb0ff;
+
+  --theme-cell-bg: #282828;        /* distinct from the #1e1e1e editor background */
+  --theme-cell-border: #3a3a3a;
+  --theme-cell-toolbar-bg: #2d2d2e;
+  --theme-cell-accent: #0078d4;
+  --theme-cell-header: #858585;
+  --theme-cell-output-bg: #1a1a1a;
+  --theme-cell-output-text: #d4d4d4;
+  --theme-cell-error: #f48771;
+  --theme-cell-run-text: #3794ff;
+
+  --theme-status-bg: #1f1f1f;
+  --theme-status-border: #3c3c3c;
+  --theme-status-text: #9da3a8;
+  --theme-status-text-value: #cccccc;
+  --theme-status-hover: rgba(0, 122, 204, 0.12);
+
+  --cm-keyword: #569cd6;
+  --cm-comment: #6a9955;
+  --cm-string: #ce9178;
+  --cm-number: #b5cea8;
+  --cm-tag: #d7ba7d;
+  --cm-bracket: #9da3a8;
+
+  /* LaTeX granular overlay — TeXstudio dark inventory: keyword cyan (bold),
+     extra-keyword purple (bold), math delimiters light green, math keyword
+     bright green, numbers peach, ampersand electric blue (bold), environment
+     celeste (bold), link royal blue underlined, escape-next fuchsia (bold). */
+  --lx-cmd: #4fc1ff;
+  --lx-section: #e081bf;
+  --lx-envkw: #4ec9b0;
+  --lx-envname: #61d6ff;
+  --lx-preamble: #c586c0;
+  --lx-ref: #2ecc8f;
+  --lx-textfmt: #9d7cd8;
+  --lx-mathcmd: #3fe07f;
+  --lx-mathdelim: #8fe78f;
+  --lx-math-bg: rgba(140, 150, 60, 0.20);
+  --lx-opt: #ffb86c;
+  --lx-brace: #8a919c;
+  --lx-number: #ffcf9e;
+  --lx-comment: #9a9ec9;
+  --lx-py: #ff7eb6;
+  --lx-amp: #4f9cff;
+  --lx-url: #5a8cff;
+  --lx-escape: #ff5fd2;
+
+  /* Python tokens — VSCode Dark+ exact values */
+  --py-control: #c586c0;   /* import, for, if, return … */
+  --py-storage: #569cd6;   /* def, class, lambda */
+  --py-keyword: #569cd6;
+  --py-builtin: #dcdcaa;   /* builtin functions: print, len */
+  --py-type: #4ec9b0;      /* builtin types / classes */
+  --py-func: #dcdcaa;
+  --py-string: #ce9178;
+  --py-number: #b5cea8;
+  --py-comment: #6a9955;
+  --py-operator: #d4d4d4;
+  --py-decorator: #dcdcaa;
+  --py-variable: #9cdcfe;
+  --py-self: #569cd6;
+  --py-property: #9cdcfe;
+  --py-atom: #569cd6;
+}
+
+/* ---------- Blue ---------- */
+[data-theme="blue"] {
+  --theme-bg: #0d1b2a;
+  --theme-surface: #1b263b;
+  --theme-border: #2c4a6b;
+  --theme-text: #e0e1dd;
+  --theme-text-secondary: #98c1d9;
+  --theme-accent: #00b4d8;
+  --theme-accent-hover: #48cae4;
+  --theme-hover: #3d5a80;
+
+  --theme-titlebar-bg-start: #1b263b;
+  --theme-titlebar-border: #2c4a6b;
+  --theme-titlebar-text: #e0e1dd;
+  --theme-titlebar-text-secondary: #98c1d9;
+  --theme-titlebar-btn-color: #e0e1dd;
+  --theme-titlebar-btn-hover: #3d5a80;
+  --theme-titlebar-btn-active: #2c4a6b;
+  --theme-titlebar-btn-disabled: #778da9;
+  --theme-window-btn-color: #e0e1dd;
+  --theme-window-btn-hover: rgba(255, 255, 255, 0.1);
+
+  --theme-file-tab-bg: #0077b6;
+  --theme-file-tab-hover: #00b4d8;
+  --theme-file-tab-text: #ffffff;
+
+  --theme-ribbon-bg-start: #253a52;
+  --theme-ribbon-border: #2c4a6b;
+  --theme-ribbon-tabs-bg-start: #253a52;
+  --theme-ribbon-content-bg: #1b263b;
+  --theme-ribbon-text: #98c1d9;
+  --theme-ribbon-text-hover: #e0e1dd;
+  --theme-ribbon-tab-hover: #3d5a80;
+  --theme-ribbon-tab-active-bg: #1b263b;
+  --theme-ribbon-tab-active-border: #00b4d8;
+  --theme-ribbon-btn-hover: #3d5a80;
+  --theme-ribbon-btn-hover-border: #4a7aaa;
+  --theme-ribbon-btn-active-bg: #1a3f5c;
+  --theme-ribbon-btn-active-border: #48cae4;
+  --theme-ribbon-btn-active-text: #90e0ef;
+  --theme-ribbon-icon-stroke: #98c1d9;
+  --theme-ribbon-group-label: #778da9;
+  --theme-ribbon-group-border: #2c4a6b;
+  --theme-ribbon-input-bg: #0d1b2a;
+  --theme-ribbon-input-border: #2c4a6b;
+  --theme-ribbon-input-text: #e0e1dd;
+  --theme-ribbon-input-focus-border: #00b4d8;
+  --theme-ribbon-dropdown-arrow: #778da9;
+
+  --theme-tab-bg: #1b263b;
+  --theme-tab-border: #2c4a6b;
+  --theme-tab-hover: #253a52;
+  --theme-tab-active-bg: #0d1b2a;
+  --theme-tab-active-accent: #00b4d8;
+  --theme-tab-text: #98c1d9;
+  --theme-tab-active-text: #e0e1dd;
+  --theme-tab-close-color: #778da9;
+  --theme-tab-modified: #00b4d8;
+  --theme-tab-add-color: #778da9;
+  --theme-tab-add-hover: #3d5a80;
+
+  --theme-content-bg: #0d1b2a;
+  --theme-panel-bg: #1b263b;
+  --theme-panel-border: #2c4a6b;
+  --theme-preview-bg: #16293b;
+
+  --theme-editor-bg: #0d1b2a;
+  --theme-editor-text: #e0e1dd;
+  --theme-editor-gutter-bg: #0d1b2a;
+  --theme-editor-gutter-text: #5f7d97;
+  --theme-editor-active-line: #13243a;
+  --theme-editor-selection: rgba(0, 180, 216, 0.28);
+  --theme-editor-cursor: #48cae4;
+
+  --theme-cell-bg: #122a45;        /* distinct from the #0d1b2a editor background */
+  --theme-cell-border: #2a4a68;
+  --theme-cell-toolbar-bg: #17304a;
+  --theme-cell-accent: #48cae4;
+  --theme-cell-header: #6e93b3;
+  --theme-cell-output-bg: #0a1623;
+  --theme-cell-output-text: #e0e1dd;
+  --theme-cell-error: #ff8a8a;
+  --theme-cell-run-text: #48cae4;
+
+  --theme-status-bg: #0d1b2a;
+  --theme-status-border: #2c4a6b;
+  --theme-status-text: #98c1d9;
+  --theme-status-text-value: #e0e1dd;
+  --theme-status-hover: rgba(255, 255, 255, 0.1);
+
+  --cm-keyword: #48cae4;
+  --cm-comment: #5f7d97;
+  --cm-string: #ffd6a5;
+  --cm-number: #90e0ef;
+  --cm-tag: #ffd6a5;
+  --cm-bracket: #98c1d9;
+
+  /* LaTeX granular overlay — one color per construct */
+  --lx-cmd: #48cae4;
+  --lx-section: #f4a4d4;
+  --lx-envkw: #4ec9b0;
+  --lx-envname: #97d8a0;
+  --lx-preamble: #c994e8;
+  --lx-ref: #ffd29b;
+  --lx-textfmt: #b3a0f2;
+  --lx-mathcmd: #6fd6e8;
+  --lx-mathdelim: #ffd6a5;
+  --lx-math-bg: rgba(72, 202, 228, 0.12);
+  --lx-opt: #f0b070;
+  --lx-brace: #7e9ab8;
+  --lx-number: #90e0ef;
+  --lx-comment: #5f7d97;
+  --lx-py: #ff8fc0;
+  --lx-amp: #7fb3ff;
+  --lx-url: #7fb3ff;
+  --lx-escape: #ff8fd6;
+
+  /* Python tokens */
+  --py-control: #c586c0;
+  --py-storage: #4fc1ff;
+  --py-keyword: #4fc1ff;
+  --py-builtin: #dcdcaa;
+  --py-type: #4ec9b0;
+  --py-func: #dcdcaa;
+  --py-string: #ffd29b;
+  --py-number: #b5cea8;
+  --py-comment: #6a9c78;
+  --py-operator: #cfd8e3;
+  --py-decorator: #dcdcaa;
+  --py-variable: #9cdcfe;
+  --py-self: #4fc1ff;
+  --py-property: #9cdcfe;
+  --py-atom: #4fc1ff;
+}

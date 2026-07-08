@@ -1,0 +1,62 @@
+\documentclass[11pt]{article}
+\usepackage[margin=2.3cm]{geometry}
+
+\title{Prueba del visor de salidas (tabla + gráfico)}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+Ejecuta las celdas con \textbf{Cálculo → Todas las celdas} (o
+\textbf{Compilar}). En la salida de cada celda, pasa el ratón por encima de la
+tabla o del gráfico y pulsa el botón de \emph{ampliar} (esquina superior
+derecha) para abrirlo en el visor:
+
+\begin{itemize}
+  \item \textbf{Gráfico:} se abre con zoom (rueda), arrastre para desplazar y
+        lectura de coordenadas en píxeles bajo el cursor.
+  \item \textbf{Tabla:} se abre a tamaño completo, con scroll y texto
+        seleccionable para verificar los datos.
+\end{itemize}
+
+\section{Tabla generada con pandas}
+La salida se muestra como tabla HTML, igual que en Jupyter:
+
+%#python
+import numpy as np
+import pandas as pd
+
+n = np.arange(1, 16)
+df = pd.DataFrame({
+    "n": n,
+    "n^2": n**2,
+    "raiz(n)": np.sqrt(n).round(4),
+    "ln(n)": np.log(n).round(4),
+    "1/n": (1 / n).round(4),
+})
+df
+%#end
+
+\section{Gráfico con matplotlib}
+La figura abierta se captura automáticamente y se muestra en la celda:
+
+%#python
+import numpy as np
+import matplotlib.pyplot as plt
+
+x = np.linspace(0, 2 * np.pi, 400)
+plt.figure(figsize=(6.5, 3.4))
+plt.plot(x, np.sin(x), label="sin x")
+plt.plot(x, np.cos(x), label="cos x")
+plt.plot(x, np.sin(x) * np.cos(x), "--", label="sin x · cos x")
+plt.title("Funciones trigonométricas")
+plt.xlabel("x"); plt.ylabel("y")
+plt.legend(); plt.grid(True, alpha=0.4)
+%#end
+
+\medskip
+Todo se ejecuta en un kernel de Python real, así que funciona cualquier
+librería instalada (puedes añadir más desde \textbf{Ver → Terminal}).
+
+\end{document}

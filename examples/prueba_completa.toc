@@ -1,0 +1,10 @@
+\babel@toc {spanish}{}\relax 
+\contentsline {section}{\numberline {1}Cálculos básicos}{2}{}%
+\contentsline {section}{\numberline {2}Secuencias y tablas}{2}{}%
+\contentsline {subsection}{\numberline {2.1}Potencias}{2}{}%
+\contentsline {subsection}{\numberline {2.2}Sucesión de Fibonacci}{2}{}%
+\contentsline {section}{\numberline {3}Trigonometría}{2}{}%
+\contentsline {subsection}{\numberline {3.1}Tabla trigonométrica}{2}{}%
+\contentsline {subsection}{\numberline {3.2}Identidad de Euler}{2}{}%
+\contentsline {section}{\numberline {4}Estadística}{3}{}%
+\contentsline {section}{\numberline {5}Expresiones directas en el texto}{3}{}%

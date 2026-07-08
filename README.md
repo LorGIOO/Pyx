@@ -18,6 +18,10 @@ Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y
 
 <a href="https://github.com/LorGIOO/Pyx/releases/latest"><img src="https://img.shields.io/badge/⬇%20Descargar%20para%20Windows-007ACC?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar para Windows"></a>
 
+<br><br>
+
+<img src="docs/screenshots/tabla-python.png" alt="Pyx: editor LaTeX con celdas Python y visor PDF en paralelo" width="92%">
+
 </div>
 
 ---
@@ -46,6 +50,20 @@ El área de la sección es \py{round(A, 4)} m².
 - **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
 - **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
 - **Comodidades de IDE** — autocompletado y snippets, corrector ortográfico, plegado de código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables y temas claro/oscuro/azul.
+
+## 📸 Capturas
+
+**Tablas generadas con Python.** Una celda construye el `tabular` en LaTeX y lo insertas en el documento con `\py{}`; cambia los datos y la tabla se regenera al recompilar.
+
+<div align="center">
+<img src="docs/screenshots/tabla-python.png" alt="Tabla calculada en una celda Python y renderizada en el PDF" width="92%">
+</div>
+
+**Gráficos de matplotlib.** El resultado de la figura aparece **dentro de la propia celda** y, con `\includegraphics`, también en el PDF final — sin exportar nada a mano.
+
+<div align="center">
+<img src="docs/screenshots/figura-matplotlib.png" alt="Figura de matplotlib mostrada en la celda y embebida en el PDF" width="92%">
+</div>
 
 ## 📦 Instalación (Windows)
 

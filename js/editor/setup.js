@@ -39,6 +39,7 @@ import { calcCompletions } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
 import { pyLint } from './py-lint.js';
 import { latexHighlight } from './latex-highlight.js';
+import { indentGuides } from './indent-guides.js';
 import { pyxSearchPanel } from './search-panel.js';
 import { dynamicKeys } from './dynamic-keys.js';
 import { pathLinks } from './link-paths.js';
@@ -137,6 +138,8 @@ export function createDocState(docId, content) {
       search({ top: true, createPanel: pyxSearchPanel }),
       StreamLanguage.define(stex),
       syntaxHighlighting(calcHighlight),
+      // Vertical indent guides (TeXstudio-style hierarchy lines).
+      indentGuides,
       latexHighlight,
       // TeXstudio-style folding: \begin/\end blocks and sections fold from the
       // gutter (hidden via Configuración → Editor → Plegado).

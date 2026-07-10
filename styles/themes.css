@@ -76,6 +76,7 @@
   --theme-editor-gutter-bg: #f7f7f7;
   --theme-editor-gutter-text: #9aa0a6;
   --theme-editor-active-line: #f3f8ff;
+  --pyx-indent-guide: rgba(0, 0, 0, 0.14);
   --theme-editor-selection: rgba(0, 122, 204, 0.18);
   --theme-editor-cursor: #007acc;
 
@@ -213,6 +214,7 @@
   --theme-editor-gutter-bg: #1e1e1e;
   --theme-editor-gutter-text: #6b6b6b;
   --theme-editor-active-line: #2a2a2a;
+  --pyx-indent-guide: rgba(255, 255, 255, 0.14);
   --theme-editor-selection: rgba(0, 122, 204, 0.30);
   --theme-editor-cursor: #5fb0ff;
 
@@ -351,6 +353,7 @@
   --theme-editor-gutter-bg: #0d1b2a;
   --theme-editor-gutter-text: #5f7d97;
   --theme-editor-active-line: #13243a;
+  --pyx-indent-guide: rgba(120, 170, 220, 0.22);
   --theme-editor-selection: rgba(0, 180, 216, 0.28);
   --theme-editor-cursor: #48cae4;
 

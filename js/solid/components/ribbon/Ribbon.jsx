@@ -20,13 +20,13 @@ export default function Ribbon() {
   return (
     <>
       <div class="ribbon-tabs">
-        <RibbonTab label="Archivo" fileTab active={activeTab() === 'file'} onClick={() => setActiveTab('file')} />
-        <RibbonTab label="Inicio" active={activeTab() === 'home'} onClick={() => setActiveTab('home')} />
-        <RibbonTab label="Matemáticas" active={activeTab() === 'math'} onClick={() => setActiveTab('math')} />
+        <RibbonTab label="File" fileTab active={activeTab() === 'file'} onClick={() => setActiveTab('file')} />
+        <RibbonTab label="Home" active={activeTab() === 'home'} onClick={() => setActiveTab('home')} />
+        <RibbonTab label="Math" active={activeTab() === 'math'} onClick={() => setActiveTab('math')} />
         <Show when={showCalc()}>
           <RibbonTab label="Python" active={activeTab() === 'calc'} onClick={() => setActiveTab('calc')} />
         </Show>
-        <RibbonTab label="Ver" active={activeTab() === 'view'} onClick={() => setActiveTab('view')} />
+        <RibbonTab label="View" active={activeTab() === 'view'} onClick={() => setActiveTab('view')} />
       </div>
 
       <div class="ribbon-content">

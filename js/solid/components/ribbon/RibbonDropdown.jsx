@@ -67,14 +67,14 @@ export default function RibbonDropdown(props) {
   const mainLabel = () => {
     const c = cur();
     if (props.compact) return c ? (c.sym || c.badge || c.label) : (props.label || props.caption);
-    if (props.caption) return c ? c.label : (props.placeholder || 'Elegir…');
+    if (props.caption) return c ? c.label : (props.placeholder || 'Choose…');
     return c ? c.label : props.label;
   };
   const mainSym = () => (cur() && !props.compact ? cur().sym : null);
   const mainBadge = () => (cur() && !props.compact && !cur().sym ? cur().badge : null);
   const baseTitle = () => props.title || props.label || props.caption;
   const mainTitle = () => (cur()
-    ? `${baseTitle()} — última: ${cur().label} (clic para repetir, ▾ para cambiar)`
+    ? `${baseTitle()} — last: ${cur().label} (click to repeat, ▾ to change)`
     : baseTitle());
 
   const control = (

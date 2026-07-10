@@ -8,16 +8,16 @@ export default function FileTab() {
   const hasDoc = () => state.documents.length > 0;
   return (
     <>
-      <RibbonGroup label="Archivo">
-        <RibbonButton icon={icons.newDoc} label="Nuevo" onClick={() => newDocument()} />
-        <RibbonButton icon={icons.open} label="Abrir" onClick={() => openDocument()} />
+      <RibbonGroup label="File">
+        <RibbonButton icon={icons.newDoc} label="New" onClick={() => newDocument()} />
+        <RibbonButton icon={icons.open} label="Open" onClick={() => openDocument()} />
       </RibbonGroup>
-      <RibbonGroup label="Guardar">
-        <RibbonButton icon={icons.save} label="Guardar" disabled={!hasDoc()} onClick={() => saveActive()} />
-        <RibbonButton icon={icons.saveAs} label="Guardar como" disabled={!hasDoc()} onClick={() => saveActiveAs()} />
+      <RibbonGroup label="Save">
+        <RibbonButton icon={icons.save} label="Save" disabled={!hasDoc()} onClick={() => saveActive()} />
+        <RibbonButton icon={icons.saveAs} label="Save as" disabled={!hasDoc()} onClick={() => saveActiveAs()} />
       </RibbonGroup>
-      <RibbonGroup label="Sesión">
-        <RibbonButton icon={icons.clear} label="Cerrar" disabled={!hasDoc()} onClick={() => closeActive()} />
+      <RibbonGroup label="Session">
+        <RibbonButton icon={icons.clear} label="Close" disabled={!hasDoc()} onClick={() => closeActive()} />
       </RibbonGroup>
     </>
   );

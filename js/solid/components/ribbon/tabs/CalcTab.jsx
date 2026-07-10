@@ -14,17 +14,17 @@ import { comboOf } from '../../../stores/keysStore.js';
 const kb = (id) => (comboOf(id) ? ` (${comboOf(id)})` : '');
 
 const KERNEL_LABEL = {
-  idle: 'Inactivo', starting: 'Iniciando…', ready: 'Listo', busy: 'Ejecutando…', error: 'Error',
+  idle: 'Idle', starting: 'Starting…', ready: 'Ready', busy: 'Running…', error: 'Error',
 };
 
-const AUTO = { label: 'Automático', sym: '⚙', exe: null, hint: 'detecta numpy' };
-const BROWSE = { label: 'Elegir .exe…', sym: '📁', exe: '__browse__', hint: 'examinar' };
+const AUTO = { label: 'Automatic', sym: '⚙', exe: null, hint: 'detects numpy' };
+const BROWSE = { label: 'Choose .exe…', sym: '📁', exe: '__browse__', hint: 'browse' };
 
 export default function CalcTab() {
   const hasDoc = () => state.documents.length > 0;
   const busy = () => state.kernelStatus === 'busy' || state.kernelStatus === 'starting';
 
-  // The interpreter picker: Automático + every detected Python + "Elegir .exe…".
+  // The interpreter picker: Automatic + every detected Python + "Choose .exe…".
   const [pyItems, setPyItems] = createSignal([AUTO, BROWSE]);
   onMount(async () => {
     try {
@@ -52,56 +52,56 @@ export default function CalcTab() {
 
   return (
     <>
-      <RibbonGroup label="Celdas">
-        <RibbonButton icon={icons.cell} label="Nueva celda" disabled={!hasDoc()}
-          title={`Nueva celda Python${kb('calc.newCell')}`} onClick={insertCell} />
+      <RibbonGroup label="Cells">
+        <RibbonButton icon={icons.cell} label="New cell" disabled={!hasDoc()}
+          title={`New Python cell${kb('calc.newCell')}`} onClick={insertCell} />
       </RibbonGroup>
 
-      <RibbonGroup label="Ejecutar">
-        <RibbonButton icon={icons.run} label="Celda actual" disabled={!hasDoc() || busy()}
-          title={`Ejecutar la celda actual${kb('calc.runCell')}`} onClick={runCurrentCell} />
-        {/* While the kernel is busy this turns into "Interrumpir" (Jupyter-style). */}
+      <RibbonGroup label="Run">
+        <RibbonButton icon={icons.run} label="Current cell" disabled={!hasDoc() || busy()}
+          title={`Run the current cell${kb('calc.runCell')}`} onClick={runCurrentCell} />
+        {/* While the kernel is busy this turns into "Interrupt" (Jupyter-style). */}
         <RibbonButton
           icon={busy() ? icons.stop : icons.runAll}
-          label={busy() ? 'Interrumpir' : 'Todas las celdas'}
+          label={busy() ? 'Interrupt' : 'All cells'}
           active={busy()}
           disabled={!hasDoc()}
-          title={busy() ? 'Interrumpir la ejecución del kernel' : `Ejecutar todas las celdas${kb('calc.runAll')}`}
+          title={busy() ? 'Interrupt kernel execution' : `Run all cells${kb('calc.runAll')}`}
           onClick={() => (busy() ? interruptKernel() : runAll())} />
       </RibbonGroup>
 
-      <RibbonGroup label="Salidas">
+      <RibbonGroup label="Outputs">
         <RibbonButton
           icon={state.cellsCollapsed ? icons.expandAll : icons.collapseAll}
-          label={state.cellsCollapsed ? 'Expandir todas' : 'Minimizar todas'}
+          label={state.cellsCollapsed ? 'Expand all' : 'Collapse all'}
           active={state.cellsCollapsed}
           disabled={!hasDoc()}
           onClick={toggleCollapseAll}
-          title="Minimiza o expande TODAS las celdas y sus salidas a la vez (no las oculta: se pueden reabrir una a una)"
+          title="Collapse or expand ALL cells and their outputs at once (doesn't hide them: they can be reopened one by one)"
         />
       </RibbonGroup>
 
-      <RibbonGroup label="Kernel Python">
+      <RibbonGroup label="Python kernel">
         <div class="ribbon-btn-stack">
-          <RibbonButton size="small" icon={icons.restart} label="Reiniciar"
-            title={`Reiniciar el kernel${kb('calc.restart')}`} onClick={restartKernel} />
-          <RibbonButton size="small" icon={icons.clear} label="Limpiar salidas" onClick={clearOutputs} />
-          <RibbonButton size="small" icon={icons.eyeOff} label="Ocultar salidas" active={state.hideOutputs}
-            title="Oculta las salidas (los cálculos siguen ejecutándose y compilándose en el documento)"
+          <RibbonButton size="small" icon={icons.restart} label="Restart"
+            title={`Restart the kernel${kb('calc.restart')}`} onClick={restartKernel} />
+          <RibbonButton size="small" icon={icons.clear} label="Clear outputs" onClick={clearOutputs} />
+          <RibbonButton size="small" icon={icons.eyeOff} label="Hide outputs" active={state.hideOutputs}
+            title="Hides the outputs (calculations still run and compile into the document)"
             onClick={toggleHideOutputs} />
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label="Intérprete">
+      <RibbonGroup label="Interpreter">
         <div class="ribbon-dd-stack">
           <RibbonDropdown caption="Python" memKey="pyinterp" icon={icons.python}
-            placeholder="Automático"
-            title="Elegir el intérprete de Python (.exe), o Automático"
+            placeholder="Automatic"
+            title="Choose the Python interpreter (.exe), or Automatic"
             items={pyItems()} onPick={onPickPython} />
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label="Estado">
+      <RibbonGroup label="Status">
         <div class="ribbon-field">
           <div class="ribbon-field-row">
             <span class={`status-dot ${state.kernelStatus}`}></span>
@@ -111,7 +111,7 @@ export default function CalcTab() {
             'font-size': '11px', color: 'var(--theme-text-secondary)',
             'max-width': '230px', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis',
           }}>
-            {state.env.python ? `${state.env.python}` : 'Python no detectado'}
+            {state.env.python ? `${state.env.python}` : 'Python not detected'}
           </div>
         </div>
       </RibbonGroup>

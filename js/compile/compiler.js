@@ -364,14 +364,23 @@ export async function compileActive(showViewer = true) {
 
     const allText = [...files.values()].map((f) => f.content).join('\n');
     const passes = /\\(tableofcontents|ref|cite|listoffigures|listoftables)\b/.test(allText) ? 2 : 1;
-    const engine = rootDoc.engine || doc.engine || state.env.latex || 'xelatex';
+    // % !TeX program = pdflatex — the document names its own engine, like in
+    // TeXstudio. An explicit per-document choice (Configuración) still wins.
+    const magicEngine = (
+      /^\s*%\s*!TeX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)\s*$/im.exec(rootContent)
+      || []
+    )[1];
+    const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()
+      || state.env.latex || 'xelatex';
     const res = await compileLatex(buildPath, engine, passes, stem);
 
     state.lastLog =
       (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') + (res.log || '');
     state.lastCompileOk = res.ok;
 
-    if (res.ok && res.pdf_path) {
+    // TeXstudio-style: pdf_path is only set when THIS run wrote a PDF, so show
+    // it even if TeX recovered from errors — they stay listed in the log panel.
+    if (res.pdf_path) {
       lastPdfPath = res.pdf_path;
       if (auxOpen()) {
         // The detached window is the active viewer: refresh THAT one (the

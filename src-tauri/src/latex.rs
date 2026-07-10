@@ -177,15 +177,24 @@ pub fn compile(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| src.file_stem().unwrap_or_default().to_string_lossy().to_string());
 
+    // Snapshot the PDF's mtime BEFORE compiling: success is "this run wrote a
+    // PDF", never "a PDF from some earlier compile is still lying around".
+    let pdf = dir.join(format!("{out_name}.pdf"));
+    let mtime_of = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
+    let pdf_mtime_before = mtime_of(&pdf);
+
     let passes = passes.clamp(1, 3);
     let mut log = String::new();
-    let mut last_ok = false;
+    let mut clean = false;
 
     for i in 0..passes {
         let mut cmd = Command::new(&engine_cmd);
+        // Like TeXstudio: NO -halt-on-error. In nonstopmode TeX recovers from
+        // errors and still emits a PDF when it can; the problems stay visible
+        // in the log panel. Halting on the first error made documents that
+        // "work" in TeXstudio produce nothing here.
         cmd.current_dir(dir)
             .arg("-interaction=nonstopmode")
-            .arg("-halt-on-error")
             .arg("-synctex=1");
         if let Some(j) = jobname.as_ref().filter(|s| !s.trim().is_empty()) {
             cmd.arg(format!("-jobname={j}"));
@@ -204,10 +213,10 @@ pub fn compile(
             log.push_str(&err);
         }
         log.push('\n');
-        last_ok = output.status.success();
-        if !last_ok {
-            break; // halt-on-error already stopped TeX; no point in more passes
-        }
+        // Exit status 0 = no TeX errors at all ("clean"). A nonzero status just
+        // means errors were recovered — the pass still ran to completion, so
+        // reference-settling reruns are still meaningful.
+        clean = output.status.success();
         // Extra passes only when TeX actually asks for one (unsettled refs/TOC):
         // most compiles finish in a single, fast pass.
         let needs_rerun = pass_out.contains("Rerun to get")
@@ -218,12 +227,16 @@ pub fn compile(
         }
     }
 
-    let pdf = dir.join(format!("{out_name}.pdf"));
-    let pdf_exists = pdf.exists();
+    // Fresh = created now, or overwritten (mtime advanced) by this run.
+    let pdf_fresh = match (pdf_mtime_before, mtime_of(&pdf)) {
+        (None, Some(_)) => true,
+        (Some(before), Some(after)) => after > before,
+        _ => false,
+    };
 
     Ok(CompileResult {
-        ok: last_ok && pdf_exists,
-        pdf_path: if pdf_exists {
+        ok: clean && pdf_fresh,
+        pdf_path: if pdf_fresh {
             Some(pdf.to_string_lossy().to_string())
         } else {
             None

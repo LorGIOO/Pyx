@@ -1,76 +1,122 @@
-\documentclass[12pt]{article}
-\usepackage[utf8]{inputenc}
-\usepackage{amsmath}
-\usepackage{booktabs}
-\usepackage{graphicx}
+\documentclass[border=10pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{chemfig}
+\usetikzlibrary{calc,arrows.meta}
 
-\title{Ejemplo Calc: LaTeX + Python}
-\author{}
-\date{\today}
+% ---------- estilo global: TODO en negro ----------
+\setchemfig{
+  atom sep=2.1em,
+  bond style={line width=0.7pt},
+  double bond sep=2pt,
+  arrow style={line width=0.6pt},
+  scheme debug=false
+}
+% flechas de "empuje" de electrones (curvas)
+\newcommand{\epush}[1]{%
+  \chemmove[-{Stealth[length=3.5pt,width=3pt]},line width=0.55pt,%
+            shorten <=1.5pt,shorten >=1.5pt]{#1}}
+
+% cadena butanoilo (CH3CH2CH2-) que termina en el C carbonilico
+\definesubmol{Rac}{CH_3-[:30]-[:-30]-[:30]}
+% propilo colgando de un oxigeno (O-CH2CH2CH3)
+\definesubmol{prO}{-[:-30]-[:30]-[:-30]}
+% oxigeno con carga positiva
+\newcommand{\Opos}{\chemabove[1.2pt]{O}{\scriptscriptstyle\oplus}}
+% cloruro (anion)
+\newcommand{\Clm}{\lewis{0246,\chemabove[1pt]{Cl}{\scriptscriptstyle\ominus}}}
+% etiqueta de paso
+\newcommand{\step}[2]{{\footnotesize\textbf{#1:} \textit{#2}}}
 
 \begin{document}
-\maketitle
 
-\section{Cálculo simple}
-Define variables en una celda y úsalas en el texto con \verb|??|.
-Pulsa \textbf{Shift+Enter} dentro de la celda para ejecutarla.
+\begin{tabular}{@{}l@{\hskip 12mm}l@{}}
+%======================= COLUMNA IZQUIERDA: TITULO + ESQUEMA =======================
+\begin{minipage}[b]{152mm}
 
-%#python
-%import math
-%g = 9.81          # m/s^2
-%t = 3.0           # s
-%v = g * t
-%d = 0.5 * g * t**2
-%print(f"v = {v:.2f} m/s, d = {d:.2f} m")
-%#end
+{\large\textbf{Mechanism} for acid-catalyzed transesterification is \textbf{P\,A\,D\,P\,E\,D}}\\[1mm]
+{\normalsize Protonation $\cdot$ Addition $\cdot$ Deprotonation $\cdot$ Protonation $\cdot$ Elimination $\cdot$ Deprotonation}\\[6mm]
 
-Tras $t = 3\,$s de caída libre, la velocidad es $29.43\,$m/s y la
-distancia recorrida $44.15\,$m. Puedes operar dentro de \verb|??|:
-el doble menos tres medios es $57.36$.
+\schemestart
+%---------------- PASO 1: PROTONACION ----------------
+\parbox{40mm}{\centering \step{Step 1}{Protonation}\\[3mm]
+  \chemfig{!{Rac}C(=[:90]@{aO}\lewis{15,O})-[:-30]\lewis{37,O}-[:30]CH_3}%
+  \hskip3mm
+  \chemfig{@{aH}H-[:0]@{aCl}\lewis{26,Cl}}%
+  \epush{
+    \draw (aO)..controls +(60:6mm) and +(120:6mm)..(aH);
+    \draw ($(aH)!0.5!(aCl)$)..controls +(80:4mm) and +(100:4mm)..(aCl);
+  }%
+}
+\arrow{<=>}[,1.3]
+%---------------- PASO 2: ADICION ----------------
+\parbox{42mm}{\centering \step{Step 2}{Addition}\\[3mm]
+  \chemfig{!{Rac}@{bC}C(=[:90]\Opos-[:60]H)-[:-30]\lewis{37,O}-[:30]CH_3}\\[2mm]
+  \chemfig{@{bNu}\lewis{15,O}(-[:180]H)!{prO}}%
+  \epush{\draw (bNu)..controls +(120:7mm) and +(-30:7mm)..(bC);}%
+  \hskip3mm \raisebox{6mm}{\chemfig{\Clm}}%
+}
+\arrow{<=>}[,1.3]
+%---------------- PASO 3: DEPROTONACION ----------------
+\parbox{44mm}{\centering \step{Step 3}{Deprotonation}\\[3mm]
+  \chemfig{!{Rac}C(-[:150]HO)(-[:75]\lewis{15,O}-[:30]CH_3)-[:-20]@{cOp}\Opos(-[:60]@{cH}H)!{prO}}%
+  \hskip1mm\raisebox{-3mm}{\chemfig{@{cCl}\Clm}}%
+  \epush{
+    \draw (cCl)..controls +(60:6mm) and +(-30:6mm)..(cH);
+    \draw ($(cOp)!0.5!(cH)$)..controls +(150:3mm) and +(30:3mm)..(cOp);
+  }%
+}
+\arrow{<=>}[-90,1.3]
+%---------------- PASO 4: PROTONACION ----------------
+\parbox{44mm}{\centering \step{Step 4}{Protonation}\\[3mm]
+  \chemfig{!{Rac}C(-[:150]HO)(-[:75]@{dOme}\lewis{15,O}-[:30]CH_3)-[:-20]\lewis{37,O}!{prO}}%
+  \hskip2mm
+  \chemfig{@{dH}H-[:0]@{dCl}\lewis{26,Cl}}%
+  \epush{
+    \draw (dOme)..controls +(40:6mm) and +(140:6mm)..(dH);
+    \draw ($(dH)!0.5!(dCl)$)..controls +(80:4mm) and +(100:4mm)..(dCl);
+  }%
+}
+\arrow{<=>}[180,1.3]
+%---------------- PASO 5: ELIMINACION ----------------
+\parbox{46mm}{\centering \step{Step 5}{Elimination}\\[3mm]
+  \chemfig{!{Rac}@{eC}C(-[:150]@{eOH}\lewis{35,O}-[:120]H)(-[:70]@{eLv}\Opos(-[:130]H)-[:30]CH_3)-[:-20]\lewis{37,O}!{prO}}%
+  \ \raisebox{4mm}{$+\ \mathrm{CH_3OH}$}%
+  \epush{
+    \draw (eOH)..controls +(-40:5mm) and +(140:5mm)..(eC);
+    \draw ($(eC)!0.5!(eLv)$)..controls +(120:4mm) and +(-60:4mm)..(eLv);
+  }%
+}
+\arrow{<=>}[180,1.3]
+%---------------- PASO 6: DEPROTONACION ----------------
+\parbox{42mm}{\centering \step{Step 6}{Deprotonation}\\[3mm]
+  \raisebox{4mm}{\chemfig{@{fCl}\Clm}}\hskip1mm
+  \chemfig{!{Rac}C(=[:90]@{fO}\Opos-[:60]@{fH}H)-[:-30]\lewis{37,O}!{prO}}%
+  \epush{
+    \draw (fCl)..controls +(-40:6mm) and +(150:6mm)..(fH);
+    \draw ($(fO)!0.5!(fH)$)..controls +(180:3mm) and +(60:3mm)..(fO);
+  }%
+}
+\arrow{<=>}[-90,1.3]
+%---------------- PRODUCTOS ----------------
+\parbox{72mm}{\centering
+  \chemfig{!{Rac}C(=[:90]\lewis{15,O})-[:-30]\lewis{37,O}!{prO}}%
+  \ $+\ \mathrm{CH_3OH}$\ \ $+\ \mathrm{HCl\ (catalyst)}$\\[2mm]
+  {\footnotesize\textbf{New} ester \hfill}%
+}
+\schemestop
 
-\section{Una tabla generada en Python}
-Una celda puede construir LaTeX completo y traerlo con \verb|??|:
-
-%#python
-%filas = "\n".join(f"{n} & {n**2} & {n**3} \\\\" for n in range(1, 6))
-%#end
-
-\begin{table}[h]
-  \centering
-  \begin{tabular}{c c c}
-    \toprule
-    $n$ & $n^2$ & $n^3$ \\
-    \midrule
-    1 & 1 & 1 \\
-2 & 4 & 8 \\
-3 & 9 & 27 \\
-4 & 16 & 64 \\
-5 & 25 & 125 \\
-    \bottomrule
-  \end{tabular}
-  \caption{Potencias calculadas en Python.}
-\end{table}
-
-\section{Figuras con matplotlib (opcional)}
-Si tienes \texttt{matplotlib}, \verb|figure("nombre")| guarda la figura y
-devuelve su ruta, que puedes incluir con \verb|??|:
-
-%#python
-%# Requiere: pip install matplotlib
-%ruta = None
-%try:
-%    import matplotlib.pyplot as plt
-%    xs = [i/10 for i in range(0, 63)]
-%    plt.figure(figsize=(5, 3))
-%    plt.plot(xs, [math.sin(x) for x in xs])
-%    plt.title("sin(x)")
-%    ruta = figure("grafico")
-%    print("Figura guardada en", ruta)
-%except ImportError:
-%    print("matplotlib no instalado; omito la figura.")
-%#end
-
-% Descomenta si generaste la figura:
-% \begin{figure}[h]\centering\includegraphics[width=0.6\linewidth]{_calc_figs/grafico.png}\caption{}\end{figure}
+\end{minipage}
+&
+%======================= COLUMNA DERECHA: NOTAS =======================
+\begin{minipage}[b]{58mm}
+\raggedright
+\begin{itemize}\setlength{\itemsep}{7pt}\setlength{\leftmargini}{1.2em}
+  \item All steps are in equilibrium!
+  \item Equilibrium will favor whichever alcohol is present in greater concentration, \textit{assuming they are of roughly equal basicity}
+  \item Can get this product by using propanol as solvent.
+  \item Can drive the equilibrium in the opposite direction by using $\mathrm{CH_3OH}$ as solvent
+\end{itemize}
+\end{minipage}
+\end{tabular}
 
 \end{document}

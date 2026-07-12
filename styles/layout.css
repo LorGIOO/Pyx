@@ -554,7 +554,19 @@
   color: var(--theme-text);
   white-space: pre-wrap;
   word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;   /* the raw engine output is selectable/copyable */
 }
+/* Problems are selectable AND copyable (button + right-click), TeXstudio-style. */
+.log-problems, .log-item, .log-msg, .log-file, .log-line { -webkit-user-select: text; user-select: text; }
+.log-copy {
+  font-size: 11px; font-weight: 600;
+  padding: 1px 8px; margin-right: 6px;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text-secondary) !important;
+  background: transparent; cursor: default;
+}
+.log-copy:hover { color: var(--theme-text) !important; border-color: var(--theme-accent) !important; }
 /* Problems view of the log panel (clickable errors/warnings → jump to line). */
 .log-tabs { display: flex; gap: 2px; }
 .log-tabs button {
@@ -581,6 +593,13 @@
 .log-sev { flex: 0 0 auto; width: 14px; text-align: center; font-weight: 700; }
 .log-item.error .log-sev { color: #e0654a; }
 .log-item.warning .log-sev { color: #d9a528; }
+.log-item.badbox .log-sev { color: #7f9bd0; }
+.log-file {
+  flex: 0 0 auto; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px; color: var(--theme-text-secondary);
+}
 .log-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); }
 .log-line {
   flex: 0 0 auto; font-family: "Cascadia Code", Consolas, monospace;

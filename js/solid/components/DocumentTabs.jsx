@@ -1,6 +1,8 @@
 import { For } from 'solid-js';
 import { state } from '../../core/state.js';
-import { switchTo, closeDocument, newDocument } from '../stores/docStore.js';
+import { t } from '../../core/i18n.js';
+import { switchTo, closeDocument } from '../stores/docStore.js';
+import { openNewDoc } from './NewDocDialog.jsx';
 
 const DOC_MIME = 'application/x-calc-doc';
 
@@ -24,7 +26,7 @@ export default function DocumentTabs() {
             <span class="doc-tab-name">{doc.fileName}</span>
             <button
               class="doc-tab-close"
-              title="Cerrar"
+              title={t('Cerrar', 'Close')}
               onClick={(e) => {
                 e.stopPropagation();
                 closeDocument(i());
@@ -35,7 +37,7 @@ export default function DocumentTabs() {
           </div>
         )}
       </For>
-      <button class="doc-tab-add" title="Nuevo documento (Ctrl+N)" onClick={() => newDocument()}>
+      <button class="doc-tab-add" title={t('Nuevo documento (Ctrl+N)', 'New document (Ctrl+N)')} onClick={openNewDoc}>
         +
       </button>
     </div>

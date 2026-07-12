@@ -12,6 +12,7 @@ import { compileActive, scheduleLiveCompile, reloadLastPdf } from './compile/com
 import { loadPdf } from './pdf/preview.js';
 import { openFind, runAll, gotoLineCol } from './editor/commands.js';
 import { openPath } from './solid/stores/docStore.js';
+import { openNewDoc } from './solid/components/NewDocDialog.jsx';
 import { lastArea, setPdfSearchOpen, setAuxOpen } from './solid/stores/previewStore.js';
 import { ensureKernel, restartKernel } from './editor/cell-runner.js';
 import { initSettings, general, setGeneral } from './solid/stores/settingsStore.js';
@@ -99,7 +100,7 @@ if (viewerBoot) {
   // Every app action is rebindable (Configuración → Atajos). Cell actions are
   // dispatched from inside the editor (dynamic-keys.js); these are global.
   registerKeyHandlers({
-    'file.new': () => { newDocument(); },
+    'file.new': () => { openNewDoc(); },
     'file.open': () => { openDocument(); },
     'file.save': () => { saveActive(); },
     'file.close': () => { closeActive(); },

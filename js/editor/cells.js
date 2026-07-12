@@ -12,6 +12,7 @@ import { StringStream } from '@codemirror/language';
 import { python } from '@codemirror/legacy-modes/mode/python';
 import { state as appState } from '../core/state.js';
 import { dirOf } from '../core/paths.js';
+import { createVerbatimTracker } from '../compile/latex-bridge.js';
 import { runCellCode, restartKernel, withKernelLock, interruptKernel } from './cell-runner.js';
 import { broadcastCellRefresh } from './setup.js';
 import { openExternal } from '../core/platform.js';
@@ -115,15 +116,21 @@ export function parseCells(state) {
   const hit = cellsCache.get(doc);
   if (hit) return hit;
   const cells = [];
+  // Markers inside verbatim environments (minted, verbatim, lstlisting…) are
+  // DISPLAYED code, not cells — the tracker skips them. It only advances while
+  // outside a cell (cell bodies are Python, not LaTeX).
+  const inVerb = createVerbatimTracker();
   let inCell = false, headerLine = 0, codeLines = [];
   for (let ln = 1; ln <= doc.lines; ln++) {
-    const t = doc.line(ln).text.trim();
-    if (!inCell && t.startsWith(CELL_OPEN)) { inCell = true; headerLine = ln; codeLines = []; }
+    const raw = doc.line(ln).text;
+    const verb = inCell ? false : inVerb(raw);
+    const t = raw.trim();
+    if (!inCell && !verb && t.startsWith(CELL_OPEN)) { inCell = true; headerLine = ln; codeLines = []; }
     else if (inCell && t.startsWith(CELL_CLOSE)) {
       const code = codeLines.join('\n');
       cells.push({ headerLine, endLine: ln, code, hash: hashCode(code) });
       inCell = false;
-    } else if (inCell) codeLines.push(doc.line(ln).text);
+    } else if (inCell) codeLines.push(raw);
   }
   cellsCache.set(doc, cells);
   return cells;
@@ -132,10 +139,12 @@ export function parseCells(state) {
 export function parseCellsText(text) {
   const cells = [];
   const lines = text.split(/\r?\n/);
+  const inVerb = createVerbatimTracker();
   let inCell = false, codeLines = [];
   for (const raw of lines) {
+    const verb = inCell ? false : inVerb(raw);
     const t = raw.trim();
-    if (!inCell && t.startsWith(CELL_OPEN)) { inCell = true; codeLines = []; }
+    if (!inCell && !verb && t.startsWith(CELL_OPEN)) { inCell = true; codeLines = []; }
     else if (inCell && t.startsWith(CELL_CLOSE)) { cells.push({ code: codeLines.join('\n') }); inCell = false; }
     else if (inCell) codeLines.push(raw);
   }
@@ -157,8 +166,28 @@ async function execCell(view, cell, reset) {
   OUTPUTS.set(cell.hash, { ...res, running: false, count, ms });
   broadcastCellRefresh();
 }
+/* A MANUALLY run handcalcs cell (%%render/%%tex) IS document content: the PDF
+   must show it right away, so a background compile fires automatically after
+   the run. Debounced (run-all fires once at the end) and it retries while a
+   compile is in flight. The compiler's own cell runs go through execCellByCode
+   / runAllCellsHeld and never reach this — no compile loops. */
+let hcTimer = null;
+function scheduleHandcalcsCompile() {
+  clearTimeout(hcTimer);
+  const fire = () => {
+    if (appState.compiling) { hcTimer = setTimeout(fire, 300); return; }
+    const d = appState.documents[appState.activeIndex];
+    if (!d || d.kind || !d.path) return; // unsaved docs can't compile yet
+    import('../compile/compiler.js').then((m) => m.compileActive(false)).catch(() => {});
+  };
+  hcTimer = setTimeout(fire, 120);
+}
+
 function runOne(view, cell, reset) {
-  return withKernelLock(() => execCell(view, cell, reset));
+  return withKernelLock(() => execCell(view, cell, reset)).then(() => {
+    const out = OUTPUTS.get(cell.hash);
+    if (out && out.ok && out.render) scheduleHandcalcsCompile();
+  });
 }
 function runCellByHash(view, hash) {
   const cell = parseCells(view.state).find((c) => c.hash === hash);
@@ -236,6 +265,13 @@ export async function runAllCells(view) {
   // One lock for the WHOLE sequence: reset + every cell runs atomically, so a
   // concurrent Shift+Enter can never land between the reset and the imports.
   await withKernelLock(() => runAllCellsHeld(view));
+  // If any cell produced a handcalcs render, refresh the PDF now (one compile
+  // for the whole run, not one per cell).
+  const any = parseCells(view.state).some((c) => {
+    const o = OUTPUTS.get(c.hash);
+    return o && o.ok && o.render;
+  });
+  if (any) scheduleHandcalcsCompile();
 }
 
 // Ctrl+A: inside a cell selects only the cell's code; otherwise returns false

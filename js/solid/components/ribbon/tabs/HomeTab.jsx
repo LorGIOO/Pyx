@@ -82,14 +82,14 @@ export default function HomeTab() {
       <RibbonGroup label={t('Párrafo', 'Paragraph')}>
         <div class="ribbon-btn-stack">
           <div class="ribbon-btn-row">
-            <RibbonButton icon={icons.alignLeft} title={t('Alinear a la izquierda', 'Align left')} onClick={() => runSnippet(ALIGN[0])} />
-            <RibbonButton icon={icons.alignCenter} title={t('Centrar', 'Center')} onClick={() => runSnippet(ALIGN[1])} />
-            <RibbonButton icon={icons.alignRight} title={t('Alinear a la derecha', 'Align right')} onClick={() => runSnippet(ALIGN[2])} />
+            <RibbonButton icon={icons.alignLeft} title={t('Alinear a la izquierda', 'Align left')} onClick={() => runSnippet(ALIGN()[0])} />
+            <RibbonButton icon={icons.alignCenter} title={t('Centrar', 'Center')} onClick={() => runSnippet(ALIGN()[1])} />
+            <RibbonButton icon={icons.alignRight} title={t('Alinear a la derecha', 'Align right')} onClick={() => runSnippet(ALIGN()[2])} />
           </div>
           <div class="ribbon-btn-row">
-            <RibbonButton icon={icons.bullets} title={t('Lista de viñetas', 'Bulleted list')} onClick={() => runSnippet(LISTS[0])} />
-            <RibbonButton icon={icons.numbered} title={t('Lista numerada', 'Numbered list')} onClick={() => runSnippet(LISTS[1])} />
-            <RibbonDropdown compact label={t('Listas', 'Lists')} title={t('Listas y elementos', 'Lists and items')} items={LISTS} onPick={runSnippet} />
+            <RibbonButton icon={icons.bullets} title={t('Lista de viñetas', 'Bulleted list')} onClick={() => runSnippet(LISTS()[0])} />
+            <RibbonButton icon={icons.numbered} title={t('Lista numerada', 'Numbered list')} onClick={() => runSnippet(LISTS()[1])} />
+            <RibbonDropdown compact label={t('Listas', 'Lists')} title={t('Listas y elementos', 'Lists and items')} items={LISTS()} onPick={runSnippet} />
           </div>
         </div>
       </RibbonGroup>
@@ -120,9 +120,9 @@ export default function HomeTab() {
 
       <RibbonGroup label={t('Estructura', 'Structure')}>
         <div class="ribbon-dd-stack">
-          <RibbonDropdown caption={t('Sección', 'Section')} title={t('Estructura del documento', 'Document structure')} items={STRUCTURE} onPick={runSnippet} />
-          <RibbonDropdown caption={t('Etiqueta', 'Label')} title={t('Etiquetas y referencias', 'Labels and references')} items={LABELS} onPick={runSnippet} />
-          <RibbonDropdown caption={t('Tamaño', 'Size')} title={t('Tamaño de letra', 'Font size')} items={FONT_SIZES} onPick={runSnippet} />
+          <RibbonDropdown caption={t('Sección', 'Section')} title={t('Estructura del documento', 'Document structure')} items={STRUCTURE()} onPick={runSnippet} />
+          <RibbonDropdown caption={t('Etiqueta', 'Label')} title={t('Etiquetas y referencias', 'Labels and references')} items={LABELS()} onPick={runSnippet} />
+          <RibbonDropdown caption={t('Tamaño', 'Size')} title={t('Tamaño de letra', 'Font size')} items={FONT_SIZES()} onPick={runSnippet} />
         </div>
       </RibbonGroup>
     </>

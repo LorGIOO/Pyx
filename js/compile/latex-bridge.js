@@ -15,18 +15,75 @@
 // keep importing everything bridge-related from here.
 export { dirOf, baseName, stemOf, joinPath } from '../core/paths.js';
 
+/* ---------------- verbatim awareness (minted, verbatim, \verb…) -----------
+   Inside a verbatim environment the document is SHOWING code, not using it:
+   `%#python` markers must not become cells and `\py{…}` must not be evaluated
+   — everything stays plain text, exactly as TeXstudio treats verbatim. */
+const VERBATIM_ENVS = new Set([
+  'verbatim', 'Verbatim', 'BVerbatim', 'LVerbatim', 'lstlisting', 'minted',
+  'alltt', 'comment', 'filecontents',
+]);
+const reBeginVerb = /\\begin\s*\{([A-Za-z]+)\*?\}/;
+const reEndVerb = /\\end\s*\{([A-Za-z]+)\*?\}/;
+
+/** Line-by-line tracker: call with each line IN ORDER; returns true while the
+ * line belongs to a verbatim environment (\begin and \end lines included).
+ * Once inside, only the matching \end{env} closes it (verbatim semantics). */
+export function createVerbatimTracker() {
+  let env = null;
+  return (line) => {
+    if (env) {
+      const m = line.match(reEndVerb);
+      if (m && m[1] === env) env = null;
+      return true;
+    }
+    const b = line.match(reBeginVerb);
+    if (b && VERBATIM_ENVS.has(b[1])) { env = b[1]; return true; }
+    return false;
+  };
+}
+
+/** Character ranges of text that must NOT be interpreted: lines inside
+ * verbatim environments plus inline \verb|…| / \verb*|…| spans. */
+export function protectedRanges(text) {
+  const ranges = [];
+  const inVerb = createVerbatimTracker();
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const end = pos + line.length;
+    if (inVerb(line)) {
+      ranges.push([pos, end]);
+    } else {
+      const re = /\\verb\*?([^A-Za-z\s])/g;
+      let m;
+      while ((m = re.exec(line))) {
+        const close = line.indexOf(m[1], re.lastIndex);
+        const stop = close === -1 ? line.length : close + 1;
+        ranges.push([pos + m.index, pos + stop]);
+        re.lastIndex = stop;
+      }
+    }
+    pos = end + 1;
+  }
+  return ranges;
+}
+const inRanges = (ranges, i) => ranges.some(([a, b]) => i >= a && i < b);
+
 /**
  * Find every \py{...} occurrence, matching balanced braces so f-strings like
  * \py{f"{x:.2f}"} work. Returns [{start, end, expr}] with [start,end) covering
- * the whole \py{...} token.
+ * the whole \py{...} token. Occurrences inside verbatim contexts (minted,
+ * verbatim, \verb…) are literal text and are NOT returned.
  */
 export function findPyExprs(text) {
   const out = [];
   const needle = '\\py{';
+  const skip = protectedRanges(text);
   let i = 0;
   while (i < text.length) {
     const at = text.indexOf(needle, i);
     if (at === -1) break;
+    if (inRanges(skip, at)) { i = at + needle.length; continue; }
     let depth = 1;
     let j = at + needle.length;
     while (j < text.length && depth > 0) {
@@ -67,10 +124,12 @@ function readGroup(text, openIdx) {
 export function findPyIfExprs(text) {
   const out = [];
   const needle = '\\pyif{';
+  const skip = protectedRanges(text);
   let i = 0;
   while (i < text.length) {
     const at = text.indexOf(needle, i);
     if (at === -1) break;
+    if (inRanges(skip, at)) { i = at + needle.length; continue; }
     const g1 = readGroup(text, at + needle.length - 1); // -1 → points at the first '{'
     if (!g1) break;
     if (text[g1.end] !== '{') { i = at + needle.length; continue; }
@@ -124,20 +183,50 @@ export function resolvePyIf(text, valueMap) {
   return out;
 }
 
-/** Replace each \py{expr} with its evaluated value from `valueMap`. */
-export function resolvePyText(text, valueMap) {
-  const exprs = findPyExprs(text);
-  if (!exprs.length) return text;
+/**
+ * \py*{expr} — the ESCAPED form: shows the literal text "\py{expr}" in the
+ * document instead of evaluating it (like \% shows a %). At build time it
+ * becomes \texttt{\detokenize{\py{expr}}}, which typesets verbatim-safe.
+ * Inside verbatim contexts it is left untouched (already literal there).
+ */
+function escapePyStar(text) {
+  const needle = '\\py*{';
+  if (!text.includes(needle)) return text;
+  const skip = protectedRanges(text);
   let out = '';
   let cursor = 0;
-  for (const e of exprs) {
-    out += text.slice(cursor, e.start);
-    const v = valueMap[e.expr];
-    out += v && v.ok ? v.value : '??';
-    cursor = e.end;
+  let i = 0;
+  while (i < text.length) {
+    const at = text.indexOf(needle, i);
+    if (at === -1) break;
+    if (inRanges(skip, at)) { i = at + needle.length; continue; }
+    const g = readGroup(text, at + needle.length - 1);
+    if (!g) break;
+    out += text.slice(cursor, at) + '\\texttt{\\detokenize{\\py{' + g.inner + '}}}';
+    cursor = g.end;
+    i = g.end;
   }
   out += text.slice(cursor);
   return out;
+}
+
+/** Replace each \py{expr} with its evaluated value from `valueMap`, and each
+ * escaped \py*{expr} with typeset-able literal text. */
+export function resolvePyText(text, valueMap) {
+  const exprs = findPyExprs(text);
+  let out = text;
+  if (exprs.length) {
+    out = '';
+    let cursor = 0;
+    for (const e of exprs) {
+      out += text.slice(cursor, e.start);
+      const v = valueMap[e.expr];
+      out += v && v.ok ? v.value : '??';
+      cursor = e.end;
+    }
+    out += text.slice(cursor);
+  }
+  return escapePyStar(out);
 }
 
 /**
@@ -156,8 +245,16 @@ export function neutralizeCells(text, renderByCode = {}) {
   const hasRenders = renderByCode && Object.keys(renderByCode).length > 0;
   const lines = text.split(/\r?\n/);
   const out = [];
+  const inVerb = createVerbatimTracker();
   let i = 0;
   while (i < lines.length) {
+    // Inside minted/verbatim the markers are DISPLAYED code, not a cell:
+    // pass the line through untouched (the engine typesets it as-is).
+    if (inVerb(lines[i])) {
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
     if (lines[i].trim().startsWith('%#python')) {
       const open = i;
       const code = [];
@@ -165,7 +262,13 @@ export function neutralizeCells(text, renderByCode = {}) {
       while (j < lines.length && !lines[j].trim().startsWith('%#end')) { code.push(lines[j]); j++; }
       const latex = hasRenders ? renderByCode[code.join('\n')] : undefined;
       if (latex != null) {
-        out.push(latex); // handcalcs cell: typeset its LaTeX where the cell is
+        // Handcalcs cell: typeset its LaTeX where the cell is — with ZERO line
+        // shift. Newlines inside display math are just spaces, so the render
+        // collapses to one line and the rest pads as % comments; SyncTeX and
+        // log line numbers below the cell stay exact.
+        out.push(latex.replace(/\s*\r?\n\s*/g, ' ').trim());
+        const consumed = j < lines.length ? j - open + 1 : lines.length - open;
+        for (let k = 1; k < consumed; k++) out.push('%');
       } else {
         out.push(lines[open]);              // %#python (already a LaTeX comment)
         for (const c of code) out.push('%' + c);

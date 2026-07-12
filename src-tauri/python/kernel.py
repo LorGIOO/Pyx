@@ -499,13 +499,14 @@ def _detect_magic(code):
     lines = code.split("\n")
     idx = None
     args = ""
+    kind = "render"
     for i, ln in enumerate(lines):
         s = ln.strip()
         if s.startswith("%%render"):
-            idx, args = i, s[len("%%render"):].strip()
+            idx, args, kind = i, s[len("%%render"):].strip(), "render"
             break
         if s.startswith("%%tex"):
-            idx, args = i, s[len("%%tex"):].strip()
+            idx, args, kind = i, s[len("%%tex"):].strip(), "tex"
             break
     if idx is None:
         return None
@@ -513,6 +514,9 @@ def _detect_magic(code):
         "setup": "\n".join(lines[:idx]),
         "calc": "\n".join(lines[idx + 1:]),
         "args": args,
+        "kind": kind,
+        "magic_idx": idx,  # 0-based line of the magic within the cell
+        "full": code,      # the whole cell, for traceback line mapping
     }
 
 
@@ -520,12 +524,26 @@ def _render_handcalcs(magic):
     """Execute a %%render/%%tex cell and return its handcalcs LaTeX.
 
     Variables persist in NS (so later cells and \\py{...} can use them). Import
-    lines are executed but not typeset (handcalcs renders assignments)."""
+    lines are executed but not typeset (handcalcs renders assignments).
+
+    The cell registers under a `<calc-cell-N>` filename with PADDED line
+    numbers, so a traceback inside a handcalcs cell maps to the exact editor
+    line (clickable) just like a normal cell — setup lines start at line 1 and
+    the calc part starts right after the %%render/%%tex line."""
+    global _cell_seq, _last_cell_file
     import handcalcs.handcalcs as _hand
+
+    _cell_seq += 1
+    filename = "<calc-cell-%d>" % _cell_seq
+    _last_cell_file = filename
+    full = magic.get("full", "")
+    linecache.cache[filename] = (
+        len(full), None, [ln + "\n" for ln in full.split("\n")], filename,
+    )
 
     setup = magic["setup"]
     if setup.strip():
-        exec(compile(setup, "<calc-setup>", "exec"), NS, NS)
+        exec(compile(setup, filename, "exec"), NS, NS)
 
     args = _parse_line_args(magic["args"])
     calc = magic["calc"]
@@ -537,7 +555,10 @@ def _render_handcalcs(magic):
             pass
 
     if calc.strip():
-        exec(compile(calc, "<calc-render>", "exec"), NS, NS)
+        # Pad so exec line numbers equal FULL-cell line numbers (magic line is
+        # cell line magic_idx+1, 1-based; calc starts at magic_idx+2).
+        pad = "\n" * (magic.get("magic_idx", 0) + 1)
+        exec(compile(pad + calc, filename, "exec"), NS, NS)
 
     # Render source: drop import lines (handcalcs renders assignments/comments).
     render_src = "\n".join(
@@ -796,6 +817,10 @@ def handle(req):
             # into the PDF as before.
             if render_latex:
                 DISPLAYS.append({"kind": "html", "data": _latex_display_html(render_latex)})
+                # Jupyter parity: %%tex ALSO prints the raw LaTeX source so it
+                # can be copied straight into a document.
+                if magic.get("kind") == "tex":
+                    print(render_latex)
         else:
             result = _run(code).get("result")
     except BaseException as exc:

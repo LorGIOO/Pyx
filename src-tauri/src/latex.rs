@@ -184,10 +184,11 @@ pub fn compile(
     let pdf_mtime_before = mtime_of(&pdf);
 
     let passes = passes.clamp(1, 3);
+    const MAX_PASSES: u32 = 3;
     let mut log = String::new();
     let mut clean = false;
 
-    for i in 0..passes {
+    for i in 0..MAX_PASSES {
         let mut cmd = Command::new(&engine_cmd);
         // Like TeXstudio: NO -halt-on-error. In nonstopmode TeX recovers from
         // errors and still emits a PDF when it can; the problems stay visible
@@ -217,12 +218,19 @@ pub fn compile(
         // means errors were recovered — the pass still ran to completion, so
         // reference-settling reruns are still meaningful.
         clean = output.status.success();
-        // Extra passes only when TeX actually asks for one (unsettled refs/TOC):
-        // most compiles finish in a single, fast pass.
+        // Extra passes only when TeX actually asks for one: unsettled refs/TOC
+        // ("Rerun to get…"), or a table-of-contents/list file that didn't exist
+        // yet on this pass ("No file X.toc") — the next pass will pick it up.
+        // Most compiles still finish in a single, fast pass.
+        let missing_listing = pass_out.contains("No file ")
+            && [".toc.", ".lof.", ".lot."]
+                .iter()
+                .any(|ext| pass_out.contains(ext));
         let needs_rerun = pass_out.contains("Rerun to get")
             || pass_out.contains("rerun LaTeX")
-            || pass_out.contains("Rerun LaTeX");
-        if !needs_rerun {
+            || pass_out.contains("Rerun LaTeX")
+            || missing_listing;
+        if i + 1 >= passes && !needs_rerun {
             break;
         }
     }

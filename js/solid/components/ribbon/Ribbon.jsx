@@ -2,6 +2,7 @@ import { Switch, Match, Show, createEffect } from 'solid-js';
 import RibbonTab from './RibbonTab.jsx';
 import { activeTab, setActiveTab } from '../../stores/ribbonStore.js';
 import { activeDoc } from '../../../core/state.js';
+import { t } from '../../../core/i18n.js';
 import { isPyxDoc } from '../../stores/docStore.js';
 import FileTab from './tabs/FileTab.jsx';
 import HomeTab from './tabs/HomeTab.jsx';
@@ -20,13 +21,13 @@ export default function Ribbon() {
   return (
     <>
       <div class="ribbon-tabs">
-        <RibbonTab label="File" fileTab active={activeTab() === 'file'} onClick={() => setActiveTab('file')} />
-        <RibbonTab label="Home" active={activeTab() === 'home'} onClick={() => setActiveTab('home')} />
-        <RibbonTab label="Math" active={activeTab() === 'math'} onClick={() => setActiveTab('math')} />
+        <RibbonTab label={t('Archivo', 'File')} fileTab active={activeTab() === 'file'} onClick={() => setActiveTab('file')} />
+        <RibbonTab label={t('Inicio', 'Home')} active={activeTab() === 'home'} onClick={() => setActiveTab('home')} />
+        <RibbonTab label={t('Matemáticas', 'Math')} active={activeTab() === 'math'} onClick={() => setActiveTab('math')} />
         <Show when={showCalc()}>
           <RibbonTab label="Python" active={activeTab() === 'calc'} onClick={() => setActiveTab('calc')} />
         </Show>
-        <RibbonTab label="View" active={activeTab() === 'view'} onClick={() => setActiveTab('view')} />
+        <RibbonTab label={t('Ver', 'View')} active={activeTab() === 'view'} onClick={() => setActiveTab('view')} />
       </div>
 
       <div class="ribbon-content">

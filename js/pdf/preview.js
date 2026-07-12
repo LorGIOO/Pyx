@@ -298,15 +298,27 @@ async function goToDest(dest) {
   if (!pdfDoc) return;
   try {
     const d = typeof dest === 'string' ? await pdfDoc.getDestination(dest) : dest;
-    if (!d || !d[0]) return;
-    const idx = await pdfDoc.getPageIndex(d[0]);
+    if (!d || d[0] == null) return;
+    // d[0] is usually a page Ref ({num, gen}); some producers (xdvipdfmx, the
+    // xelatex backend) emit a plain 0-based page NUMBER instead. The official
+    // PDF.js viewer handles both — so do we, or TOC clicks die silently.
+    const idx = typeof d[0] === 'number' ? d[0] : await pdfDoc.getPageIndex(d[0]);
     const wrap = pageEls[idx];
     if (!wrap) return;
     let top = wrap.offsetTop;
     const kind = d[1] && d[1].name;
     // y is in PDF units measured from the BOTTOM of the page.
     const yPdf = kind === 'XYZ' ? d[3] : (kind === 'FitH' || kind === 'FitBH') ? d[2] : null;
-    if (yPdf != null && baseH) top += Math.max(0, (1 - yPdf / baseH)) * wrap.offsetHeight - 8;
+    if (yPdf != null) {
+      // Use the DESTINATION page's own height (documents can mix A4/A3,
+      // portrait/landscape) — baseH is page 1's and lands wrong on others.
+      let pageH = baseH;
+      try {
+        const pg = await pdfDoc.getPage(idx + 1);
+        pageH = pg.view[3] - pg.view[1] || baseH;
+      } catch (_) { /* keep page-1 height */ }
+      if (pageH) top += Math.max(0, (1 - yPdf / pageH)) * wrap.offsetHeight - 8;
+    }
     container.scrollTop = Math.max(0, top);
     setCurrentPage(idx + 1);
     scheduleVisible();

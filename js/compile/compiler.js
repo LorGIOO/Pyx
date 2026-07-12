@@ -10,7 +10,7 @@ import { parseCellsText, execCellByCode } from '../editor/cells.js';
 import { runCellCode, evalExpressions, withKernelLock } from '../editor/cell-runner.js';
 import {
   findPyExprs, resolvePyText, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
-  findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey,
+  findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
 } from './latex-bridge.js';
 import { loadPdf } from '../pdf/preview.js';
 import { auxOpen } from '../solid/stores/previewStore.js';
@@ -68,6 +68,7 @@ let lastCellsFailed = true;
    \input/\includes it. Cached briefly so live compiles don't rescan disk. */
 const rootCache = new Map(); // docId -> { path, at }
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const isPltx = (p) => /\.pltx$/i.test(p || ''); // ZIP container — never write raw
 
 async function resolveRootPath(doc, content) {
   if (!doc.path || /\\documentclass/.test(content)) return doc.path;
@@ -144,7 +145,9 @@ async function gatherTree(rootPath, rootContent, rootDir) {
       let c = open ? getDocContent(open.id) : null;
       if (c == null) {
         try { c = await readTextFile(child); } catch (_) { continue; }
-      } else if (open.modified) {
+      } else if (open.modified && !isPltx(child)) {
+        // .pltx children are ZIP containers (packed on Save) — never overwrite
+        // with raw text; the child's .build.tex is what actually compiles.
         await writeTextFile(child, c);
         open.modified = false;
       }
@@ -177,8 +180,14 @@ export async function compileActive(showViewer = true) {
   if (showViewer && !auxOpen()) state.previewVisible = true;
   try {
     const content = getDocContent(doc.id);
-    await writeTextFile(doc.path, content);
-    doc.modified = false;
+    // Persist the SOURCE to disk on compile so the engine sees the latest —
+    // but a .pltx is a ZIP container (packed only on explicit Save): writing
+    // plain text to it would corrupt it, so we compile from the .build.tex and
+    // leave the container untouched (stays 'modified' until the user saves).
+    if (!isPltx(doc.path)) {
+      await writeTextFile(doc.path, content);
+      doc.modified = false;
+    }
 
     // 0) Master document: compiling a child compiles its ROOT (and the whole
     //    \input tree below it). The root may be open (use its live content) or
@@ -191,8 +200,7 @@ export async function compileActive(showViewer = true) {
       if (open) {
         rootDoc = open;
         rootContent = getDocContent(open.id);
-        await writeTextFile(rootPath, rootContent);
-        open.modified = false;
+        if (!isPltx(rootPath)) { await writeTextFile(rootPath, rootContent); open.modified = false; }
       } else {
         rootDoc = { id: -1, path: rootPath, fileName: baseName(rootPath), engine: doc.engine };
         try { rootContent = await readTextFile(rootPath); } catch (_) { rootContent = ''; }
@@ -248,11 +256,15 @@ export async function compileActive(showViewer = true) {
           const hasCells = pyxLike(path, f.content);
           const od = state.documents.find((d) => d.path === path && !d.kind);
           const view = od ? getViewOfDoc(od.id) : null;
+          // Cells inside verbatim environments (minted…) are displayed code —
+          // never run them (same rule as parseCells / neutralizeCells).
+          const inVerb = createVerbatimTracker();
           let inCell = false, code = [], n = 0, lineNo = 0, headerLn = 0;
           for (const line of f.content.split(/\r?\n/)) {
             lineNo++;
+            const verb = inCell ? false : inVerb(line);
             const t = line.trim();
-            if (hasCells && !inCell && t.startsWith('%#python')) { inCell = true; code = []; headerLn = lineNo; continue; }
+            if (hasCells && !inCell && !verb && t.startsWith('%#python')) { inCell = true; code = []; headerLn = lineNo; continue; }
             if (hasCells && inCell && t.startsWith('%#end')) {
               inCell = false; n++;
               const joined = code.join('\n');
@@ -361,6 +373,17 @@ export async function compileActive(showViewer = true) {
       await writeTextFile(path.replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX, processed);
     }
     const buildPath = joinPath(cwd, stem + BUILD_SUFFIX);
+
+    // Feed the log parser what it needs for TeXstudio-grade file attribution:
+    // which build name maps to which real file, and the project file set.
+    state.lastRootFile = baseName(buildPath);
+    state.lastBuildMap = Object.fromEntries([...files.keys()].map((p) => [
+      (baseName(p).replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX).toLowerCase(), p,
+    ]));
+    state.lastKnownFiles = [...files.keys()].flatMap((p) => [
+      baseName(p).toLowerCase(),
+      (baseName(p).replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX).toLowerCase(),
+    ]);
 
     const allText = [...files.values()].map((f) => f.content).join('\n');
     const passes = /\\(tableofcontents|ref|cite|listoffigures|listoftables)\b/.test(allText) ? 2 : 1;

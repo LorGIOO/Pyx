@@ -4,29 +4,43 @@
 // always shows the live binding.
 
 import { createMutable } from 'solid-js/store';
+import { t } from '../../core/i18n.js';
 
+// `group` is a STABLE key (also used for display via groupLabel); `label`/`en`
+// are the Spanish/English display strings (see actionLabel). `id`/`def` drive
+// the shortcut logic and never change with language.
 export const KEY_ACTIONS = [
-  { id: 'file.new', group: 'Archivo', label: 'Nuevo documento', def: 'Ctrl+N' },
-  { id: 'file.open', group: 'Archivo', label: 'Abrir…', def: 'Ctrl+O' },
-  { id: 'file.save', group: 'Archivo', label: 'Guardar', def: 'Ctrl+S' },
-  { id: 'file.close', group: 'Archivo', label: 'Cerrar pestaña', def: 'Ctrl+W' },
+  { id: 'file.new', group: 'Archivo', label: 'Nuevo documento', en: 'New document', def: 'Ctrl+N' },
+  { id: 'file.open', group: 'Archivo', label: 'Abrir…', en: 'Open…', def: 'Ctrl+O' },
+  { id: 'file.save', group: 'Archivo', label: 'Guardar', en: 'Save', def: 'Ctrl+S' },
+  { id: 'file.close', group: 'Archivo', label: 'Cerrar pestaña', en: 'Close tab', def: 'Ctrl+W' },
 
-  { id: 'edit.find', group: 'Edición', label: 'Buscar (editor o PDF, según el foco)', def: 'Ctrl+F' },
+  { id: 'edit.find', group: 'Edición', label: 'Buscar (editor o PDF, según el foco)', en: 'Find (editor or PDF, depending on focus)', def: 'Ctrl+F' },
 
-  { id: 'calc.runCell', group: 'Cálculo', label: 'Ejecutar la celda actual', def: 'Ctrl+Enter' },
-  { id: 'calc.runAdvance', group: 'Cálculo', label: 'Ejecutar celda y avanzar', def: 'Shift+Enter' },
-  { id: 'calc.newCell', group: 'Cálculo', label: 'Nueva celda Python', def: 'Ctrl+Alt+C' },
-  { id: 'calc.runAll', group: 'Cálculo', label: 'Ejecutar todas las celdas', def: 'Ctrl+Alt+Enter' },
-  { id: 'calc.restart', group: 'Cálculo', label: 'Reiniciar el kernel', def: 'Ctrl+Alt+R' },
+  { id: 'calc.runCell', group: 'Cálculo', label: 'Ejecutar la celda actual', en: 'Run the current cell', def: 'Ctrl+Enter' },
+  { id: 'calc.runAdvance', group: 'Cálculo', label: 'Ejecutar celda y avanzar', en: 'Run cell and advance', def: 'Shift+Enter' },
+  { id: 'calc.newCell', group: 'Cálculo', label: 'Nueva celda Python', en: 'New Python cell', def: 'Ctrl+Alt+C' },
+  { id: 'calc.runAll', group: 'Cálculo', label: 'Ejecutar todas las celdas', en: 'Run all cells', def: 'Ctrl+Alt+Enter' },
+  { id: 'calc.restart', group: 'Cálculo', label: 'Reiniciar el kernel', en: 'Restart the kernel', def: 'Ctrl+Alt+R' },
 
-  { id: 'compile.run', group: 'Compilación', label: 'Compilar y ver', def: 'Ctrl+Shift+B' },
-  { id: 'compile.live', group: 'Compilación', label: 'Compilar al escribir (alternar)', def: '' },
+  { id: 'compile.run', group: 'Compilación', label: 'Compilar y ver', en: 'Compile & view', def: 'Ctrl+Shift+B' },
+  { id: 'compile.live', group: 'Compilación', label: 'Compilar al escribir (alternar)', en: 'Compile on type (toggle)', def: '' },
 
-  { id: 'view.zen', group: 'Vista', label: 'Modo zen', def: 'Ctrl+Alt+Z' },
-  { id: 'view.preview', group: 'Vista', label: 'Mostrar/ocultar el visor PDF', def: 'Ctrl+Alt+P' },
-  { id: 'view.terminal', group: 'Vista', label: 'Terminal', def: 'Ctrl+Alt+T' },
-  { id: 'view.split', group: 'Vista', label: 'Dividir el editor', def: 'Ctrl+Alt+D' },
+  { id: 'view.zen', group: 'Vista', label: 'Modo zen', en: 'Zen mode', def: 'Ctrl+Alt+Z' },
+  { id: 'view.preview', group: 'Vista', label: 'Mostrar/ocultar el visor PDF', en: 'Show/hide the PDF viewer', def: 'Ctrl+Alt+P' },
+  { id: 'view.terminal', group: 'Vista', label: 'Terminal', en: 'Terminal', def: 'Ctrl+Alt+T' },
+  { id: 'view.split', group: 'Vista', label: 'Dividir el editor', en: 'Split the editor', def: 'Ctrl+Alt+D' },
 ];
+
+// Display label for an action / a group, in the active language.
+export const actionLabel = (a) => t(a.label, a.en || a.label);
+export const groupLabel = (g) => ({
+  Archivo: t('Archivo', 'File'),
+  Edición: t('Edición', 'Edit'),
+  Cálculo: t('Cálculo', 'Python'),
+  Compilación: t('Compilación', 'Compile'),
+  Vista: t('Vista', 'View'),
+}[g] || g);
 
 // id -> combo string override ('' = sin atajo). Reactive so the config UI and
 // tooltips update live.

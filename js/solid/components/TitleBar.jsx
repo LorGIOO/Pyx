@@ -1,5 +1,6 @@
 import { createSignal, onMount, onCleanup, Show } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
+import { t } from '../../core/i18n.js';
 import {
   isTauri,
   minimizeWindow,
@@ -51,10 +52,10 @@ export default function TitleBar() {
       <div class="title-bar-left">
         <span class="app-icon" innerHTML={LOGO}></span>
         <div class="quick-access-toolbar">
-          <Qa icon={icons.undo} title="Deshacer (Ctrl+Z)" disabled={!hasDoc()} onClick={doUndo} />
-          <Qa icon={icons.redo} title="Rehacer (Ctrl+Y)" disabled={!hasDoc()} onClick={doRedo} />
+          <Qa icon={icons.undo} title={t('Deshacer (Ctrl+Z)', 'Undo (Ctrl+Z)')} disabled={!hasDoc()} onClick={doUndo} />
+          <Qa icon={icons.redo} title={t('Rehacer (Ctrl+Y)', 'Redo (Ctrl+Y)')} disabled={!hasDoc()} onClick={doRedo} />
           <div class="quick-access-separator"></div>
-          <Qa icon={GEAR} title="Configuración" onClick={() => setShowConfig(true)} />
+          <Qa icon={GEAR} title={t('Configuración', 'Settings')} onClick={() => setShowConfig(true)} />
         </div>
       </div>
 
@@ -65,10 +66,10 @@ export default function TitleBar() {
 
       <div class="window-controls">
         <Show when={isTauri()}>
-          <button class="window-btn" title="Minimizar" onClick={() => minimizeWindow()}>
+          <button class="window-btn" title={t('Minimizar', 'Minimize')} onClick={() => minimizeWindow()}>
             <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>
           </button>
-          <button class="window-btn" title={maximized() ? 'Restaurar' : 'Maximizar'} onClick={() => toggleMaximize()}>
+          <button class="window-btn" title={maximized() ? t('Restaurar', 'Restore') : t('Maximizar', 'Maximize')} onClick={() => toggleMaximize()}>
             <Show
               when={maximized()}
               fallback={<svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.2" /></svg>}
@@ -78,7 +79,7 @@ export default function TitleBar() {
               </svg>
             </Show>
           </button>
-          <button class="window-btn window-btn-close" title="Cerrar" onClick={() => closeWindow()}>
+          <button class="window-btn window-btn-close" title={t('Cerrar', 'Close')} onClick={() => closeWindow()}>
             <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2" /><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2" /></svg>
           </button>
         </Show>

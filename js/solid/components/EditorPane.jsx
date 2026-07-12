@@ -6,6 +6,7 @@ import {
   clip, pasteClipboard, selectAll, doUndo, doRedo, openFind, insertCell, gotoLine,
 } from '../../editor/commands.js';
 import { parseLatexLog } from '../../compile/log-parser.js';
+import { t } from '../../core/i18n.js';
 import { getView, broadcastSpellRefresh } from '../../editor/setup.js';
 import { spellInfoAt, addToUserDict } from '../../editor/spellcheck.js';
 import { showContextMenu } from './ContextMenu.jsx';
@@ -127,13 +128,41 @@ function Pane(props) {
   );
 }
 
+// Short display name for a problem's source file (TeXstudio shows it too).
+const fileBase = (f) => (f ? String(f).split(/[\\/]/).pop() : '');
+
+// One problem as a TeXstudio-style text line: "file:line: message" (line/file
+// omitted when unknown), so a copied problem reads exactly like TeXstudio's.
+function problemText(p) {
+  const loc = [fileBase(p.file), p.line].filter(Boolean).join(':');
+  return loc ? `${loc}: ${p.message}` : p.message;
+}
+async function copyText(str) {
+  try { await navigator.clipboard.writeText(str); return true; }
+  catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = str; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove(); return true;
+    } catch (_2) { return false; }
+  }
+}
+
 export default function EditorPane() {
   const statusLabel = () =>
-    state.lastCompileOk === false ? ' · con errores'
-    : state.lastCompileOk === true ? ' · correcto'
+    state.lastCompileOk === false ? t(' · con errores', ' · with errors')
+    : state.lastCompileOk === true ? t(' · correcto', ' · succeeded')
     : '';
   const [logView, setLogView] = createSignal('problems'); // 'problems' | 'raw'
-  const problems = createMemo(() => parseLatexLog(state.lastLog));
+  // TeXstudio-fidelity parse: file attribution via the log's parenthesis stack,
+  // with Pyx's .build copies mapped back to the real files.
+  const problems = createMemo(() => parseLatexLog(state.lastLog, {
+    rootFile: state.lastRootFile || null,
+    buildMap: state.lastBuildMap || null,
+    knownFiles: state.lastKnownFiles ? new Set(state.lastKnownFiles) : null,
+  }));
+  const sevIcon = (s) => (s === 'error' ? '✕' : s === 'badbox' ? '▭' : '!');
 
   return (
     <>
@@ -145,25 +174,36 @@ export default function EditorPane() {
           <div class="log-panel-header">
             <div class="log-tabs">
               <button class={logView() === 'problems' ? 'active' : ''} onClick={() => setLogView('problems')}>
-                Problemas
+                {t('Problemas', 'Problems')}
                 <Show when={problems().length}><span class="log-badge">{problems().length}</span></Show>
               </button>
-              <button class={logView() === 'raw' ? 'active' : ''} onClick={() => setLogView('raw')}>Salida</button>
+              <button class={logView() === 'raw' ? 'active' : ''} onClick={() => setLogView('raw')}>{t('Salida', 'Output')}</button>
             </div>
             <span class="log-status">{statusLabel()}</span>
-            <button class="log-close" onClick={() => (state.logVisible = false)} title="Cerrar">×</button>
+            <Show when={logView() === 'problems' ? problems().length : state.lastLog}>
+              <button class="log-copy"
+                title={t('Copiar todo (formato TeXstudio)', 'Copy all (TeXstudio format)')}
+                onClick={() => copyText(
+                  logView() === 'problems'
+                    ? problems().map(problemText).join('\n')
+                    : (state.lastLog || ''),
+                )}>{t('Copiar', 'Copy')}</button>
+            </Show>
+            <button class="log-close" onClick={() => (state.logVisible = false)} title={t('Cerrar', 'Close')}>×</button>
           </div>
           <Show when={logView() === 'problems'}
-            fallback={<pre>{state.lastLog || 'Sin registro todavía. Compila el documento para ver la salida del motor LaTeX.'}</pre>}>
+            fallback={<pre>{state.lastLog || t('Sin registro todavía. Compila el documento para ver la salida del motor LaTeX.', 'No log yet. Compile the document to see the LaTeX engine output.')}</pre>}>
             <div class="log-problems">
               <Show when={problems().length}
-                fallback={<div class="log-empty">{state.lastLog ? '✓ Sin errores ni avisos detectados.' : 'Compila el documento para ver los problemas.'}</div>}>
+                fallback={<div class="log-empty">{state.lastLog ? t('✓ Sin errores ni avisos detectados.', '✓ No errors or warnings detected.') : t('Compila el documento para ver los problemas.', 'Compile the document to see the problems.')}</div>}>
                 <For each={problems()}>
                   {(p) => (
                     <div class={`log-item ${p.severity}`} classList={{ clickable: !!p.line }}
-                      title={p.line ? `Ir a la línea ${p.line}` : ''}
-                      onClick={() => p.line && gotoLine(p.line)}>
-                      <span class="log-sev">{p.severity === 'error' ? '✕' : '!'}</span>
+                      title={p.line ? t(`Ir a la línea ${p.line} · clic derecho para copiar`, `Go to line ${p.line} · right-click to copy`) : t('Clic derecho para copiar', 'Right-click to copy')}
+                      onClick={() => p.line && gotoLine(p.line)}
+                      onContextMenu={(e) => { e.preventDefault(); copyText(problemText(p)); }}>
+                      <span class="log-sev">{sevIcon(p.severity)}</span>
+                      <Show when={p.file}><span class="log-file">{fileBase(p.file)}</span></Show>
                       <span class="log-msg">{p.message}</span>
                       <Show when={p.line}><span class="log-line">L{p.line}</span></Show>
                     </div>

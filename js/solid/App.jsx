@@ -10,7 +10,9 @@ import StatusBar from './components/StatusBar.jsx';
 import ConfigDialog from './components/ConfigDialog.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Wizards from './components/Wizards.jsx';
-import { newDocument } from './stores/docStore.js';
+import NewDocDialog, { openNewDoc } from './components/NewDocDialog.jsx';
+import { t } from '../core/i18n.js';
+import { openDocument } from './stores/docStore.js';
 
 export default function App() {
   // Drag the divider to resize editor vs. preview.
@@ -54,15 +56,20 @@ export default function App() {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                   d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
-              <h2>No hay ningún documento abierto</h2>
-              <p>Crea un documento nuevo o abre un archivo .tex para empezar.</p>
+              <h2>{t('No hay ningún documento abierto', 'No document open')}</h2>
+              <p>{t('Crea un documento nuevo o abre un archivo .tex para empezar.', 'Create a new document or open a .tex file to start.')}</p>
               <div class="hint-keys">
-                <span><kbd>Ctrl</kbd> + <kbd>N</kbd> nuevo</span>
-                <span><kbd>Ctrl</kbd> + <kbd>O</kbd> abrir</span>
+                <span><kbd>Ctrl</kbd> + <kbd>N</kbd> {t('nuevo', 'new')}</span>
+                <span><kbd>Ctrl</kbd> + <kbd>O</kbd> {t('abrir', 'open')}</span>
               </div>
-              <button class="preview-header" style={{ padding: '6px 14px', cursor: 'default' }} onClick={() => newDocument()}>
-                Nuevo documento
-              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button class="preview-header" style={{ padding: '6px 14px', cursor: 'default' }} onClick={openNewDoc}>
+                  {t('Nuevo documento', 'New document')}
+                </button>
+                <button class="preview-header" style={{ padding: '6px 14px', cursor: 'default' }} onClick={() => openDocument()}>
+                  {t('Abrir', 'Open')}
+                </button>
+              </div>
             </div>
           }
         >
@@ -91,6 +98,7 @@ export default function App() {
       <ConfigDialog />
       <ContextMenu />
       <Wizards />
+      <NewDocDialog />
     </>
   );
 }

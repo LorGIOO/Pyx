@@ -1,5 +1,6 @@
 mod kernel;
 mod latex;
+mod pltx;
 
 use kernel::KernelState;
 use tauri::{Emitter, Manager};
@@ -83,7 +84,31 @@ async fn synctex_edit(
     x: f64,
     y: f64,
 ) -> Result<latex::SyncTexHit, String> {
-    tauri::async_runtime::spawn_blocking(move || latex::synctex_edit(&pdf, page, x, y))
+    tauri::async_runtime::spawn_blocking(move || {
+        // A clean-folder .pltx keeps its .synctex.gz inside the zip — extract it
+        // next to the PDF on demand so inverse search still works.
+        pltx::ensure_synctex_for_pdf(&pdf);
+        latex::synctex_edit(&pdf, page, x, y)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Open a `.pltx` container (ZIP). Returns `{is_zip, source}`; when it is a zip
+/// the bundled build artifacts are extracted next to it. Legacy plain-text
+/// `.pltx` reports `is_zip=false` (the JS side then decodes it as text).
+#[tauri::command]
+async fn pltx_read(path: String) -> Result<pltx::PltxRead, String> {
+    tauri::async_runtime::spawn_blocking(move || pltx::read(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Save a `.pltx` container: pack source + loose build artifacts into the zip
+/// (PDF excluded) and clean the loose files from the folder.
+#[tauri::command]
+async fn pltx_write(path: String, source: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || pltx::write(&path, &source))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -388,6 +413,8 @@ pub fn run() {
             detect_env,
             compile_latex,
             synctex_edit,
+            pltx_read,
+            pltx_write,
             list_fonts,
             read_file_bytes,
             read_dir,

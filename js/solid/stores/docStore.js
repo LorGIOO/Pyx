@@ -11,6 +11,8 @@ import {
   readBinaryFile,
   writeTextFile,
   writeBinaryFile,
+  pltxRead,
+  pltxWrite,
 } from '../../core/platform.js';
 import { general } from './settingsStore.js';
 import { baseName } from '../../core/paths.js';
@@ -44,6 +46,8 @@ async function saveWithEncoding(path, content) {
   await writeBinaryFile(path, bytes);
 }
 
+const isPltxPath = (p) => /\.pltx$/i.test(p || '');
+
 // Read a text file detecting the encoding: strict UTF-8 first, then
 // windows-1252 (legacy .tex files with accents saved as latin1 stay readable).
 async function readTextSmart(path) {
@@ -53,6 +57,27 @@ async function readTextSmart(path) {
   } catch (_) {
     return new TextDecoder('windows-1252').decode(bytes);
   }
+}
+
+// Read a document's source. A .pltx is a ZIP container (source + build
+// artifacts): pltxRead returns its source and extracts the artifacts next to
+// it. A legacy plain-text .pltx (is_zip=false) and every other file decode as
+// text. .build.tex etc. never go through here.
+async function readSource(path) {
+  if (isPltxPath(path)) {
+    try {
+      const r = await pltxRead(path);
+      if (r && r.is_zip && r.source != null) return r.source;
+    } catch (_) { /* fall back to plain text (legacy / corrupt) */ }
+  }
+  return readTextSmart(path);
+}
+
+// Persist a document's source to `path`. .pltx → ZIP container (source +
+// artifacts, minus the PDF); everything else → text in the chosen encoding.
+async function writeSource(path, content) {
+  if (isPltxPath(path)) { await pltxWrite(path, content); return; }
+  await saveWithEncoding(path, content);
 }
 
 // TeXstudio's "remove trailing whitespace on save" — applied as per-line edits
@@ -191,7 +216,7 @@ export async function openPath(path) {
     return;
   }
   try {
-    const content = await readTextSmart(path);
+    const content = await readSource(path);
     newDocument(content, baseName(path), path);
   } catch (_) { /* not a readable text file */ }
 }
@@ -221,7 +246,7 @@ export async function saveActive() {
   if (!doc.path || needsPltx) {
     ok = await saveActiveAs();
   } else {
-    await saveWithEncoding(doc.path, getDocContent(doc.id));
+    await writeSource(doc.path, getDocContent(doc.id));
     doc.modified = false;
     ok = true;
   }
@@ -239,7 +264,7 @@ export async function saveActiveAs() {
   // When it has cells the dialog only offers .pltx (no .tex option).
   const path = await saveFileDialog(defName, cells);
   if (!path) return false;
-  await saveWithEncoding(path, getDocContent(doc.id));
+  await writeSource(path, getDocContent(doc.id));
   doc.path = path;
   doc.fileName = baseName(path);
   doc.modified = false;

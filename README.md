@@ -8,9 +8,11 @@
 
 Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-![versión](https://img.shields.io/badge/versión-1.0.0-007ACC?style=flat-square)
+![versión](https://img.shields.io/badge/versión-1.1.0-007ACC?style=flat-square)
 ![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
+![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
+![Linux](https://img.shields.io/badge/Linux-deb%20·%20rpm%20·%20AppImage-FCC624?style=flat-square)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square)
 ![SolidJS](https://img.shields.io/badge/SolidJS-2C4F7C?style=flat-square)
 
@@ -65,15 +67,22 @@ El área de la sección es \py{round(A, 4)} m².
 <img src="docs/screenshots/figura-matplotlib.png" alt="Figura de matplotlib mostrada en la celda y embebida en el PDF" width="92%">
 </div>
 
-## 📦 Instalación (Windows)
+## 📦 Instalación
 
-1. Descarga **[`Pyx_1.0.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest)** desde la última *release*.
-2. Ejecútalo. Como la app aún **no está firmada**, Windows mostrará SmartScreen: pulsa **«Más información» → «Ejecutar de todas formas»**.
+Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest):
+
+| Sistema | Archivo |
+|---|---|
+| **Windows** (x64) | `Pyx_1.1.0_x64-setup.exe` |
+| **macOS** (Intel y Apple Silicon) | `Pyx_1.1.0_universal.dmg` |
+| **Linux** | `.deb` (Debian/Ubuntu) · `.rpm` (Fedora) · `.AppImage` (cualquier distro) |
+
+Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.
 
 Para que las celdas y la compilación funcionen, ten instalados aparte:
 
-- **Python 3** en el PATH — opcional: `pip install numpy matplotlib pandas sympy`.
-- Una distribución **LaTeX** con `xelatex` — [MiKTeX](https://miktex.org/) o [TeX Live](https://tug.org/texlive/).
+- **Python 3** en el PATH — opcional: `pip install numpy matplotlib pandas sympy handcalcs`.
+- Una distribución **LaTeX** con `xelatex` — [MiKTeX](https://miktex.org/) (Windows), [MacTeX](https://tug.org/mactex/) (macOS) o [TeX Live](https://tug.org/texlive/) (Linux).
 
 ## ⚙️ Compilar desde el código
 

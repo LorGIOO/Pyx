@@ -92,8 +92,10 @@ async function resolveRootPath(doc, content) {
   const dir = dirOf(doc.path);
   const magic = /^\s*%\s*!TEX\s+root\s*=\s*(.+?)\s*$/im.exec(content);
   if (magic) {
-    const rel = magic[1].replace(/\//g, '\\');
-    const p = /^[a-zA-Z]:[\\/]/.test(magic[1]) ? rel : joinPath(dir, rel);
+    // Keep forward slashes as-is: Windows accepts them in paths, and
+    // converting to backslashes would break Linux/macOS.
+    const rel = magic[1];
+    const p = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : joinPath(dir, rel);
     if (await pathExists(p)) root = p;
   } else {
     const needle = new RegExp(
@@ -133,8 +135,10 @@ const isPyxPath = (p) => !/\.tex$/i.test(p); // per-FILE rule: .tex = pure LaTeX
 const pyxLike = (p, content) => isPyxPath(p) || parseCellsText(content).length > 0;
 
 async function resolveChildPath(rootDir, raw) {
-  const rel = raw.trim().replace(/\//g, '\\');
-  const base = /^[a-zA-Z]:[\\/]/.test(raw) ? rel : joinPath(rootDir, rel);
+  // Forward slashes work on every OS (Windows included) — converting them to
+  // backslashes broke \input resolution on Linux/macOS.
+  const rel = raw.trim();
+  const base = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : joinPath(rootDir, rel);
   const cands = /\.[a-z0-9]+$/i.test(base) ? [base] : [base + '.tex', base + '.pltx'];
   for (const c of cands) if (await pathExists(c)) return c;
   return null;

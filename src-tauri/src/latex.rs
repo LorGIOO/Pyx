@@ -46,6 +46,23 @@ fn tex_dirs() -> Vec<PathBuf> {
         dirs.push(PathBuf::from(format!(r"C:\texlive\{year}\bin\windows")));
         dirs.push(PathBuf::from(format!(r"C:\texlive\{year}\bin\win32")));
     }
+    // macOS: GUI apps launched from Finder get a MINIMAL PATH that excludes
+    // MacTeX and Homebrew — resolve them by their canonical locations.
+    #[cfg(target_os = "macos")]
+    {
+        dirs.push(PathBuf::from("/Library/TeX/texbin")); // MacTeX symlinks
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+    }
+    // Linux: TeX Live from the distro or from tug.org's installer.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        dirs.push(PathBuf::from("/usr/bin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+        for year in ["2026", "2025", "2024", "2023"] {
+            dirs.push(PathBuf::from(format!("/usr/local/texlive/{year}/bin/x86_64-linux")));
+        }
+    }
     dirs
 }
 

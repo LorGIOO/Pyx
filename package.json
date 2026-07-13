@@ -1,6 +1,6 @@
 {
   "name": "pyx",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Editor LaTeX con celdas Python tipo Jupyter — escribe documentos como en TeXstudio y calcula en el mismo archivo",
   "license": "MIT",
   "type": "module",

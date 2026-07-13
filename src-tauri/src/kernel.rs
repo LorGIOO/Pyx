@@ -144,6 +144,20 @@ fn probe_python(cmd: &std::path::Path) -> Option<PyProbe> {
 fn candidate_pythons() -> Vec<std::path::PathBuf> {
     let mut cands: Vec<std::path::PathBuf> =
         ["python", "python3", "py"].iter().map(std::path::PathBuf::from).collect();
+    // macOS: Finder-launched apps get a MINIMAL PATH that misses Homebrew —
+    // try the canonical absolute locations too. Linux: distro python3.
+    #[cfg(target_os = "macos")]
+    {
+        for p in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"] {
+            cands.push(std::path::PathBuf::from(p));
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for p in ["/usr/bin/python3", "/usr/local/bin/python3"] {
+            cands.push(std::path::PathBuf::from(p));
+        }
+    }
     #[cfg(windows)]
     {
         let mut roots: Vec<std::path::PathBuf> = Vec::new();

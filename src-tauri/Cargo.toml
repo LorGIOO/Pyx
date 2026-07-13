@@ -1,6 +1,6 @@
 [package]
 name = "calc"
-version = "1.0.0"
+version = "1.1.0"
 description = "Editor LaTeX con celdas Python tipo Jupyter"
 authors = ["Calc"]
 license = "MIT"

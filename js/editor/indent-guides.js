@@ -62,8 +62,10 @@ function styleFor(cols) {
     .map(() => 'linear-gradient(var(--pyx-indent-guide),var(--pyx-indent-guide))')
     .join(',');
   const poss = cols.map((c) => `${c}ch 0`).join(',');
+  // content-box: .cm-line has horizontal padding — the guides must be measured
+  // from where the TEXT starts, or every line sits 8px left of its column.
   return `background-image:${imgs};background-position:${poss};` +
-    'background-size:1px 100%;background-repeat:no-repeat;';
+    'background-size:1px 100%;background-repeat:no-repeat;background-origin:content-box;';
 }
 
 function buildGuides(view) {

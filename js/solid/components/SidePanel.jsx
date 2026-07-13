@@ -1,6 +1,7 @@
 import { createMemo, For, Show } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
-import { docText, parseTOC, parseIncludes } from '../stores/structureStore.js';
+import { t as tr } from '../../core/i18n.js';
+import { docText, parseTOC, parseIncludes, parseTodos, crumbPath } from '../stores/structureStore.js';
 import { SYMBOL_CATEGORIES, insertText } from '../../data/symbols.js';
 import { gotoLine, insertSnippet } from '../../editor/commands.js';
 import { openPath } from '../stores/docStore.js';
@@ -31,8 +32,14 @@ export default function SidePanel() {
   const toggle = (id) => (state.sidePanelTab = state.sidePanelTab === id ? null : id);
 
   const toc = createMemo(() => parseTOC(docText()));
+  const todos = createMemo(() => parseTodos(docText()));
   const includes = createMemo(() => parseIncludes(docText()));
   const rootDir = createMemo(() => dirOf(activeDoc()?.path));
+  // The section that contains the CURSOR (TeXstudio highlights it in the tree).
+  const activeLine = createMemo(() => {
+    const path = crumbPath(toc(), state.cursor.line);
+    return path.length ? path[path.length - 1].line : -1;
+  });
 
   const openInclude = (target) => {
     const base = dirOf(activeDoc()?.path);
@@ -54,15 +61,29 @@ export default function SidePanel() {
         <div class="side-body">
           <div class="side-title">{TABS.find((t) => t.id === tab())?.label}</div>
           <div class="side-content">
-            {/* TOC: sectioning tree, click to jump */}
+            {/* TOC: sectioning tree, click to jump; the cursor's section is
+                highlighted (TeXstudio-style); TODO/FIXME entries listed below. */}
             <Show when={tab() === 'toc'}>
-              <Show when={toc().length} fallback={<div class="side-empty">Sin secciones todavía.</div>}>
+              <Show when={toc().length} fallback={<div class="side-empty">{tr('Sin secciones todavía.', 'No sections yet.')}</div>}>
                 <For each={toc()}>
                   {(h) => (
-                    <div class="toc-row" style={{ 'padding-left': 6 + h.level * 12 + 'px' }}
-                      onClick={() => gotoLine(h.line)} title={`Línea ${h.line}`}>
+                    <div class="toc-row" classList={{ active: h.line === activeLine() }}
+                      style={{ 'padding-left': 6 + h.level * 12 + 'px' }}
+                      onClick={() => gotoLine(h.line)} title={tr(`Línea ${h.line}`, `Line ${h.line}`)}>
                       <span class="toc-kind">{KIND_SHORT[h.kind]}{h.star ? '*' : ''}</span>
                       <span class="toc-title">{h.title}</span>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              <Show when={todos().length}>
+                <div class="sym-cat-name" style={{ 'margin-top': '10px' }}>TODO</div>
+                <For each={todos()}>
+                  {(td) => (
+                    <div class="toc-row todo" onClick={() => gotoLine(td.line)}
+                      title={tr(`Línea ${td.line}`, `Line ${td.line}`)}>
+                      <span class="toc-kind">!</span>
+                      <span class="toc-title">{td.text || td.tag}</span>
                     </div>
                   )}
                 </For>

@@ -225,3 +225,12 @@
 }
 /* Spelling suggestions in the context menu render in italic to stand out. */
 .ctx-menu .ctx-item .ctx-label { }
+
+/* ---- bookmarks (TeXstudio-style): gutter left of the line numbers ---- */
+.editor-host .cm-bookmark-gutter { width: 13px; }
+.editor-host .cm-bookmark {
+  color: var(--theme-accent);
+  font-size: 9px;
+  line-height: inherit;
+  padding-left: 3px;
+}

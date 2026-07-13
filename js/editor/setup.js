@@ -6,7 +6,8 @@
 // are forwarded between the views as annotated transactions so the text never
 // diverges.
 
-import { EditorState, Annotation } from '@codemirror/state';
+import { EditorState, Annotation, Compartment } from '@codemirror/state';
+import { showMinimap } from '@replit/codemirror-minimap';
 import {
   EditorView,
   lineNumbers,
@@ -34,7 +35,10 @@ import { tags as t } from '@lezer/highlight';
 
 import { state as appState } from '../core/state.js';
 import { cellsExtension, selectCellOrAll, refreshCells } from './cells.js';
-import { toggleLineComment, smartEnter } from './commands.js';
+import {
+  toggleLineComment, smartEnter, moveCellOrLineUp, moveCellOrLineDown,
+} from './commands.js';
+import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from './bookmarks.js';
 import { calcCompletions } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
 import { pyLint } from './py-lint.js';
@@ -46,9 +50,30 @@ import { pathLinks } from './link-paths.js';
 import { latexFold } from './latex-fold.js';
 import { spellCheck, spellRefresh } from './spellcheck.js';
 import { setDocText } from '../solid/stores/structureStore.js';
+import { general } from '../solid/stores/settingsStore.js';
 
 // Marks transactions that were forwarded from a sibling pane (prevents loops).
 const syncAnnotation = Annotation.define();
+
+/* ---------- minimap (VSCode-style), toggleable from Configuración ---------- */
+const minimapCompartment = new Compartment();
+const mkMinimap = () => showMinimap.compute([], () => ({
+  create: () => ({ dom: document.createElement('div') }),
+  displayText: 'blocks',
+  showOverlay: 'always',
+}));
+const minimapExt = () => minimapCompartment.of(general.minimap === true ? mkMinimap() : []);
+
+/** Turn the minimap on/off LIVE in every pane and every stored doc state. */
+export function setMinimapEnabled(on) {
+  const eff = minimapCompartment.reconfigure(on ? mkMinimap() : []);
+  for (const vw of paneViews.values()) {
+    try { vw.dispatch({ effects: eff }); } catch (_) {}
+  }
+  for (const [id, st] of docStates) {
+    try { docStates.set(id, st.update({ effects: eff }).state); } catch (_) {}
+  }
+}
 
 // Debounced mirror of the active document text → drives the side panel.
 let docTextTimer = null;
@@ -123,6 +148,8 @@ export function createDocState(docId, content) {
   return EditorState.create({
     doc: content ?? '',
     extensions: [
+      // Bookmark gutter sits LEFT of the line numbers (TeXstudio layout).
+      bookmarks,
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightActiveLine(),
@@ -140,6 +167,8 @@ export function createDocState(docId, content) {
       syntaxHighlighting(calcHighlight),
       // Vertical indent guides (TeXstudio-style hierarchy lines).
       indentGuides,
+      // VSCode-style minimap (Configuración → Editor → Minimapa).
+      minimapExt(),
       latexHighlight,
       // TeXstudio-style folding: \begin/\end blocks and sections fold from the
       // gutter (hidden via Configuración → Editor → Plegado).
@@ -163,6 +192,13 @@ export function createDocState(docId, content) {
         { key: 'Mod-a', run: selectCellOrAll },
         { key: 'Ctrl-t', run: toggleLineComment, preventDefault: true },
         { key: 'Enter', run: smartEnter },
+        // Jupyter-style cell reorder (whole cell moves; plain lines otherwise).
+        { key: 'Alt-ArrowUp', run: moveCellOrLineUp, preventDefault: true },
+        { key: 'Alt-ArrowDown', run: moveCellOrLineDown, preventDefault: true },
+        // TeXstudio-style bookmarks.
+        { key: 'Ctrl-F2', run: toggleBookmarkAtCursor, preventDefault: true },
+        { key: 'F2', run: nextBookmark, preventDefault: true },
+        { key: 'Shift-F2', run: prevBookmark, preventDefault: true },
         ...closeBracketsKeymap,
         ...defaultKeymap,
         ...searchKeymap,

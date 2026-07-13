@@ -1,7 +1,7 @@
 // Editor-facing actions used by the ribbon. Centralizes access to the current
 // CodeMirror view so tab components stay declarative.
 
-import { undo, redo } from '@codemirror/commands';
+import { undo, redo, moveLineUp, moveLineDown } from '@codemirror/commands';
 import { openSearchPanel } from '@codemirror/search';
 import { EditorView } from '@codemirror/view';
 import { state } from '../core/state.js';
@@ -312,6 +312,98 @@ export const tblInsert = () => { const v = getView(); if (v) insertTable(v); };
 // Align the current column's text left/center/right (l/c/r) — TeXstudio's
 // "align column" tool; adjusts only the column spec.
 export const tblAlign = (align) => { const v = getView(); if (v) tableSetColumnAlign(v, align); };
+
+/* ---- SyncTeX forward search: cursor line → PDF position (TeXstudio) ---- */
+// The build copy preserves the source's line numbers exactly, so the cursor
+// line maps 1:1. Tries the doc's .build.tex name first (what the engine read
+// for processed files), then the raw path (unprocessed .tex children).
+export async function forwardSearch() {
+  const v = getView();
+  const d = state.documents[state.activeIndex];
+  if (!v || !d || d.kind || !d.path || !state.lastPdfPath) return;
+  const line = v.state.doc.lineAt(v.state.selection.main.head).number;
+  const { synctexView } = await import('../core/platform.js');
+  const stem = d.path.replace(/\.(tex|pltx)$/i, '');
+  for (const tex of [stem + '.build.tex', d.path]) {
+    try {
+      const loc = await synctexView(tex, line, state.lastPdfPath);
+      if (loc && loc.page) {
+        state.previewVisible = true;
+        const prev = await import('../pdf/preview.js');
+        await prev.showPdfLocation(loc.page, loc.x, loc.y);
+        return;
+      }
+    } catch (_) { /* try the next candidate */ }
+  }
+}
+
+/* ---- move cell / line (Alt+↑ / Alt+↓, Jupyter/VSCode-style) ---- */
+// Inside a cell the WHOLE cell block moves one line per press (hold to glide);
+// outside, the regular line move runs. Returns true at document edges so the
+// default line-move can never split a cell apart.
+function moveCell(view, dir) {
+  const st = view.state;
+  const sel = st.selection.main;
+  const ln = st.doc.lineAt(sel.head).number;
+  const cell = parseCells(st).find((c) => ln >= c.headerLine && ln <= c.endLine);
+  if (!cell) return false;
+  const first = st.doc.line(cell.headerLine);
+  const last = st.doc.line(cell.endLine);
+  const block = st.sliceDoc(first.from, last.to);
+  if (dir < 0) {
+    if (cell.headerLine <= 1) return true;
+    const prev = st.doc.line(cell.headerLine - 1);
+    view.dispatch({
+      changes: { from: prev.from, to: last.to, insert: block + '\n' + prev.text },
+      selection: { anchor: sel.head - (prev.length + 1) },
+      scrollIntoView: true,
+    });
+  } else {
+    if (cell.endLine >= st.doc.lines) return true;
+    const next = st.doc.line(cell.endLine + 1);
+    view.dispatch({
+      changes: { from: first.from, to: next.to, insert: next.text + '\n' + block },
+      selection: { anchor: sel.head + (next.length + 1) },
+      scrollIntoView: true,
+    });
+  }
+  return true;
+}
+export const moveCellOrLineUp = (view) => moveCell(view, -1) || moveLineUp(view);
+export const moveCellOrLineDown = (view) => moveCell(view, 1) || moveLineDown(view);
+
+/* ---- wrap selection in an environment (TeXstudio's "surround with…") ---- */
+export function wrapInEnvironment(env) {
+  const v = getView();
+  if (!v || !env) return;
+  const st = v.state;
+  const sel = st.selection.main;
+  if (sel.empty) {
+    // No selection → insert an empty environment with the caret inside.
+    const line = st.doc.lineAt(sel.head);
+    const indent = (line.text.match(/^[ \t]*/) || [''])[0];
+    const head = `\\begin{${env}}\n${indent}  `;
+    v.dispatch({
+      changes: { from: sel.head, insert: `${head}\n${indent}\\end{${env}}` },
+      selection: { anchor: sel.head + head.length },
+      scrollIntoView: true,
+    });
+  } else {
+    // Whole-line wrap: the selected lines become the environment body.
+    const fromLine = st.doc.lineAt(sel.from);
+    const toLine = st.doc.lineAt(sel.to);
+    const indent = (fromLine.text.match(/^[ \t]*/) || [''])[0];
+    const inner = st.sliceDoc(fromLine.from, toLine.to);
+    const body = inner.split('\n').map((l) => (l.trim() ? '  ' + l : l)).join('\n');
+    const text = `${indent}\\begin{${env}}\n${body}\n${indent}\\end{${env}}`;
+    v.dispatch({
+      changes: { from: fromLine.from, to: toLine.to, insert: text },
+      selection: { anchor: fromLine.from, head: fromLine.from + text.length },
+      scrollIntoView: true,
+    });
+  }
+  v.focus();
+}
 
 export function wrap(before, after = '') {
   const v = getView();

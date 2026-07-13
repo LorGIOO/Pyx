@@ -96,6 +96,58 @@ pub struct SyncTexHit {
     pub column: i32,
 }
 
+#[derive(serde::Serialize)]
+pub struct SyncTexLoc {
+    pub page: u32,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Forward search (source line → PDF position) via `synctex view`.
+/// Returns the first record: page + x/y in PDF points from the page's
+/// top-left corner (the viewer scrolls there and flashes a marker).
+pub fn synctex_view(tex: &str, line: u32, pdf: &str) -> Result<SyncTexLoc, String> {
+    let cmd = resolve_engine("synctex")
+        .ok_or("No se encontró «synctex» (instala MiKTeX o TeX Live).")?;
+    let mut c = Command::new(&cmd);
+    c.arg("view")
+        .arg("-i")
+        .arg(format!("{line}:1:{tex}"))
+        .arg("-o")
+        .arg(pdf);
+    crate::quiet(&mut c);
+    let out = c
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar synctex: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    let mut page: Option<u32> = None;
+    let mut x: Option<f64> = None;
+    let mut y: Option<f64> = None;
+    for l in text.lines() {
+        if let Some(v) = l.strip_prefix("Page:") {
+            if page.is_none() {
+                page = v.trim().parse().ok();
+            }
+        } else if let Some(v) = l.strip_prefix("x:") {
+            if x.is_none() {
+                x = v.trim().parse().ok();
+            }
+        } else if let Some(v) = l.strip_prefix("y:") {
+            if y.is_none() {
+                y = v.trim().parse().ok();
+            }
+        }
+        if page.is_some() && x.is_some() && y.is_some() {
+            break;
+        }
+    }
+    match page {
+        Some(p) => Ok(SyncTexLoc { page: p, x: x.unwrap_or(0.0), y: y.unwrap_or(0.0) }),
+        None => Err("SyncTeX no encontró esa línea (recompila el documento).".into()),
+    }
+}
+
 /// Inverse search (PDF position → source line) via the `synctex` CLI that
 /// ships with MiKTeX/TeX Live. `x`/`y` are PDF points from the page's
 /// top-left corner — the same coordinate system synctex reports.

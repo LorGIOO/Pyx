@@ -7,6 +7,7 @@ import {
 } from '../../editor/commands.js';
 import { parseLatexLog } from '../../compile/log-parser.js';
 import { t } from '../../core/i18n.js';
+import { docText, parseTOC, crumbPath } from '../stores/structureStore.js';
 import { getView, broadcastSpellRefresh } from '../../editor/setup.js';
 import { spellInfoAt, addToUserDict } from '../../editor/spellcheck.js';
 import { showContextMenu } from './ContextMenu.jsx';
@@ -164,8 +165,25 @@ export default function EditorPane() {
   }));
   const sevIcon = (s) => (s === 'error' ? '✕' : s === 'badbox' ? '▭' : '!');
 
+  // VSCode-style breadcrumbs: the section path containing the cursor, from the
+  // live TOC. Click a crumb to jump to that section.
+  const crumbs = createMemo(() => crumbPath(parseTOC(docText()), state.cursor.line));
+
   return (
     <>
+      <Show when={crumbs().length && !state.zenMode}>
+        <div class="breadcrumbs">
+          <For each={crumbs()}>
+            {(h, i) => (
+              <>
+                <Show when={i() > 0}><span class="crumb-sep">›</span></Show>
+                <span class="crumb" onClick={() => gotoLine(h.line)}
+                  title={t(`Línea ${h.line}`, `Line ${h.line}`)}>{h.title}</span>
+              </>
+            )}
+          </For>
+        </div>
+      </Show>
       <div class="editor-splits">
         <For each={state.panes}>{(pane) => <Pane pane={pane} />}</For>
       </div>

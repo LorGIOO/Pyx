@@ -6,7 +6,7 @@ import { state } from '../../../../core/state.js';
 import { t } from '../../../../core/i18n.js';
 import { setGeneral } from '../../../stores/settingsStore.js';
 import {
-  openFind, clip, wrap, changeCase,
+  openFind, clip, wrap, changeCase, wrapInEnvironment,
   tblAddRow, tblAddCol, tblDelRow, tblDelCol, tblHline, tblAlign,
 } from '../../../../editor/commands.js';
 import { compileActive } from '../../../../compile/compiler.js';
@@ -32,6 +32,28 @@ const COL_ALIGN = () => [
   { label: t('Centrada', 'Center'), badge: 'c', a: 'c' },
   { label: t('Derecha', 'Right'), badge: 'r', a: 'r' },
 ];
+
+// "Wrap selection in environment" (TeXstudio's surround-with). The selection
+// becomes the environment body; with no selection an empty one is inserted.
+const WRAP_ENVS = () => [
+  { label: 'equation', sym: '=', env: 'equation' },
+  { label: 'align', sym: '⫶', env: 'align' },
+  { label: 'center', sym: '↔', env: 'center' },
+  { label: 'figure', sym: '🖼', env: 'figure' },
+  { label: 'table', sym: '▦', env: 'table' },
+  { label: 'itemize', sym: '•', env: 'itemize' },
+  { label: 'enumerate', sym: '1.', env: 'enumerate' },
+  { label: 'minipage', sym: '◫', env: 'minipage' },
+  { label: 'verbatim', sym: '𝚝', env: 'verbatim' },
+  { label: t('Otro…', 'Other…'), sym: '…', env: '__ask__' },
+];
+const onWrapEnv = (it) => {
+  let env = it.env;
+  if (env === '__ask__') {
+    env = (window.prompt(t('Nombre del entorno:', 'Environment name:')) || '').trim();
+  }
+  if (env) wrapInEnvironment(env);
+};
 
 export default function HomeTab() {
   const hasDoc = () => state.documents.length > 0;
@@ -90,6 +112,9 @@ export default function HomeTab() {
             <RibbonButton icon={icons.bullets} title={t('Lista de viñetas', 'Bulleted list')} onClick={() => runSnippet(LISTS()[0])} />
             <RibbonButton icon={icons.numbered} title={t('Lista numerada', 'Numbered list')} onClick={() => runSnippet(LISTS()[1])} />
             <RibbonDropdown compact label={t('Listas', 'Lists')} title={t('Listas y elementos', 'Lists and items')} items={LISTS()} onPick={runSnippet} />
+            <RibbonDropdown compact label={t('Entorno', 'Environ.')}
+              title={t('Envolver la selección en un entorno \\begin…\\end', 'Wrap the selection in a \\begin…\\end environment')}
+              items={WRAP_ENVS()} onPick={onWrapEnv} />
           </div>
         </div>
       </RibbonGroup>

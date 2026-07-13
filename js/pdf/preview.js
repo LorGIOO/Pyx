@@ -325,6 +325,31 @@ async function goToDest(dest) {
   } catch (_) { /* malformed destination */ }
 }
 
+/* ---------- SyncTeX forward search: scroll to a source line's PDF spot ------ */
+// `page` is 1-based; x/y are PDF points from the page's TOP-LEFT corner (the
+// synctex CLI convention). Scrolls there and flashes a TeXstudio-style marker.
+export async function showPdfLocation(page, x, y) {
+  if (!pdfDoc) return;
+  const wrap = pageEls[page - 1];
+  if (!wrap) return;
+  let frac = 0;
+  try {
+    const pg = await pdfDoc.getPage(page);
+    const pageH = pg.view[3] - pg.view[1];
+    if (pageH) frac = Math.max(0, Math.min(1, y / pageH));
+  } catch (_) { /* page top */ }
+  const yPx = frac * wrap.offsetHeight;
+  container.scrollTop = Math.max(0, wrap.offsetTop + yPx - container.clientHeight * 0.4);
+  setCurrentPage(page);
+  scheduleVisible();
+  // flash marker at the target position
+  const flash = document.createElement('div');
+  flash.className = 'pdf-fwd-flash';
+  flash.style.top = Math.max(0, yPx - 9) + 'px';
+  wrap.appendChild(flash);
+  setTimeout(() => flash.remove(), 1400);
+}
+
 /* ---------- SyncTeX inverse search: Ctrl+click → exact source word ---------- */
 // The word under a point in the text layer (so the jump can land on the EXACT
 // clicked word, not just the line — SyncTeX's column is unreliable).

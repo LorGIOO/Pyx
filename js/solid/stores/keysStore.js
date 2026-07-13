@@ -26,6 +26,7 @@ export const KEY_ACTIONS = [
   { id: 'compile.run', group: 'Compilación', label: 'Compilar y ver', en: 'Compile & view', def: 'Ctrl+Shift+B' },
   { id: 'compile.live', group: 'Compilación', label: 'Compilar al escribir (alternar)', en: 'Compile on type (toggle)', def: '' },
 
+  { id: 'view.forward', group: 'Vista', label: 'Ir a esta línea en el PDF (búsqueda directa)', en: 'Jump to this line in the PDF (forward search)', def: 'Ctrl+Alt+F' },
   { id: 'view.zen', group: 'Vista', label: 'Modo zen', en: 'Zen mode', def: 'Ctrl+Alt+Z' },
   { id: 'view.preview', group: 'Vista', label: 'Mostrar/ocultar el visor PDF', en: 'Show/hide the PDF viewer', def: 'Ctrl+Alt+P' },
   { id: 'view.terminal', group: 'Vista', label: 'Terminal', en: 'Terminal', def: 'Ctrl+Alt+T' },

@@ -5,6 +5,7 @@ import { state, activeDoc } from '../core/state.js';
 import { getDocContent, getViewOfDoc } from '../editor/setup.js';
 import {
   writeTextFile, readTextFile, readDir, pathExists, compileLatex, emitToWindow,
+  pltxRead,
 } from '../core/platform.js';
 import { parseCellsText, execCellByCode } from '../editor/cells.js';
 import { runCellCode, evalExpressions, withKernelLock } from '../editor/cell-runner.js';
@@ -70,6 +71,19 @@ const rootCache = new Map(); // docId -> { path, at }
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const isPltx = (p) => /\.pltx$/i.test(p || ''); // ZIP container — never write raw
 
+// Read a source file from DISK for compiling. A container .pltx must go
+// through pltx_read (its zip bytes are not text); legacy/plain files read
+// as text. Every disk read in this module uses this — never readTextFile.
+async function readSourceFile(path) {
+  if (isPltx(path)) {
+    try {
+      const r = await pltxRead(path);
+      if (r && r.is_zip && r.source != null) return r.source;
+    } catch (_) { /* fall through to plain read */ }
+  }
+  return readTextFile(path);
+}
+
 async function resolveRootPath(doc, content) {
   if (!doc.path || /\\documentclass/.test(content)) return doc.path;
   const hit = rootCache.get(doc.id);
@@ -98,7 +112,7 @@ async function resolveRootPath(doc, content) {
         for (const en of entries) {
           if (en.is_dir || !/\.(tex|pltx)$/i.test(en.name) || en.path === doc.path) continue;
           let c = null;
-          try { c = await readTextFile(en.path); } catch (_) { continue; }
+          try { c = await readSourceFile(en.path); } catch (_) { continue; }
           if (/\\documentclass/.test(c) && needle.test(c)) { found = en.path; break; }
         }
         if (found) break;
@@ -144,7 +158,7 @@ async function gatherTree(rootPath, rootContent, rootDir) {
       const open = state.documents.find((d) => d.path === child && !d.kind);
       let c = open ? getDocContent(open.id) : null;
       if (c == null) {
-        try { c = await readTextFile(child); } catch (_) { continue; }
+        try { c = await readSourceFile(child); } catch (_) { continue; }
       } else if (open.modified && !isPltx(child)) {
         // .pltx children are ZIP containers (packed on Save) — never overwrite
         // with raw text; the child's .build.tex is what actually compiles.
@@ -203,7 +217,7 @@ export async function compileActive(showViewer = true) {
         if (!isPltx(rootPath)) { await writeTextFile(rootPath, rootContent); open.modified = false; }
       } else {
         rootDoc = { id: -1, path: rootPath, fileName: baseName(rootPath), engine: doc.engine };
-        try { rootContent = await readTextFile(rootPath); } catch (_) { rootContent = ''; }
+        try { rootContent = await readSourceFile(rootPath); } catch (_) { rootContent = ''; }
       }
     }
 
@@ -405,6 +419,7 @@ export async function compileActive(showViewer = true) {
     // it even if TeX recovered from errors — they stay listed in the log panel.
     if (res.pdf_path) {
       lastPdfPath = res.pdf_path;
+      state.lastPdfPath = res.pdf_path; // forward search reads this
       if (auxOpen()) {
         // The detached window is the active viewer: refresh THAT one (the
         // in-app pane is closed; it reloads via reloadLastPdf when the

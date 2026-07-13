@@ -137,6 +137,8 @@ export const compileLatex = (path, engine, passes = 1, jobname = null) =>
   invoke('compile_latex', { path, engine, passes, jobname });
 // SyncTeX inverse search: PDF position (points, top-left origin) → source+line.
 export const synctexEdit = (pdf, page, x, y) => invoke('synctex_edit', { pdf, page, x, y });
+// SyncTeX forward search: source file + 1-based line → PDF page/position.
+export const synctexView = (tex, line, pdf) => invoke('synctex_view', { tex, line, pdf });
 // .pltx container (ZIP): read → {is_zip, source}; write packs source+artifacts.
 export const pltxRead = (path) => invoke('pltx_read', { path });
 export const pltxWrite = (path, source) => invoke('pltx_write', { path, source });

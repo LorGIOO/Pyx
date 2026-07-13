@@ -9,7 +9,7 @@ import {
 } from '../stores/keysStore.js';
 import { THEMES, setTheme } from '../stores/themeStore.js';
 import { listFonts } from '../../core/platform.js';
-import { broadcastSpellRefresh } from '../../editor/setup.js';
+import { broadcastSpellRefresh, setMinimapEnabled } from '../../editor/setup.js';
 import { state, activeDoc } from '../../core/state.js';
 // i18n `t` is imported as `tr` here: this file already uses `t` for token rows.
 import { t as tr, lang, setLang } from '../../core/i18n.js';
@@ -197,6 +197,11 @@ export default function ConfigDialog() {
                   <span class="cfg-label">{tr('Números de línea', 'Line numbers')}</span>
                   <input type="checkbox" checked={general.lineNumbers !== false}
                     onChange={(e) => setGeneral({ lineNumbers: e.target.checked })} />
+                </div>
+                <div class="cfg-row">
+                  <span class="cfg-label">{tr('Minimapa (estilo VSCode)', 'Minimap (VSCode-style)')}</span>
+                  <input type="checkbox" checked={general.minimap === true}
+                    onChange={(e) => { setGeneral({ minimap: e.target.checked }); setMinimapEnabled(e.target.checked); }} />
                 </div>
                 <div class="cfg-row">
                   <span class="cfg-label">{tr('Plegado de bloques (\\begin/\\end, secciones)', 'Block folding (\\begin/\\end, sections)')}</span>

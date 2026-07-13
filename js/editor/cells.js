@@ -311,6 +311,7 @@ const I = {
   chevronRight: '<svg viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
   expand: '<svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M14 6V2.5h-3.5M2.5 10v3.5H6M14 10v3.5h-3.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
   stop: '<svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.2" fill="currentColor"/></svg>',
+  clearOut: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 11.5l7-7" stroke="currentColor" stroke-width="1.3"/></svg>',
 };
 
 function iconBtn(cls, svg, title, onClick) {
@@ -392,6 +393,12 @@ class CellToolbar extends WidgetType {
       right.appendChild(iconBtn('run stop', I.stop, 'Interrumpir la ejecución', () => interruptKernel()));
     } else {
       right.appendChild(iconBtn('run', I.compile, 'Ejecutar la celda (Mayús+Intro)', () => runCellByHash(view, this.hash)));
+    }
+    // Jupyter's per-cell "clear output": drops THIS cell's output only (the
+    // ribbon's "Limpiar salidas" clears them all).
+    if (out.count || out.stdout || out.stderr || out.error || (out.displays && out.displays.length) || (out.images && out.images.length)) {
+      right.appendChild(iconBtn('clearout', I.clearOut, 'Limpiar la salida de esta celda',
+        () => { OUTPUTS.delete(this.hash); broadcastCellRefresh(); }));
     }
     right.appendChild(iconBtn('danger', I.trash, 'Eliminar celda', () => deleteCellByHash(view, this.hash)));
     bar.appendChild(right);

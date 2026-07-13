@@ -1,6 +1,7 @@
-import { Show } from 'solid-js';
+import { Show, createMemo } from 'solid-js';
 import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
+import { docText, countWords } from '../stores/structureStore.js';
 
 const kernelLabel = () => ({
   idle: t('Kernel inactivo', 'Kernel idle'),
@@ -11,6 +12,9 @@ const kernelLabel = () => ({
 });
 
 export default function StatusBar() {
+  // Word count, TeXstudio-style (prose only). docText updates debounced on
+  // typing, so this stays cheap even on large documents.
+  const words = createMemo(() => countWords(docText()));
   return (
     <div class="status-bar">
       <div class="status-item">
@@ -38,6 +42,11 @@ export default function StatusBar() {
       <Show when={!state.compiling && state.lastCompileOk === false}>
         <div class="status-item"><span class="value" style={{ color: '#dc2626' }}>{t('✗ Error de compilación', '✗ Compilation error')}</span></div>
       </Show>
+
+      <div class="status-item" title={t('Palabras del texto (sin comandos, comentarios ni celdas)', 'Words of prose (no commands, comments or cells)')}>
+        <span class="value">{words().toLocaleString()}</span>
+        <span class="label">{t('palabras', 'words')}</span>
+      </div>
 
       <div class="status-item">
         <span class="label">Ln</span>

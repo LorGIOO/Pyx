@@ -94,6 +94,21 @@ async fn synctex_edit(
     .map_err(|e| e.to_string())?
 }
 
+/// SyncTeX forward search: source file + line → PDF page/position.
+#[tauri::command]
+async fn synctex_view(
+    tex: String,
+    line: u32,
+    pdf: String,
+) -> Result<latex::SyncTexLoc, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        pltx::ensure_synctex_for_pdf(&pdf);
+        latex::synctex_view(&tex, line, &pdf)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Open a `.pltx` container (ZIP). Returns `{is_zip, source}`; when it is a zip
 /// the bundled build artifacts are extracted next to it. Legacy plain-text
 /// `.pltx` reports `is_zip=false` (the JS side then decodes it as text).
@@ -413,6 +428,7 @@ pub fn run() {
             detect_env,
             compile_latex,
             synctex_edit,
+            synctex_view,
             pltx_read,
             pltx_write,
             list_fonts,

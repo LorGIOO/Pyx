@@ -10,7 +10,7 @@ import {
 } from './solid/stores/docStore.js';
 import { compileActive, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
 import { loadPdf } from './pdf/preview.js';
-import { openFind, runAll, gotoLineCol } from './editor/commands.js';
+import { openFind, runAll, gotoLineCol, forwardSearch } from './editor/commands.js';
 import { openPath } from './solid/stores/docStore.js';
 import { openNewDoc } from './solid/components/NewDocDialog.jsx';
 import { lastArea, setPdfSearchOpen, setAuxOpen } from './solid/stores/previewStore.js';
@@ -111,6 +111,7 @@ if (viewerBoot) {
     },
     'calc.runAll': () => { runAll(); },
     'calc.restart': () => { restartKernel(); },
+    'view.forward': () => { forwardSearch(); },
     'view.zen': () => { state.zenMode = !state.zenMode; },
     'view.preview': () => { state.previewVisible = !state.previewVisible; },
     'view.terminal': () => { state.terminalVisible = !state.terminalVisible; },

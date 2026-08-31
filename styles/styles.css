@@ -1,0 +1,11 @@
+/* Calc — hoja de estilos principal. Importa los módulos en orden. */
+@import "./base.css";
+@import "./themes.css";
+@import "./titlebar.css";
+@import "./ribbon.css";
+@import "./tabs.css";
+@import "./layout.css";
+@import "./editor.css";
+@import "./cells.css";
+@import "./status-bar.css";
+@import "./config.css";

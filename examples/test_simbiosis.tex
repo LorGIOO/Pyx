@@ -1,0 +1,142 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[margin=2.2cm]{geometry}
+
+\title{Test de simbiosis \LaTeX{} + Python en Calc}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+Cada bloque \verb|%#python ... %#end| se ejecuta en el kernel (no se imprime);
+los resultados entran en el documento con \verb|\py{...}|.
+
+%#python
+import math
+import numpy as np
+import pandas as pd
+import sympy as sp
+import matplotlib
+import matplotlib.pyplot as plt
+
+# --- Aritmética básica ---
+g, t = 9.81, 2.5
+v = g * t
+d = 0.5 * g * t**2
+fact10 = math.factorial(10)
+print(f"v={v:.2f}  d={d:.2f}  10!={fact10}")
+%#end
+
+\section{Aritmética y \texttt{math}}
+Caída libre: $v = g t = \py{round(v,2)}\ \mathrm{m/s}$ y
+$d = \tfrac12 g t^2 = \py{round(d,2)}\ \mathrm{m}$.
+Además $10! = \py{fact10}$, $\pi \approx \py{round(math.pi,6)}$,
+$e \approx \py{round(math.e,6)}$ y una operación compuesta
+$v\cdot 2 - 3/2 = \py{round(v*2 - 3/2, 3)}$.
+
+%#python
+# --- NumPy: álgebra lineal ---
+A = np.array([[2, 1, -1], [-3, -1, 2], [-2, 1, 2]], dtype=float)
+b = np.array([8, -11, -3], dtype=float)
+x = np.linalg.solve(A, b)
+detA = np.linalg.det(A)
+eig = np.linalg.eigvals(A)
+
+def mat_latex(M, fmt="{:.0f}"):
+    filas = [" & ".join(fmt.format(c) for c in fila) for fila in M]
+    return r"\begin{pmatrix}" + r" \\ ".join(filas) + r"\end{pmatrix}"
+
+A_tex = mat_latex(A)
+x_tex = ",\\ ".join(f"{xi:.3f}" for xi in x)
+eig_tex = ",\\ ".join(f"{e.real:.2f}" for e in eig)
+%#end
+
+\section{NumPy --- álgebra lineal}
+Resolviendo $A\mathbf{x}=\mathbf{b}$ con
+\[ A = \py{A_tex}, \qquad \det(A) = \py{round(detA,1)}. \]
+La solución es $\mathbf{x} = (\py{x_tex})$ y los autovalores de $A$ son
+$\{\py{eig_tex}\}$.
+
+%#python
+# --- pandas: tabla a LaTeX ---
+df = pd.DataFrame({
+    "$n$":        list(range(1, 6)),
+    "$n^2$":      [n**2 for n in range(1, 6)],
+    "$\\sqrt{n}$": [round(math.sqrt(n), 4) for n in range(1, 6)],
+    "$\\ln n$":   [round(math.log(n), 4) for n in range(1, 6)],
+})
+tabla_tex = df.to_latex(index=False, escape=False, column_format="cccc")
+%#end
+
+\section{Tabla generada con pandas}
+\begin{center}
+\py{tabla_tex}
+\end{center}
+
+%#python
+# --- SymPy: cálculo simbólico ---
+xs = sp.symbols('x')
+f = sp.sin(xs) * sp.exp(-xs)
+fprime = sp.simplify(sp.diff(f, xs))
+F = sp.integrate(f, xs)
+raices = sp.solve(xs**2 - 5*xs + 6, xs)
+
+f_tex = sp.latex(f)
+fp_tex = sp.latex(fprime)
+F_tex = sp.latex(F)
+raices_tex = ",\\ ".join(sp.latex(r) for r in raices)
+%#end
+
+\section{SymPy --- cálculo simbólico}
+Sea $f(x) = \py{f_tex}$. Entonces
+\[ f'(x) = \py{fp_tex}, \qquad \int f(x)\,dx = \py{F_tex} + C. \]
+Las raíces de $x^2 - 5x + 6 = 0$ son $x \in \{\py{raices_tex}\}$.
+
+%#python
+# --- matplotlib: figuras (se redimensionan con \includegraphics) ---
+fig, ax = plt.subplots(figsize=(6, 3.4))
+xx = np.linspace(0, 4*np.pi, 400)
+ax.plot(xx, np.sin(xx), label="sin(x)")
+ax.plot(xx, np.cos(xx), "--", label="cos(x)")
+ax.plot(xx, np.exp(-xx/8)*np.sin(xx), ":", label="amortiguada")
+ax.legend(); ax.grid(True, alpha=0.3)
+ax.set_title("Funciones")
+ruta_graf = figure("trig", dpi=200)
+plt.close(fig)
+
+fig2, ax2 = plt.subplots(figsize=(4.5, 3))
+ax2.bar(["A", "B", "C", "D"], [23, 45, 12, 38],
+        color=["#4c72b0", "#dd8452", "#55a868", "#c44e52"])
+ax2.set_title("Barras")
+ruta_barras = figure("barras", dpi=200)
+plt.close(fig2)
+%#end
+
+\section{Gráficas con matplotlib (imágenes redimensionables)}
+La misma figura al 80\% del ancho de texto:
+\begin{center}\includegraphics[width=0.8\textwidth]{\py{ruta_graf}}\end{center}
+
+Dos imágenes con tamaños distintos, una rotada $90^\circ$:
+\begin{center}
+\includegraphics[width=0.30\textwidth]{\py{ruta_barras}}\qquad
+\includegraphics[height=3cm, angle=90]{\py{ruta_barras}}
+\end{center}
+
+%#python
+# --- Estadística (numpy) ---
+datos = [4.2, 5.1, 3.8, 6.0, 5.5, 4.9, 5.3, 6.1, 4.4, 5.0]
+media = float(np.mean(datos))
+desv = float(np.std(datos, ddof=1))
+mediana = float(np.median(datos))
+datos_tex = ",\\ ".join(str(v) for v in datos)
+%#end
+
+\section{Estadística}
+Para los $n = \py{len(datos)}$ datos $\{\py{datos_tex}\}$:
+$\bar{x} = \py{round(media,3)}$, $s = \py{round(desv,3)}$,
+mediana $= \py{round(mediana,2)}$.
+
+\end{document}

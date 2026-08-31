@@ -1,0 +1,67 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=2.3cm]{geometry}
+
+\title{handcalcs al estilo Jupyter: \texttt{\%\%render} / \texttt{\%\%tex}}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+En Calc puedes usar \texttt{handcalcs} igual que en Jupyter: escribe una celda
+que empiece (o contenga) la línea mágica \verb|%%render| o \verb|%%tex| y la
+celda se \emph{renderiza automáticamente dentro del documento}. No se muestra
+salida en la celda: el cálculo (fórmula, sustitución y resultado) aparece aquí,
+justo donde está la celda.
+
+\section{Tu ejemplo}
+Exactamente el código que usabas en Jupyter:
+
+%#python
+import handcalcs.render
+from math import sqrt, pi
+%%tex
+a = 2 / 3 * sqrt(pi)
+%#end
+
+\section{Cálculo de varias líneas}
+Todo lo que va tras \verb|%%render| se renderiza línea a línea:
+
+%#python
+%%render
+b = 20
+h = 30
+A = b * h
+I = b * h**3 / 12
+%#end
+
+\section{Formato compacto (\texttt{params})}
+La línea mágica admite los mismos argumentos que en Jupyter
+(\verb|params|, \verb|long|, \verb|short|, precisión…):
+
+%#python
+%%render params 2
+P = 1500
+e = 35
+M = P * e
+%#end
+
+\section{Con unidades (\texttt{pint})}
+\texttt{pint} arrastra las unidades y \texttt{handcalcs} las muestra. El
+registro \texttt{ureg} ya está disponible (no hace falta importar nada):
+
+%#python
+%%render
+m = 1500 * ureg.kg
+v = 25 * ureg.m / ureg.s
+E_c = (m * v**2) / 2
+%#end
+
+\medskip
+Cada bloque de arriba es una celda de Python que se ejecuta de verdad: las
+variables siguen existiendo, así que también puedes usarlas en el texto con la
+macro \verb|py|. Por ejemplo, el área de la sección era \py{A} y el momento
+de inercia \py{f"{I:.0f}"}.
+
+\end{document}

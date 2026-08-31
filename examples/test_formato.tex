@@ -1,0 +1,56 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[margin=2.3cm]{geometry}
+
+\title{Formato total Python $\to$ \LaTeX{} con \texttt{tex()}}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+La función \verb|tex(obj, prec, env)| convierte cualquier objeto de Python en
+\LaTeX{} listo para el documento; \verb|texesc(s)| escapa texto plano de forma
+segura. Así el formato lo decides tú desde el propio documento.
+
+%#python
+import numpy as np
+import pandas as pd
+import sympy as sp
+
+A = np.array([[2.0, 1.0], [3.0, 4.0]])
+autovalores = np.linalg.eigvals(A)
+
+x = sp.symbols("x")
+integral = sp.integrate(sp.sin(x)**2, x)
+
+tabla = pd.DataFrame({
+    "Pieza": ["Viga", "Pilar", "Zapata"],
+    "L (m)": [6.0, 3.2, 1.5],
+    "Coste": [1250.5, 890.25, 410.0],
+})
+
+v = ureg.Quantity(25.456, "m/s")
+nota = "Coste del 50% & margen #1"
+%#end
+
+\section{Matrices (numpy)}
+\[ A = \py{tex(A, prec=3)} , \qquad
+   \lambda = \py{tex(autovalores, prec=4, env="pmatrix")} \]
+
+\section{Cálculo simbólico (sympy)}
+\[ \int \sin^2 x \, dx = \py{tex(integral)} + C \]
+
+\section{Tabla (pandas)}
+\begin{center}
+\py{tex(tabla, prec=4)}
+\end{center}
+
+\section{Unidades (pint) y texto seguro}
+La velocidad es $v = \py{tex(v, prec=2)}$ y la nota dice:
+«\py{texesc(nota)}».
+
+También puedes formatear a mano con f-strings: \py{f"{float(v.magnitude):.1f}"} m/s.
+
+\end{document}

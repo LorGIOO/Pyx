@@ -1,0 +1,97 @@
+/* Custom Windows-style title bar (window decorations are off). */
+.title-bar {
+  background: var(--theme-titlebar-bg-start);
+  border-bottom: 1px solid var(--theme-titlebar-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+  cursor: default;
+  position: relative;
+  z-index: 1001;
+}
+
+.title-bar-left {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.app-icon {
+  width: 18px;
+  height: 18px;
+  margin: 0 6px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  user-select: none;
+}
+.app-icon svg { width: 100%; height: 100%; }
+
+.quick-access-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+
+.quick-access-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: default;
+  color: var(--theme-titlebar-btn-color);
+  padding: 0;
+}
+.quick-access-btn:hover { background: var(--theme-titlebar-btn-hover); }
+.quick-access-btn:active { background: var(--theme-titlebar-btn-active); }
+.quick-access-btn:disabled { color: var(--theme-titlebar-btn-disabled); }
+.quick-access-btn:disabled:hover { background: transparent; }
+.quick-access-btn svg { width: 16px; height: 16px; }
+
+.quick-access-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--theme-titlebar-border);
+  margin: 0 4px;
+}
+
+.title-bar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.app-title { font-size: 12px; font-weight: 600; color: var(--theme-titlebar-text); }
+.file-name { font-size: 11px; color: var(--theme-titlebar-text-secondary); }
+
+.window-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+.window-btn {
+  width: 40px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--theme-window-btn-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: background 0.1s;
+}
+.window-btn:hover { background: var(--theme-window-btn-hover); }
+.window-btn-close:hover { background: #e81123; color: #fff; }

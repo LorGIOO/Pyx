@@ -1,0 +1,37 @@
+/* Bottom status bar. */
+.status-bar {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  background: var(--theme-status-bg);
+  border-top: 1px solid var(--theme-status-border);
+  color: var(--theme-status-text);
+  font-size: 11px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  gap: 4px;
+  user-select: none;
+}
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  height: 100%;
+  white-space: nowrap;
+}
+.status-item .label { color: var(--theme-status-text); }
+.status-item .value { color: var(--theme-status-text-value); font-weight: 500; }
+.status-spacer { flex: 1; }
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--theme-status-text);
+  flex-shrink: 0;
+}
+.status-dot.ready { background: #16a34a; }
+.status-dot.busy { background: #d97706; animation: pulse 0.9s ease-in-out infinite; }
+.status-dot.error { background: #dc2626; }
+.status-dot.idle { background: #9aa0a6; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }

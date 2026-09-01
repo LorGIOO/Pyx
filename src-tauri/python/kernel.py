@@ -169,6 +169,10 @@ def _install_import_hook():
                     _patch_mpl_show()
                 elif root == "plotly":
                     _patch_plotly_show()
+                elif root == "IPython":
+                    # Done here, not lazily: `from IPython import get_ipython`
+                    # binds the value the instant IPython finishes loading.
+                    _patch_ipython_shell()
             except Exception:
                 pass
             finally:
@@ -180,26 +184,6 @@ def _install_import_hook():
 
 # Persistent namespace shared by every cell in this kernel session.
 NS = {}
-
-
-def _register_render_stub():
-    """``import handcalcs.render`` registers IPython cell magics at import time
-    and crashes outside a Jupyter shell. We handle %%render / %%tex natively,
-    so install a harmless stub module: the user's Jupyter-style
-    ``import handcalcs.render`` then becomes a silent no-op."""
-    if "handcalcs.render" in sys.modules:
-        return
-    try:
-        import handcalcs  # the package itself imports fine
-    except Exception:
-        return
-    stub = types.ModuleType("handcalcs.render")
-    stub.__doc__ = "Calc stub: handcalcs cell magics are handled natively."
-    sys.modules["handcalcs.render"] = stub
-    try:
-        handcalcs.render = stub
-    except Exception:
-        pass
 
 
 def _mime_route(obj):
@@ -254,21 +238,27 @@ def _mime_route(obj):
     # H×W×3/4, or a uint8 grayscale of reasonable size). A small numeric
     # matrix like np.array([[1,2],[3,4]], dtype=uint8) must show as a matrix
     # repr, never as a 2×2 black PNG.
-    try:
-        import numpy as np
-        from PIL import Image as _PILImage
-        if isinstance(obj, np.ndarray):
-            looks_like_image = (
-                (obj.ndim == 3 and obj.shape[-1] in (3, 4) and obj.dtype == np.uint8)
-                or (obj.ndim == 2 and obj.dtype == np.uint8 and min(obj.shape) >= 16)
-            )
-            if looks_like_image:
-                img = _PILImage.fromarray(obj)
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                return {"kind": "image", "data": base64.b64encode(buf.getvalue()).decode("ascii")}
-    except Exception:
-        pass
+    #
+    # numpy is read from sys.modules rather than imported: if the object is an
+    # ndarray then the document already imported it, and a session that never
+    # touches numpy must not pay for loading it here. PIL is only imported once
+    # the array has already been recognised as an image.
+    np = sys.modules.get("numpy")
+    if np is not None:
+        try:
+            if isinstance(obj, np.ndarray):
+                looks_like_image = (
+                    (obj.ndim == 3 and obj.shape[-1] in (3, 4) and obj.dtype == np.uint8)
+                    or (obj.ndim == 2 and obj.dtype == np.uint8 and min(obj.shape) >= 16)
+                )
+                if looks_like_image:
+                    from PIL import Image as _PILImage
+                    buf = io.BytesIO()
+                    _PILImage.fromarray(obj).save(buf, format="PNG")
+                    return {"kind": "image",
+                            "data": base64.b64encode(buf.getvalue()).decode("ascii")}
+        except Exception:
+            pass
     return None
 
 
@@ -292,38 +282,88 @@ def _data_uri(source, mime):
     return "data:%s;base64,%s" % (mime, base64.b64encode(data).decode("ascii"))
 
 
-def _install_helpers():
+# ---------------------------------------------------------------------------
+# The `pyx` module — the app's own helpers, imported like any other library
+# ---------------------------------------------------------------------------
+# NOTHING is injected into the user namespace. A cell starts as empty as a
+# Jupyter cell does: numpy, matplotlib, handcalcs, pint and everything else must
+# be imported by the document that uses them.
+#
+# It used to be the other way round. The kernel pre-defined `figure`, `tex`,
+# `hc`, a live `pint.UnitRegistry()` and more, and it REPLACED
+# `handcalcs.render` with a stub — so `%%render` appeared to work without ever
+# importing handcalcs, and the real library could not be imported, inspected or
+# upgraded. That is not an IDE, it is a framework pretending to be one.
+#
+# What the kernel still provides is the NOTEBOOK PROTOCOL, which belongs to the
+# kernel and not to any library: `display()`, `get_ipython()`, routing an object
+# to its richest representation, and capturing matplotlib figures. Every Jupyter
+# kernel provides exactly these.
+#
+# Pyx's own helpers live in a real module:  from pyx import figure, tex
+
+
+def _need(module_name, who):
+    """Import a module on behalf of a `pyx` helper, with an error that names the
+    missing library instead of a bare ImportError."""
+    try:
+        __import__(module_name)
+        return sys.modules[module_name]
+    except Exception:
+        root = module_name.split(".")[0]
+        raise ImportError(
+            "%s necesita %s, que no esta instalado. Instalalo con "
+            "`pip install %s` en la terminal integrada." % (who, root, root)
+        )
+
+
+def _display(*objs):
+    """Jupyter-style display(): route each object to its richest output
+    (HTML, SVG, PNG, Markdown, ...) and show it under the cell."""
+    for obj in objs:
+        r = _mime_route(obj)
+        if r is None:
+            print(repr(obj))
+        else:
+            if r["kind"] == "markdown":
+                r = {"kind": "html", "data": _md_to_html(r["data"])}
+            DISPLAYS.append(r)
+
+
+def _build_pyx_module():
+    """The `pyx` module: figure/table helpers for the LaTeX bridge, plus the
+    display wrappers Jupyter keeps in `IPython.display`."""
+    mod = types.ModuleType("pyx")
+    mod.__doc__ = (
+        "Ayudantes de Pyx para el puente LaTeX <-> Python.\n\n"
+        "    from pyx import figure, figtex, tabletex, tex, texesc\n"
+        "    from pyx import display, HTML, Markdown, Image, Audio, Video\n"
+    )
+
     def figure(name, fig=None, dpi=150):
         """Save the current matplotlib figure into the project's single image
         folder and return its relative path:
-        p = figure("g") -> \\includegraphics{\\py{p}}.
+
+            p = figure("g")  ->  \\includegraphics{\\py{p}}
 
         ALL Python-generated graphics live in ONE folder, ``xref``, next to the
         ROOT document — never one folder per file. The kernel's cwd is always
         the root document's directory (the app guarantees it, even when running
-        a cell from an \\input'ed child), so a bare relative path here lands in
+        a cell from an included chapter), so a bare relative path here lands in
         exactly one place, and the returned path compiles from any child file
-        because xelatex resolves \\includegraphics against that same cwd."""
-        import matplotlib.pyplot as plt
+        because the engine resolves the graphic against that same cwd."""
+        plt = _need("matplotlib.pyplot", "figure()")
         figs_dir = os.path.join(os.getcwd(), "xref")
         os.makedirs(figs_dir, exist_ok=True)
         rel = "xref/" + str(name) + ".png"
-        (fig or plt.gcf()).savefig(os.path.join(figs_dir, str(name) + ".png"),
-                                   dpi=dpi, bbox_inches="tight")
+        (fig or plt.gcf()).savefig(
+            os.path.join(figs_dir, str(name) + ".png"), dpi=dpi, bbox_inches="tight")
         return rel
-
-    NS["figure"] = figure
 
     def figtex(name, caption=None, label=None, width=0.8, fig=None, dpi=150,
                placement="htbp"):
         """Save the current figure AND return the whole LaTeX float, ready to
-        drop into the document with a single \\py{}:
-
-            \\py{figtex("tension", caption="Tensiones en el apoyo", label="fig:t")}
-
-        `figure()` returns only the path, which means writing the
-        \\begin{figure} … \\caption … \\label scaffolding by hand every time.
-        In a report with forty plots that is forty chances to mislabel one."""
+        drop into the document with a single \\py{}."""
         rel = figure(name, fig=fig, dpi=dpi)
         parts = ["\\begin{figure}[%s]" % placement, "\\centering",
                  "\\includegraphics[width=%s\\linewidth]{%s}" % (width, rel)]
@@ -333,27 +373,6 @@ def _install_helpers():
             parts.append("\\label{%s}" % label)
         parts.append("\\end{figure}")
         return "\n".join(parts)
-
-    NS["figtex"] = figtex
-
-    def tabletex(obj, caption=None, label=None, prec=None, index=False,
-                 placement="htbp"):
-        """A pandas DataFrame (or anything `tex` can typeset) as a complete,
-        captioned LaTeX table: \\py{tabletex(df, caption="Cargas", label="tab:c")}.
-
-        Uses booktabs rules when the document loads the package and plain rules
-        otherwise, so it compiles either way."""
-        body = tex(obj, prec=prec, index=index)
-        parts = ["\\begin{table}[%s]" % placement, "\\centering"]
-        if caption:
-            parts.append("\\caption{%s}" % caption)
-        if label:
-            parts.append("\\label{%s}" % label)
-        parts.append(body)
-        parts.append("\\end{table}")
-        return "\n".join(parts)
-
-    NS["tabletex"] = tabletex
 
     def texesc(s):
         """Escape LaTeX special characters in plain text, so any Python string
@@ -369,57 +388,75 @@ def _install_helpers():
         """Convert a Python object to LaTeX — the bridge for full formatting
         control from the document: \\py{tex(obj)}.
 
-        sympy expr/matrix -> sympy.latex()           (math mode)
-        pint Quantity     -> value + units in LaTeX  (math mode)
+        sympy expr/matrix -> sympy.latex()            (math mode)
+        pint Quantity     -> value + units in LaTeX   (math mode)
         numpy array       -> matrix environment `env` (math mode)
-        pandas DataFrame  -> tabular (to_latex)      (text mode)
-        float + prec      -> rounded                 (either)
+        pandas DataFrame  -> tabular (to_latex)       (text mode)
+        float + prec      -> rounded                  (either)
         anything else     -> str(obj)
-        """
-        try:
-            import sympy
-            if isinstance(obj, (sympy.Basic, sympy.matrices.MatrixBase)):
-                return sympy.latex(obj)
-        except Exception:
-            pass
-        try:
-            import pint
-            if isinstance(obj, pint.Quantity):
-                m = obj.magnitude
-                if prec is not None and isinstance(m, (int, float)):
-                    obj = round(obj, prec)
-                return "{:~L}".format(obj)
-        except Exception:
-            pass
-        try:
-            import pandas as pd
-            if isinstance(obj, pd.Series):
-                obj = obj.to_frame()
-            if isinstance(obj, pd.DataFrame):
-                ff = ("%%.%dg" % prec) if prec is not None else None
-                return obj.to_latex(index=index,
-                                    float_format=(lambda v: ff % v) if ff else None)
-        except Exception:
-            pass
-        try:
-            import numpy as np
-            if isinstance(obj, np.ndarray):
-                arr = np.atleast_2d(obj)
-                fmt = (lambda v: "%.*g" % (prec, v)) if prec is not None else str
-                rows = [" & ".join(fmt(v) for v in row) for row in arr]
-                return "\\begin{%s} %s \\end{%s}" % (env, " \\\\ ".join(rows), env)
-        except Exception:
-            pass
+
+        Every branch is gated on the library being ALREADY imported by the
+        document. Importing them here just to run an isinstance() check would
+        pull sympy, pandas and numpy into a session that never asked for
+        them — seconds of startup, and libraries the user cannot then swap."""
+        sympy = sys.modules.get("sympy")
+        if sympy is not None:
+            try:
+                if isinstance(obj, (sympy.Basic, sympy.matrices.MatrixBase)):
+                    return sympy.latex(obj)
+            except Exception:
+                pass
+        pint = sys.modules.get("pint")
+        if pint is not None:
+            try:
+                if isinstance(obj, pint.Quantity):
+                    m = obj.magnitude
+                    if prec is not None and isinstance(m, (int, float)):
+                        obj = round(obj, prec)
+                    return "{:~L}".format(obj)
+            except Exception:
+                pass
+        pd = sys.modules.get("pandas")
+        if pd is not None:
+            try:
+                if isinstance(obj, pd.Series):
+                    obj = obj.to_frame()
+                if isinstance(obj, pd.DataFrame):
+                    ff = ("%%.%dg" % prec) if prec is not None else None
+                    return obj.to_latex(
+                        index=index, float_format=(lambda v: ff % v) if ff else None)
+            except Exception:
+                pass
+        np = sys.modules.get("numpy")
+        if np is not None:
+            try:
+                if isinstance(obj, np.ndarray):
+                    arr = np.atleast_2d(obj)
+                    fmt = (lambda v: "%.*g" % (prec, v)) if prec is not None else str
+                    rows = [" & ".join(fmt(v) for v in row) for row in arr]
+                    return "\\begin{%s} %s \\end{%s}" % (env, " \\\\ ".join(rows), env)
+            except Exception:
+                pass
         if prec is not None and isinstance(obj, float):
             return "%.*f" % (prec, obj)
         return str(obj)
 
-    NS["tex"] = tex
-    NS["texesc"] = texesc
+    def tabletex(obj, caption=None, label=None, prec=None, index=False,
+                 placement="htbp"):
+        """A pandas DataFrame (or anything `tex` can typeset) as a complete,
+        captioned LaTeX table."""
+        body = tex(obj, prec=prec, index=index)
+        parts = ["\\begin{table}[%s]" % placement, "\\centering"]
+        if caption:
+            parts.append("\\caption{%s}" % caption)
+        if label:
+            parts.append("\\label{%s}" % label)
+        parts.append(body)
+        parts.append("\\end{table}")
+        return "\n".join(parts)
 
     class HTML:
-        """Jupyter-style HTML display: make any HTML string a rich cell output.
-        e.g. HTML(anim.to_html5_video()) shows a playable video."""
+        """Rich HTML output, like IPython.display.HTML."""
         def __init__(self, data):
             self.data = data
         def _repr_html_(self):
@@ -428,7 +465,7 @@ def _install_helpers():
             return "<HTML>"
 
     class Markdown:
-        """Jupyter-style Markdown display: Markdown(\"# Título\\n**negrita**\")."""
+        """Markdown output."""
         def __init__(self, data):
             self.data = data
         def _repr_markdown_(self):
@@ -437,7 +474,7 @@ def _install_helpers():
             return "<Markdown>"
 
     class Image:
-        """Show an image file or raw bytes (png/jpg/gif): Image(\"foto.png\")."""
+        """Show an image file or raw bytes (png/jpg/gif)."""
         def __init__(self, source, mime=None):
             self.source = source
             if mime is None and isinstance(source, str):
@@ -451,12 +488,13 @@ def _install_helpers():
             return "<Image>"
 
     class Audio:
-        """Playable audio: Audio(\"voz.mp3\") or Audio(bytes, mime=\"audio/wav\")."""
+        """Playable audio."""
         def __init__(self, source, mime=None):
             self.source = source
             if mime is None and isinstance(source, str):
                 ext = os.path.splitext(source)[1].lower().lstrip(".")
-                mime = {"mp3": "audio/mpeg", "ogg": "audio/ogg", "m4a": "audio/mp4"}.get(ext, "audio/wav")
+                mime = {"mp3": "audio/mpeg", "ogg": "audio/ogg",
+                        "m4a": "audio/mp4"}.get(ext, "audio/wav")
             self.mime = mime or "audio/wav"
         def _repr_html_(self):
             return '<audio controls src="%s"></audio>' % _data_uri(self.source, self.mime)
@@ -464,62 +502,150 @@ def _install_helpers():
             return "<Audio>"
 
     class Video:
-        """Playable video with controls/loop: Video(\"anim.mp4\", loop=True)."""
+        """Playable video with controls/loop."""
         def __init__(self, source, mime=None, loop=False, autoplay=False):
             self.source = source
             if mime is None and isinstance(source, str):
                 ext = os.path.splitext(source)[1].lower().lstrip(".")
-                mime = {"webm": "video/webm", "ogv": "video/ogg", "mov": "video/quicktime"}.get(ext, "video/mp4")
+                mime = {"webm": "video/webm", "ogv": "video/ogg",
+                        "mov": "video/quicktime"}.get(ext, "video/mp4")
             self.mime = mime or "video/mp4"
             self.loop = loop
             self.autoplay = autoplay
         def _repr_html_(self):
-            attrs = "controls" + (" loop" if self.loop else "") + (" autoplay muted" if self.autoplay else "")
-            return '<video %s style="max-width:100%%" src="%s"></video>' % (attrs, _data_uri(self.source, self.mime))
+            attrs = ("controls" + (" loop" if self.loop else "")
+                     + (" autoplay muted" if self.autoplay else ""))
+            return '<video %s style="max-width:100%%" src="%s"></video>' % (
+                attrs, _data_uri(self.source, self.mime))
         def __repr__(self):
             return "<Video>"
 
-    def display(*objs):
-        """Jupyter-style display(): route each object to its richest output
-        (HTML, SVG, PNG, Markdown, …) and show it under the cell."""
-        for obj in objs:
-            r = _mime_route(obj)
-            if r is None:
-                print(repr(obj))
-            else:
-                if r["kind"] == "markdown":
-                    r = {"kind": "html", "data": _md_to_html(r["data"])}
-                DISPLAYS.append(r)
+    mod.figure = figure
+    mod.figtex = figtex
+    mod.tabletex = tabletex
+    mod.tex = tex
+    mod.texesc = texesc
+    mod.display = _display
+    mod.HTML = HTML
+    mod.Markdown = Markdown
+    mod.Image = Image
+    mod.Audio = Audio
+    mod.Video = Video
+    mod.__all__ = ["figure", "figtex", "tabletex", "tex", "texesc", "display",
+                   "HTML", "Markdown", "Image", "Audio", "Video"]
+    return mod
 
-    NS["HTML"] = HTML
-    NS["Markdown"] = Markdown
-    NS["Image"] = Image
-    NS["Audio"] = Audio
-    NS["Video"] = Video
-    NS["display"] = display
 
-    # handcalcs + pint: render textbook-style calculations straight into the
-    # document. hc(func, *args) returns display-math LaTeX (no double render —
-    # the value is returned, not printed, so it only appears via \py{...}).
-    try:
-        from handcalcs.decorator import handcalc as _handcalc
-        NS["handcalc"] = _handcalc
+# Names the kernel used to define for free. Kept ONLY so the resulting
+# NameError can carry an instruction instead of being a dead end.
+_MOVED_TO_PYX = {
+    "figure", "figtex", "tabletex", "tex", "texesc",
+    "HTML", "Markdown", "Image", "Audio", "Video",
+}
+_REMOVED_HINTS = {
+    "hc": "importa handcalcs: from handcalcs.decorator import handcalc",
+    "handcalc": "importalo: from handcalcs.decorator import handcalc",
+    "ureg": "crealo tu: import pint; ureg = pint.UnitRegistry()",
+}
 
-        def hc(func, *args, **kwargs):
-            out = _handcalc(jupyter_display=False)(func)(*args, **kwargs)
-            latex = out[0] if isinstance(out, tuple) else out
-            return "\\[" + latex + "\\]"
 
-        NS["hc"] = hc
-    except Exception:
-        pass
-    try:
-        import pint
-        NS["ureg"] = pint.UnitRegistry()
-    except Exception:
-        pass
+def _name_hint(name):
+    """Migration hint for a name this kernel used to define implicitly."""
+    if name in _MOVED_TO_PYX:
+        return ("ahora vive en el modulo pyx: escribe `from pyx import %s` "
+                "al principio de la celda" % name)
+    return _REMOVED_HINTS.get(name)
 
-    _register_render_stub()
+
+class _PyxShell:
+    """The minimal `get_ipython()` that every notebook kernel exposes.
+
+    It exists so libraries that register cell magics at import time — handcalcs
+    is the one that matters here — can be imported FOR REAL instead of being
+    replaced by a stub. `import handcalcs.render` then does what it does in
+    Jupyter: it registers its magics, and that registration is what tells this
+    kernel that `%%render` is available in this session."""
+
+    def __init__(self):
+        self.magics = {}
+        self.user_ns = NS
+
+    def register_magics(self, *objs):
+        for o in objs:
+            self.magics[getattr(o, "__name__", str(o))] = o
+
+    def register_magic_function(self, func, magic_kind="line", magic_name=None):
+        self.magics[magic_name or getattr(func, "__name__", "magic")] = func
+
+    # Attributes libraries commonly probe for before registering.
+    def run_line_magic(self, *_a, **_k):
+        return None
+
+    def run_cell_magic(self, *_a, **_k):
+        return None
+
+    def __repr__(self):
+        return "<PyxShell>"
+
+
+_SHELL = _PyxShell()
+
+
+def _patch_ipython_shell():
+    """Make IPython's own ``get_ipython()`` return this kernel.
+
+    Libraries that register cell magics do not call the builtin
+    ``get_ipython``; they do ``from IPython import get_ipython``, and IPython's
+    version returns ``None`` unless an InteractiveShell exists. handcalcs then
+    fails at import with ``'NoneType' object has no attribute
+    'register_magic_function'``.
+
+    Announcing itself as the current shell is what a kernel is FOR — it is the
+    same thing ipykernel does by instantiating an InteractiveShell, only
+    without dragging the whole machinery in. It happens exclusively when the
+    document imports IPython itself, so a session that never does pays nothing
+    and no library is treated as special.
+
+    Reads from ``sys.modules`` (never imports IPython) and patches every
+    already-loaded IPython module that re-exported the function, since
+    ``from X import get_ipython`` binds the value, not the module."""
+    ipy = sys.modules.get("IPython")
+    if ipy is None:
+        return
+    getter = lambda: _SHELL  # noqa: E731
+    if getattr(getattr(ipy, "get_ipython", None), "__name__", "") == "_pyx_get_ipython":
+        return
+    getter.__name__ = "_pyx_get_ipython"
+    for name, mod in list(sys.modules.items()):
+        if mod is None or not (name == "IPython" or name.startswith("IPython.")):
+            continue
+        if getattr(mod, "get_ipython", None) is not None:
+            try:
+                mod.get_ipython = getter
+            except Exception:
+                pass
+
+
+def _install_kernel_builtins():
+    """What the KERNEL provides, as opposed to what a LIBRARY provides:
+    `display()` and `get_ipython()`. They live in builtins, so a namespace reset
+    does not have to put them back and `dir()` in a cell lists only the
+    document's own names."""
+    import builtins
+    builtins.display = _display
+    builtins.get_ipython = lambda: _SHELL
+    if "pyx" not in sys.modules:
+        sys.modules["pyx"] = _build_pyx_module()
+
+
+def _magic_registered(name):
+    """True when some library has registered `%%name` in THIS session.
+
+    This is the whole point: `%%render` works because the document ran
+    `import handcalcs.render` and that import registered the magic, exactly as
+    in Jupyter — not because the kernel decided handcalcs is special. The
+    registry is filled by the library itself through `get_ipython()`."""
+    return name in _SHELL.magics or "handcalcs.render" in sys.modules
 
 
 # ---------------------------------------------------------------------------
@@ -552,12 +678,21 @@ def _parse_line_args(line):
     return parsed
 
 
+class MagicNotRegistered(Exception):
+    """A cell magic was used that no library has registered in this session."""
+
+
 def _detect_magic(code):
     """If the cell uses a handcalcs cell magic, split it into the parts we need.
 
     Returns ``{"setup", "calc", "args"}`` or ``None``. ``setup`` is everything
     before the magic line (imports, assignments) — run but not rendered;
-    ``calc`` is everything after — run and rendered by handcalcs."""
+    ``calc`` is everything after — run and rendered by handcalcs.
+
+    The magic is honoured ONLY when the session has actually imported
+    handcalcs' magics. Before, the kernel implemented `%%render` itself and
+    stubbed the real module out, so the magic worked in a session that had
+    never heard of handcalcs — and the genuine library could not be used."""
     lines = code.split("\n")
     idx = None
     args = ""
@@ -593,7 +728,6 @@ def _render_handcalcs(magic):
     line (clickable) just like a normal cell — setup lines start at line 1 and
     the calc part starts right after the %%render/%%tex line."""
     global _cell_seq, _last_cell_file
-    import handcalcs.handcalcs as _hand
 
     _cell_seq += 1
     filename = "<calc-cell-%d>" % _cell_seq
@@ -601,9 +735,23 @@ def _render_handcalcs(magic):
     full = magic.get("full", "")
     _register_cell_source(filename, full)
 
+    # The setup runs FIRST, so a cell that imports handcalcs on its own first
+    # line and then uses the magic works — the check below has to see the
+    # imports this very cell performs.
     setup = magic["setup"]
     if setup.strip():
         exec(compile(setup, filename, "exec"), NS, NS)
+
+    kind = magic.get("kind", "render")
+    if not _magic_registered(kind):
+        raise MagicNotRegistered(
+            "la celda usa %%" + kind + " pero ninguna libreria ha registrado esa "
+            "magia en esta sesion. Anade `import handcalcs.render` (igual que en "
+            "Jupyter) en una celda anterior o al principio de esta."
+        )
+    _hand = sys.modules.get("handcalcs.handcalcs")
+    if _hand is None:
+        import handcalcs.handcalcs as _hand  # part of the library already loaded
 
     args = _parse_line_args(magic["args"])
     calc = magic["calc"]
@@ -711,6 +859,16 @@ def _format_cell_tb(exc):
     text = _re.sub(r'File "<calc-cell-\d+>", line (\d+)', r"Línea \1",
                    "".join(parts))
     msg = _re.sub(r"\s*\(<calc-cell-\d+>, line \d+\)$", "", str(exc))
+    # A name this kernel used to define implicitly: say where it went instead of
+    # leaving a bare "name 'figure' is not defined".
+    if isinstance(exc, NameError):
+        missing = getattr(exc, "name", None)
+        if missing is None:
+            m = _re.search(r"name '([^']+)' is not defined", str(exc))
+            missing = m.group(1) if m else None
+        hint = _name_hint(missing) if missing else None
+        if hint:
+            msg = "%s — %s" % (msg, hint)
     # Structured frames so the editor can render a COLORED, clickable traceback
     # (Jupyter/VSCode-style) instead of a plain red text block.
     frames = [{
@@ -789,17 +947,19 @@ def _fmt(value):
     """
     import math
     # numpy scalars are fine (treated as python scalars); arrays are an error.
-    try:
-        import numpy as _np
+    # Read from sys.modules: a value can only BE a numpy type if the document
+    # already imported numpy, so importing it here would only slow down every
+    # \py{} in a session that never uses it.
+    _np = sys.modules.get("numpy")
+    if _np is not None:
         if isinstance(value, _np.ndarray):
             raise TypeError(
-                "es un array NumPy de forma %s; usa \\py{tex(...)} para una matriz LaTeX"
+                "es un array NumPy de forma %s; usa \\py{tex(...)} para una "
+                "matriz LaTeX (from pyx import tex)"
                 % (getattr(value, "shape", "?"),)
             )
         if isinstance(value, _np.generic):
             value = value.item()
-    except ImportError:
-        pass
 
     if isinstance(value, int):  # bool is an int subclass → str gives True/False
         return str(value)
@@ -831,10 +991,11 @@ def _fmt(value):
 
 def handle(req):
     if req.get("reset"):
+        # A reset empties the namespace and NOTHING is put back. The kernel's
+        # own protocol (display, get_ipython, the `pyx` module) lives in
+        # builtins and sys.modules, so a cell after a reset starts exactly as
+        # empty as the first cell of a fresh Jupyter session.
         NS.clear()
-        _install_helpers()
-    if "figure" not in NS:
-        _install_helpers()
 
     cwd = req.get("cwd")
     if cwd:
@@ -996,7 +1157,7 @@ def main():
     sys.stderr = sys.__stderr__ = _BG_ERR
 
     _install_import_hook()
-    _install_helpers()
+    _install_kernel_builtins()
 
     req_q = queue.Queue()
     worker = threading.Thread(target=_worker, args=(req_q,), daemon=True)

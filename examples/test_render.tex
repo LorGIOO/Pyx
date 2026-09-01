@@ -19,8 +19,13 @@ justo donde está la celda.
 Exactamente el código que usabas en Jupyter:
 
 %#python
+# handcalcs se importa como en Jupyter: es ese import el que habilita
+# las magias %%render y %%tex en esta sesion.
 import handcalcs.render
+import pint
 from math import sqrt, pi
+
+ureg = pint.UnitRegistry()
 %%tex
 a = 2 / 3 * sqrt(pi)
 %#end

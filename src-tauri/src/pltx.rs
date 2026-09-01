@@ -12,9 +12,12 @@
 //!                          report SHOWS its numbers, tables and figures
 //!                          without re-running anything (see cell-outputs.js)
 //!   build.tex              (optional) last generated <stem>.build.tex
-//!   build.log              (optional) last engine log
-//!   build.aux              (optional) last .aux
 //!   build.synctex.gz       (optional) last SyncTeX data
+//!   build/<name>           (optional) the whole `.pyxbuild` scratch folder —
+//!                          .aux, .log, .fls, .toc, .out … everything the
+//!                          engine leaves behind. Packing it here is what
+//!                          makes a saved project literally two files on
+//!                          disk: `doc.pltx` and `doc.pdf`.
 //!
 //! Backward compatible: a legacy plain-text `.pltx` (not a zip) still opens —
 //! `read` reports `is_zip=false` and the JS side decodes it as text.
@@ -31,10 +34,15 @@ const MANIFEST_BODY: &str = "{\"format\":\"pyx-pltx\",\"version\":1}";
 /// (zip entry name, on-disk suffix appended to the document stem)
 const ARTIFACTS: &[(&str, &str)] = &[
     ("build.tex", ".build.tex"),
-    ("build.log", ".log"),
-    ("build.aux", ".aux"),
     ("build.synctex.gz", ".synctex.gz"),
 ];
+
+/// Scratch folder the LaTeX engine writes into (see latex.rs). Packed into the
+/// container on save and restored on open, so nothing of it stays in the
+/// user's folder.
+const BUILD_DIR: &str = ".pyxbuild";
+/// Prefix used for those entries inside the zip.
+const BUILD_PREFIX: &str = "build/";
 
 #[derive(serde::Serialize)]
 pub struct PltxRead {
@@ -100,6 +108,29 @@ pub fn read(path: &str) -> Result<PltxRead, String> {
             }
         }
     }
+    // Restore the engine's scratch folder, so the first compile after opening
+    // can settle cross-references without a second full pass.
+    let names: Vec<String> = (0..zip.len())
+        .filter_map(|i| zip.name_for_index(i).map(|n| n.to_string()))
+        .filter(|n| n.starts_with(BUILD_PREFIX) && !n.ends_with('/'))
+        .collect();
+    if !names.is_empty() {
+        let out_dir = dir.join(BUILD_DIR);
+        let _ = fs::create_dir_all(&out_dir);
+        for name in names {
+            // Defend against a crafted archive escaping the folder.
+            let leaf = name[BUILD_PREFIX.len()..].to_string();
+            if leaf.is_empty() || leaf.contains('/') || leaf.contains('\\') || leaf.contains("..") {
+                continue;
+            }
+            if let Ok(mut f) = zip.by_name(&name) {
+                let mut buf = Vec::new();
+                if f.read_to_end(&mut buf).is_ok() {
+                    let _ = fs::write(out_dir.join(&leaf), &buf);
+                }
+            }
+        }
+    }
     Ok(PltxRead { is_zip: true, source: Some(source), outputs })
 }
 
@@ -139,15 +170,29 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
                 put(entry, &data)?;
             }
         }
+        // Everything the engine left in `.pyxbuild`.
+        if let Ok(rd) = fs::read_dir(dir.join(BUILD_DIR)) {
+            for e in rd.flatten() {
+                if !e.path().is_file() {
+                    continue;
+                }
+                let name = e.file_name().to_string_lossy().to_string();
+                if let Ok(data) = fs::read(e.path()) {
+                    put(&format!("{BUILD_PREFIX}{name}"), &data)?;
+                }
+            }
+        }
         zip.finish().map_err(|e| format!("zip: {e}"))?;
     }
     fs::rename(&tmp, p).map_err(|e| format!("No se pudo guardar el .pltx: {e}"))?;
 
     // Clean the folder (Word-style): drop the loose artifacts we just bundled.
-    // The PDF is intentionally kept.
+    // The PDF is intentionally kept — what remains beside the container is the
+    // document and its PDF, nothing else.
     for (_, suffix) in ARTIFACTS {
         let _ = fs::remove_file(artifact_path(dir, &stem, suffix));
     }
+    let _ = fs::remove_dir_all(dir.join(BUILD_DIR));
     Ok(())
 }
 

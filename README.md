@@ -8,7 +8,7 @@
 
 Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-![versión](https://img.shields.io/badge/versión-1.2.0-007ACC?style=flat-square)
+![versión](https://img.shields.io/badge/versión-1.2.1-007ACC?style=flat-square)
 ![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
 ![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
@@ -43,17 +43,25 @@ El área de la sección es \py{round(A, 4)} m².
 \pyif{A > 0.15}{\textcolor{red}{Sección sobredimensionada.}}{Dentro de lo previsto.}
 ```
 
+La celda es Python normal y corriente: **importas lo que uses**, igual que en Jupyter. Los ayudantes propios de Pyx (guardar una figura, convertir un objeto a LaTeX) viven en un módulo que también se importa:
+
+```python
+from pyx import figure, figtex, tabletex, tex, texesc
+```
+
 ## 🚀 Características
 
 - **Simbiosis LaTeX ↔ Python** — celdas `%#python … %#end` (el archivo sigue siendo un `.tex` válido) y el puente **`\py{expresión}`** que mete valores calculados en el documento.
 - **Texto que reacciona al cálculo** — `\pyif{condición}{…}{…}`: el informe se redacta solo según el resultado (p. ej. «CUMPLE / NO CUMPLE»).
 - **Valores en vivo** — el resultado de cada `\py{}` aparece en gris junto a él mientras escribes, sin compilar (estilo Mathcad / MATLAB Live).
-- **Kernel Python completo** — numpy, pandas, sympy, matplotlib, handcalcs, pint… con **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar) y subrayado de sintaxis en vivo.
+- **Kernel Python plano, como Jupyter** — el espacio de nombres arranca **vacío**: ninguna librería viene precargada ni tiene trato de favor, así que las actualizas, las cambias o las parcheas como en cualquier IDE. Lo que sí trae el kernel es el protocolo del cuaderno: `display()`, `get_ipython()`, las figuras de matplotlib capturadas solas y **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar).
+- **handcalcs igual que en Jupyter** — `import handcalcs.render` y las magias `%%render` / `%%tex` quedan disponibles; sin ese import no existen. Se usa la librería **real** (antes se sustituía por un sucedáneo interno, y no se podía ni actualizar).
 - **Los resultados viajan con el documento** — al abrir un informe ves sus números, tablas y figuras **sin ejecutar nada** (ni hace falta Python instalado). Si una celda cambió desde que se calculó, su resultado se marca **«desactualizado»** en vez de pasar por vigente: en una memoria de cálculo, un número que ya no corresponde a su fórmula es el error más caro que existe.
 - **Ejecución incremental** — al recompilar solo se re-ejecuta lo que cambió; una celda de simulación larga no se repite porque hayas retocado un párrafo.
 - **Interrupción sin perder la sesión** — parar una celda lanza `KeyboardInterrupt` como en Jupyter: **las variables ya calculadas siguen en memoria**.
 - **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
 - **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
+- **Carpeta limpia** — todo lo que ensucia el motor LaTeX (`.aux`, `.log`, `.fls`, `.toc`, `.out`, `.maf`…) va a una única carpeta `.pyxbuild`, y al guardar un `.pltx` se empaqueta dentro del documento y desaparece: junto a tu proyecto solo quedan `documento.pltx` y `documento.pdf`.
 - **Comodidades de IDE** — autocompletado y snippets, corrector ortográfico (español e inglés), plegado de código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables y temas claro/oscuro/azul.
 - **Funciona sin conexión** — las fórmulas de handcalcs se componen con KaTeX empaquetado en la app; nada depende de una CDN.
 
@@ -77,8 +85,8 @@ Descarga el instalador de tu sistema desde la [**última release**](https://gith
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | `Pyx_1.2.0_x64-setup.exe` |
-| **macOS** (Intel y Apple Silicon) | `Pyx_1.2.0_universal.dmg` |
+| **Windows** (x64) | `Pyx_1.2.1_x64-setup.exe` |
+| **macOS** (Intel y Apple Silicon) | `Pyx_1.2.1_universal.dmg` |
 | **Linux** | `.deb` (Debian/Ubuntu) · `.rpm` (Fedora) · `.AppImage` (cualquier distro) |
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.

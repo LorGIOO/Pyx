@@ -15,9 +15,15 @@ La función \verb|tex(obj, prec, env)| convierte cualquier objeto de Python en
 segura. Así el formato lo decides tú desde el propio documento.
 
 %#python
+# Como en Jupyter: el documento importa lo que usa. Los ayudantes de
+# Pyx viven en el modulo `pyx` y no vienen cargados de serie.
 import numpy as np
 import pandas as pd
 import sympy as sp
+import pint
+from pyx import tex, texesc
+
+ureg = pint.UnitRegistry()
 
 A = np.array([[2.0, 1.0], [3.0, 4.0]])
 autovalores = np.linalg.eigvals(A)

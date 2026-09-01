@@ -475,11 +475,17 @@ pub fn exec(
     }
 }
 
+/// Restart the kernel: a NEW interpreter process, not just an emptied
+/// namespace.
+///
+/// Clearing the namespace leaves `sys.modules` untouched, so a library the user
+/// had just upgraded with `pip install -U …` kept serving its old code until
+/// the app was closed and reopened. "Reiniciar el kernel" has to mean what it
+/// says. The compiler's own reset (`{"reset": true}`, which only empties the
+/// namespace) is a different, much cheaper operation and stays as it was.
 pub fn reset(state: &Mutex<Option<KernelProc>>) -> Result<serde_json::Value, String> {
-    exec(
-        state,
-        serde_json::json!({ "id": 0, "code": "", "reset": true }),
-    )
+    shutdown(state)?;
+    start(state)
 }
 
 pub fn shutdown(state: &Mutex<Option<KernelProc>>) -> Result<(), String> {

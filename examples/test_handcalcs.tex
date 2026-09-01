@@ -22,6 +22,19 @@ sustitución de valores y el resultado. El patrón en Calc es:
 Momento y cortante máximos de una viga con carga uniforme:
 
 %#python
+# La API real de handcalcs, importada por el documento. `handcalc()` es un
+# decorador que devuelve (latex, resultado); lo envolvemos para insertarlo
+# con \py{} como display math.
+import pint
+from handcalcs.decorator import handcalc
+
+ureg = pint.UnitRegistry()
+
+def hc(func, *args, **kwargs):
+    out = handcalc(jupyter_display=False)(func)(*args, **kwargs)
+    latex = out[0] if isinstance(out, tuple) else out
+    return "\[" + latex + "\]"
+
 def viga(w, L):
     M_max = w * L**2 / 8      # momento máximo
     V_max = w * L / 2         # cortante máximo

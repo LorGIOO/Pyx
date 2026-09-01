@@ -27,7 +27,8 @@ __pycache__/
 *.maf
 *.toc[AB]
 _calc_figs/
-.pyx-word/
+# Todo el material intermedio del motor LaTeX va aquí (ver latex.rs).
+.pyxbuild/
 
 # Keep the example DOCUMENTS (and their reference PDFs) even though *.pdf and
 # *.pltx are ignored above — but NOT the engine's scratch output, which is

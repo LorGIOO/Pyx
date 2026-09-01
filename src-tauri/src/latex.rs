@@ -208,6 +208,40 @@ pub fn synctex_edit(pdf: &str, page: u32, x: f64, y: f64) -> Result<SyncTexHit, 
     }
 }
 
+/// Recreate the document's subdirectory layout inside the build folder.
+///
+/// `\include{cap/uno}` makes TeX write `cap/uno.aux` *relative to the output
+/// directory*. MiKTeX creates the missing folder; TeX Live does not — it stops
+/// with "I can't write on file `cap/uno.aux'", which would make every
+/// chaptered document fail to build on Linux and macOS while working fine on
+/// the Windows machine it was written on. Creating the folders up front costs
+/// nothing and removes the difference.
+fn mirror_subdirs(src: &Path, dst: &Path, depth: u32) {
+    if depth == 0 {
+        return;
+    }
+    let rd = match std::fs::read_dir(src) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for entry in rd.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name();
+        // Skip dot-folders (including the build folder itself) and the places
+        // where generated images and dependencies live.
+        let n = name.to_string_lossy();
+        if n.starts_with('.') || n == "node_modules" || n == "xref" {
+            continue;
+        }
+        let target = dst.join(&name);
+        if std::fs::create_dir_all(&target).is_ok() {
+            mirror_subdirs(&entry.path(), &target, depth - 1);
+        }
+    }
+}
+
 /// Compile a `.tex` file with the chosen engine. Runs `passes` times so table
 /// of contents / cross references can settle (1 is fastest, 2 resolves refs).
 ///
@@ -246,6 +280,27 @@ pub fn compile(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| src.file_stem().unwrap_or_default().to_string_lossy().to_string());
 
+    // ---- one folder for every scratch file the engine produces ----
+    //
+    // A LaTeX run litters the document's folder with .aux, .log, .fls, .toc,
+    // .out, .lof, .lot, .maf, .mtc*, .nav, .snm … On a document with chapters
+    // that is dozens of files the author never asked for and cannot tell apart
+    // from their own. `-output-directory` sends all of it into ONE place.
+    //
+    // The PDF and the SyncTeX index are then moved back next to the document,
+    // because those two are not scratch: the viewer opens the PDF from there,
+    // and `synctex` resolves its index relative to the PDF it is given.
+    //
+    // The engine still RUNS from the document's folder, so relative paths in
+    // the source (\includegraphics{xref/…}, \input{cap/…}) resolve exactly as
+    // they did before. And keeping the .aux files between runs is what lets
+    // cross-references settle in two passes instead of three.
+    const BUILD_DIR: &str = ".pyxbuild";
+    let build_dir = dir.join(BUILD_DIR);
+    std::fs::create_dir_all(&build_dir)
+        .map_err(|e| format!("No se pudo crear la carpeta de compilación: {e}"))?;
+    mirror_subdirs(dir, &build_dir, 3);
+
     // Snapshot the PDF's mtime BEFORE compiling: success is "this run wrote a
     // PDF", never "a PDF from some earlier compile is still lying around".
     let pdf = dir.join(format!("{out_name}.pdf"));
@@ -265,7 +320,8 @@ pub fn compile(
         // "work" in TeXstudio produce nothing here.
         cmd.current_dir(dir)
             .arg("-interaction=nonstopmode")
-            .arg("-synctex=1");
+            .arg("-synctex=1")
+            .arg(format!("-output-directory={BUILD_DIR}"));
         // A pass we ALREADY know is not the last one exists only to settle
         // references and the table of contents — its PDF is thrown away. In
         // draft mode the engine skips font loading, image processing and the
@@ -312,6 +368,22 @@ pub fn compile(
             || missing_listing;
         if i + 1 >= passes && !needs_rerun {
             break;
+        }
+    }
+
+    // Bring the two OUTPUTS (as opposed to scratch) back next to the document:
+    // the PDF the viewer opens, and the SyncTeX index, which the `synctex` CLI
+    // looks for beside the PDF it is handed.
+    for suffix in [".pdf", ".synctex.gz"] {
+        let from = build_dir.join(format!("{out_name}{suffix}"));
+        if !from.exists() {
+            continue;
+        }
+        let to = dir.join(format!("{out_name}{suffix}"));
+        // rename() is atomic and free within one volume; copy is the fallback
+        // for the case the folder sits on a different mount.
+        if std::fs::rename(&from, &to).is_err() {
+            let _ = std::fs::copy(&from, &to).map(|_| std::fs::remove_file(&from));
         }
     }
 

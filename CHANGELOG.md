@@ -42,12 +42,22 @@ La carpeta del proyecto vuelve a ser tuya: solo contiene lo que tú pusiste.
 
 ### Corregido
 
-- **La lupa ya no pixela.** Ampliaba 3× el lienzo que ya estaba dibujado en
-  pantalla, es decir, escalaba un mapa de bits pequeño. Ahora le pide a PDF.js
-  que rasterice la zona bajo el cursor **a la resolución de la lupa**, así que
-  el texto se ve tan nítido como si la página estuviera de verdad al 300 %. El
-  coste está acotado: se rasteriza un recuadro algo mayor que la lupa y se
-  reutiliza mientras el cursor no salga de él.
+- **La lupa aumenta de verdad, con zoom regulable y sin perder resolución.**
+  Antes escalaba 3× el lienzo ya dibujado en pantalla (un mapa de bits pequeño),
+  de ahí el pixelado. Ahora le pide a PDF.js que rasterice la zona bajo el
+  cursor **a la resolución de la lupa** (`escala × zoom × densidad de
+  pantalla`) y la copia píxel a píxel, sin reescalar nada: el texto se ve como
+  si la página estuviera de verdad a ese aumento.
+
+  El **zoom se ajusta con la rueda** mientras la lupa está activa, de 1,5× a
+  16×, con el factor indicado bajo el cristal. El coste no depende del aumento:
+  el recuadro que se rasteriza encoge en unidades de página al mismo ritmo que
+  crece su densidad, así que 16× cuesta lo mismo que 2×.
+
+  La aritmética vive en `js/pdf/loupe-geometry.js` y está cubierta por pruebas,
+  porque equivocarse ahí es silencioso: la primera versión dimensionaba el
+  lienzo con el factor de zoom **y** leía una región del mismo tamaño, lo que da
+  exactamente 1:1 — la lupa no aumentaba nada.
 
 - **No se recompila cuando nada puede cambiar el PDF.** El texto de compilación
   ya lleva los valores de `\py{}` resueltos y los bloques de handcalcs, así que

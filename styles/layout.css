@@ -541,6 +541,19 @@
   background: #fff;
 }
 
+/* Current magnification, under the loupe: the wheel changes it while the loupe
+   is held, so the factor has to be visible to be usable. */
+.pdf-loupe-zoom {
+  position: fixed;
+  z-index: 5001;
+  pointer-events: none;
+  width: 200px;
+  text-align: center;
+  font: 600 11px/1.6 "Segoe UI", system-ui, sans-serif;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
 .preview-empty {
   margin: auto;
   color: var(--theme-text-secondary);

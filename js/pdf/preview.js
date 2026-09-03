@@ -30,6 +30,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { readBinaryFile, openExternal, synctexEdit, pathExists, emitToWindow } from '../core/platform.js';
 import { baseName } from '../core/paths.js';
 import { buildPathToSource } from '../compile/build-maps.js';
+import { loupeGeometry } from './loupe-geometry.js';
 import { setAnnotDoc, buildAnnotLayer } from './annotate.js';
 import { general } from '../solid/stores/settingsStore.js';
 import {
@@ -771,6 +772,15 @@ function attachEvents(el) {
   //  - Plain wheel / two-finger pan → DIRECT manual scrolling (1:1, no
   //    animated/automatic glide): like moving the page with your hand.
   el.addEventListener('wheel', (e) => {
+    // While the loupe is up the wheel belongs to IT: that is how you dial the
+    // magnification in on the detail you are inspecting, instead of being stuck
+    // with one factor. The page must not scroll or zoom underneath.
+    if (loupe) {
+      e.preventDefault();
+      e.stopPropagation();
+      setLoupeZoom(loupeZoom * Math.exp(-e.deltaY * (e.deltaMode === 0 ? 0.0015 : 0.05)));
+      return;
+    }
     const rightHeld = (e.buttons & 2) === 2;
     if (e.ctrlKey || rightHeld) {
       e.preventDefault();
@@ -1050,56 +1060,86 @@ function highlightMatches(pageN, query) {
 }
 
 /* ---------- circular magnifier loupe (double-click or magnifier tool) ----------
-   RESOLUTION CONTRACT — this is why the loupe is not pixelated.
+   THE ARITHMETIC, because getting it wrong is silent: the loupe either fails to
+   magnify or shows a blurry upscale, and both look like "it just does that".
 
-   The loupe used to sample the page's on-screen canvas and scale it up by
-   LZOOM. That canvas is rasterized for the CURRENT zoom, so magnifying it 3×
-   is a 3× upscale of a finished bitmap: blurry at best, blocky at worst. No
-   amount of `imageSmoothingQuality` fixes missing pixels.
+   Let Z be the magnification and D the device pixel ratio. Three quantities
+   have to agree:
 
-   The loupe now asks PDF.js to rasterize the region under the cursor AT THE
-   MAGNIFIED RESOLUTION — scale × LZOOM × device density — so what it shows was
-   never a small image. Text is as sharp as if the page were really at 300%.
+     · The loupe is LSIZE CSS px wide, so its backing canvas is LSIZE·D device
+       px. NOT LSIZE·D·Z — that was the bug that made it not magnify at all:
+       an oversized backing meant reading an LSIZE·D·Z-wide slab of page and
+       painting it into an equally wide canvas, i.e. exactly 1:1.
+     · Magnifying by Z means showing LSIZE/Z CSS px of page inside those
+       LSIZE CSS px of screen.
+     · To fill LSIZE·D device px from LSIZE/Z CSS px of page, the page has to be
+       rasterized at Z·D device px per CSS px — so the tile is rendered at
+       `scale · Z · D` and copied into the loupe 1:1, never resampled.
 
-   The cost is bounded by only rendering a TILE a little larger than the loupe
-   and reusing it until the cursor leaves it, and by never having more than one
-   render in flight. Moving the loupe inside a tile is a plain drawImage. */
-let loupe = null, loupeCtx = null;
-const LSIZE = 200, LZOOM = 3;
-const TILE_PAD = 1.6;      // tile side, in loupe diameters
-let tile = null;           // { page, scale, left, top, w, h, canvas } in CSS px
+   That is what keeps it sharp: the pixels come from PDF.js at the magnified
+   resolution, they are not a blown-up copy of what is already on screen.
+
+   Cost is constant in Z. The tile is LSIZE/Z·PAD CSS px wide at Z·D density,
+   i.e. LSIZE·PAD·D pixels whatever the zoom, so 12× costs the same as 2×. */
+let loupe = null, loupeCtx = null, loupeLabel = null;
+const LSIZE = 200;
+const LZOOM_MIN = 1.5, LZOOM_MAX = 16, LZOOM_DEFAULT = 3;
+const TILE_PAD = 1.8;      // tile side, in loupe diameters
+let loupeZoom = LZOOM_DEFAULT;
+let tile = null;           // { page, scale, zoom, left, top, w, h, canvas, dens }
 let tileBusy = false;      // one PDF.js render at a time
 let tileWanted = null;     // last request while a render was in flight
+let lastLoupeEvent = null; // to repaint in place when the zoom changes
+
+export function getLoupeZoom() { return loupeZoom; }
+
+/** Change the magnification (wheel over the loupe). The tile is rendered for a
+ *  specific Z, so it has to be thrown away and asked for again. */
+export function setLoupeZoom(z) {
+  const next = Math.max(LZOOM_MIN, Math.min(LZOOM_MAX, +z.toFixed(2)));
+  if (next === loupeZoom) return;
+  loupeZoom = next;
+  if (loupeLabel) loupeLabel.textContent = `${loupeZoom.toFixed(1)}×`;
+  if (lastLoupeEvent) drawLoupe(lastLoupeEvent);
+}
 
 function openLoupe() {
   if (loupe) return;
-  const dens = dpr() * LZOOM;
   loupe = document.createElement('canvas');
-  loupe.width = Math.round(LSIZE * dens);
-  loupe.height = Math.round(LSIZE * dens);
+  // Backing = CSS size × device ratio. The magnification lives in how much
+  // PAGE goes into this canvas, never in how big the canvas is.
+  loupe.width = Math.round(LSIZE * dpr());
+  loupe.height = Math.round(LSIZE * dpr());
   loupe.style.width = LSIZE + 'px';
   loupe.style.height = LSIZE + 'px';
   loupe.className = 'pdf-loupe';
   document.body.appendChild(loupe);
   loupeCtx = loupe.getContext('2d', { alpha: false });
+
+  loupeLabel = document.createElement('div');
+  loupeLabel.className = 'pdf-loupe-zoom';
+  loupeLabel.textContent = `${loupeZoom.toFixed(1)}×`;
+  document.body.appendChild(loupeLabel);
 }
 function closeLoupe() {
   if (loupe) loupe.remove();
-  loupe = null; loupeCtx = null; tile = null; tileWanted = null;
+  if (loupeLabel) loupeLabel.remove();
+  loupe = null; loupeCtx = null; loupeLabel = null;
+  tile = null; tileWanted = null; lastLoupeEvent = null;
 }
 
 /** Rasterize a region of `pageN` (page-local CSS px) at the loupe's resolution. */
-async function renderTile(pageN, left, top, side) {
+async function renderTile(pageN, left, top, side, zoom) {
   if (!pdfDoc) return;
   tileBusy = true;
   try {
     const page = await pdfDoc.getPage(pageN);
     const s = getScale();
-    const dens = dpr() * LZOOM;
+    const dens = loupeGeometry({ lsize: LSIZE, dpr: dpr(), zoom }).density;
     const vp = page.getViewport({ scale: s * dens });
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(side * dens);
-    canvas.height = Math.round(side * dens);
+    canvas.width = Math.max(1, Math.round(side * dens));
+    canvas.height = canvas.width;
     const ctx = canvas.getContext('2d', { alpha: false });
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1109,14 +1149,16 @@ async function renderTile(pageN, left, top, side) {
       viewport: vp,
       transform: [1, 0, 0, 1, -left * dens, -top * dens],
     }).promise;
-    tile = { page: pageN, scale: s, left, top, w: side, h: side, canvas, dens };
+    tile = { page: pageN, scale: s, zoom, left, top, w: side, h: side, canvas, dens };
   } catch (_) {
     // A cancelled or failed render just leaves the previous tile in place.
   } finally {
     tileBusy = false;
     const next = tileWanted;
     tileWanted = null;
-    if (next && loupe) renderTile(next.pageN, next.left, next.top, next.side).then(paintLoupe);
+    if (next && loupe) {
+      renderTile(next.pageN, next.left, next.top, next.side, next.zoom).then(paintLoupe);
+    }
   }
 }
 
@@ -1127,14 +1169,14 @@ function paintLoupe() {
   const B = loupe.width;
   loupeCtx.save();
   loupeCtx.beginPath();
-  loupeCtx.arc(B / 2, B / 2, B / 2 - 2, 0, Math.PI * 2);
+  loupeCtx.arc(B / 2, B / 2, B / 2 - 1, 0, Math.PI * 2);
   loupeCtx.clip();
   loupeCtx.fillStyle = '#fff';
   loupeCtx.fillRect(0, 0, B, B);
   const t = tile;
-  if (t && t.page === loupeAt.pageN && t.scale === getScale()) {
-    // 1 CSS px of page → `dens` px of tile → the same in the loupe backing,
-    // so the tile is drawn 1:1 and nothing is resampled.
+  if (t && t.page === loupeAt.pageN && t.scale === getScale() && t.zoom === loupeZoom) {
+    // B tile px cover B/dens = LSIZE/Z CSS px of page, painted across the whole
+    // loupe: magnified by Z, and 1:1 in pixels so nothing is resampled.
     const sx = (loupeAt.x - t.left) * t.dens - B / 2;
     const sy = (loupeAt.y - t.top) * t.dens - B / 2;
     loupeCtx.drawImage(t.canvas, sx, sy, B, B, 0, 0, B, B);
@@ -1144,8 +1186,13 @@ function paintLoupe() {
 
 function drawLoupe(e) {
   if (!loupe) return;
+  lastLoupeEvent = { clientX: e.clientX, clientY: e.clientY };
   loupe.style.left = e.clientX - LSIZE / 2 + 'px';
   loupe.style.top = e.clientY - LSIZE / 2 + 'px';
+  if (loupeLabel) {
+    loupeLabel.style.left = e.clientX - LSIZE / 2 + 'px';
+    loupeLabel.style.top = e.clientY + LSIZE / 2 + 6 + 'px';
+  }
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const pageEl = el && el.closest ? el.closest('.pdf-page') : null;
   if (!pageEl) {
@@ -1159,10 +1206,11 @@ function drawLoupe(e) {
   loupeAt = { pageN, x: e.clientX - r.left, y: e.clientY - r.top };
 
   // Does the cursor still sit comfortably inside the cached tile?
-  const need = LSIZE / LZOOM;           // page CSS px the loupe shows
-  const side = need * TILE_PAD;
+  const geo = loupeGeometry({ lsize: LSIZE, dpr: dpr(), zoom: loupeZoom, pad: TILE_PAD });
+  const need = geo.pageCss;              // page CSS px the loupe shows
+  const side = geo.tileCss;
   const t = tile;
-  const inside = t && t.page === pageN && t.scale === getScale()
+  const inside = t && t.page === pageN && t.scale === getScale() && t.zoom === loupeZoom
     && loupeAt.x - need / 2 >= t.left && loupeAt.x + need / 2 <= t.left + t.w
     && loupeAt.y - need / 2 >= t.top && loupeAt.y + need / 2 <= t.top + t.h;
   if (!inside) {
@@ -1171,9 +1219,10 @@ function drawLoupe(e) {
       left: Math.max(0, loupeAt.x - side / 2),
       top: Math.max(0, loupeAt.y - side / 2),
       side,
+      zoom: loupeZoom,
     };
     if (tileBusy) tileWanted = req;
-    else renderTile(req.pageN, req.left, req.top, req.side).then(paintLoupe);
+    else renderTile(req.pageN, req.left, req.top, req.side, req.zoom).then(paintLoupe);
   }
   paintLoupe();
 }

@@ -5,8 +5,9 @@ import { state, activeDoc } from '../core/state.js';
 import { getDocContent, getViewOfDoc } from '../editor/setup.js';
 import {
   writeTextFile, readTextFile, readDir, pathExists, compileLatex, emitToWindow,
-  pltxRead, fileStamps,
+  pltxRead, fileStamps, buildDirFor, createDir,
 } from '../core/platform.js';
+import { relativeTo } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
 import { docIdOf } from '../editor/doc-id.js';
@@ -642,11 +643,38 @@ export async function compileActive(showViewer = true) {
     }
     const shim = safetyPreamble(use);
 
+    /* Where each file's processed copy goes.
+     *
+     * Inside the project's WORKING DIRECTORY, which lives outside the user's
+     * folder (see src-tauri/src/workspace.rs), mirroring the project's own
+     * layout so `\input{cap/uno}` keeps working — the engine finds it through
+     * TEXINPUTS. A file that sits outside the project (a chapter reached with
+     * `../shared/…`) gets a flattened, fingerprinted name instead. */
+    const outDir = await buildDirFor(rootPath);
+    const buildRel = new Map();
+    for (const path of files.keys()) {
+      const rel = relativeTo(cwd, path);
+      const name = rel !== null && rel !== ''
+        ? rel.replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX
+        : `_ext/${hashString(path.toLowerCase())}-${stemOf(path)}${BUILD_SUFFIX}`;
+      buildRel.set(path, name);
+    }
+
     const lineMaps = {};
+    /* Did anything the engine reads actually change?
+     *
+     * The build text is the ONLY thing that can move the PDF: it already
+     * carries the resolved \py{} values and the handcalcs blocks, so if every
+     * build file is byte-identical to the one compiled last time, a new run
+     * would reproduce the same PDF. On a background compile that means the
+     * whole 2-3 second engine pass — and the PDF reload after it — can be
+     * skipped outright. Typing prose, editing a comment or running a cell that
+     * prints to the editor now costs nothing at all. */
+    let wroteAny = false;
     for (const [path, f] of files) {
       if (path !== rootPath && !needs.get(path)) continue;
       let processed = f.content;
-      const buildFile = path.replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX;
+      const buildFile = joinPath(outDir, buildRel.get(path));
       const mapKey = baseName(buildFile).toLowerCase();
       if (f.isPyx) {
         // The build is CLEAN LaTeX (cells removed, \py{} substituted): it
@@ -667,8 +695,9 @@ export async function compileActive(showViewer = true) {
       processed = processed.replace(new RegExp(INPUT_SRC, 'g'), (all, cmd, raw) => {
         const child = f.raws.get(raw);
         if (!child || !needs.get(child)) return all;
-        const nraw = /\.tex$/i.test(raw) ? raw.replace(/\.tex$/i, '.build.tex') : raw + '.build';
-        return `\\${cmd}{${nraw}}`;
+        // Point at the child's copy by its path INSIDE the working directory.
+        // It is relative, so the engine resolves it through TEXINPUTS.
+        return `\\${cmd}{${buildRel.get(child)}}`;
       });
       if (shim && path === rootPath) {
         const inj = injectPreamble(processed, shim);
@@ -697,10 +726,15 @@ export async function compileActive(showViewer = true) {
       // keeps the engine's own dependency checks (and the disk) quiet.
       const stampNow = processed.length + ':' + hashString(processed);
       if (lastBuildWritten.get(buildFile) === stampNow) continue;
+      // The working directory mirrors the project's folders; create the branch
+      // the first time a chapter in a subfolder is written.
+      const parent = dirOf(buildFile);
+      if (parent && parent !== outDir) await createDir(parent).catch(() => {});
       await writeTextFile(buildFile, processed);
       lastBuildWritten.set(buildFile, stampNow);
+      wroteAny = true;
     }
-    const buildPath = joinPath(cwd, stem + BUILD_SUFFIX);
+    const buildPath = joinPath(outDir, buildRel.get(rootPath));
 
     // Published for forward/inverse SyncTeX and the log parser — keyed by the
     // build file's lowercase basename. These are plain data (arrays of tens of
@@ -708,6 +742,8 @@ export async function compileActive(showViewer = true) {
     // reactive store: behind a Proxy, every lookup paid a trap.
     setBuildMaps({
       lineMaps,
+      project: cwd,
+      work: outDir,
       root: baseName(buildPath),
       buildToReal: Object.fromEntries([...files.keys()].map((p) => [
         (baseName(p).replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX).toLowerCase(), p,
@@ -737,7 +773,18 @@ export async function compileActive(showViewer = true) {
     )[1];
     const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()
       || state.env.latex || 'xelatex';
-    const res = await compileLatex(buildPath, engine, passes, stem);
+
+    // Nothing the engine reads changed, and the PDF from last time is still
+    // there: running it again would burn seconds to produce the same bytes.
+    // A MANUAL compile always runs — it is the user asking for ground truth.
+    if (!showViewer && !wroteAny && lastPdfPath && await pathExists(lastPdfPath)) {
+      state.lastLog = (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '')
+        + 'Sin cambios que afecten al PDF: no se ha recompilado.';
+      state.lastCompileOk = !problems;
+      return null;
+    }
+
+    const res = await compileLatex(buildPath, cwd, engine, passes, stem);
 
     state.lastLog =
       (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') + (res.log || '');

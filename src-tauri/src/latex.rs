@@ -208,6 +208,27 @@ pub fn synctex_edit(pdf: &str, page: u32, x: f64, y: f64) -> Result<SyncTexHit, 
     }
 }
 
+/// `TEXINPUTS` value that adds the working directory to the search path.
+///
+/// The separator is `;` on Windows and `:` elsewhere, and the trailing one is
+/// what tells kpathsea "…and then the usual places" — without it the engine
+/// would stop finding the LaTeX distribution itself.
+fn texinputs(out_dir: &Path) -> String {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let mut v = String::new();
+    if let Ok(prev) = std::env::var("TEXINPUTS") {
+        if !prev.is_empty() {
+            v.push_str(&prev);
+            if !prev.ends_with(sep) {
+                v.push(sep);
+            }
+        }
+    }
+    v.push_str(&out_dir.to_string_lossy());
+    v.push(sep);
+    v
+}
+
 /// Recreate the document's subdirectory layout inside the build folder.
 ///
 /// `\include{cap/uno}` makes TeX write `cap/uno.aux` *relative to the output
@@ -250,6 +271,7 @@ fn mirror_subdirs(src: &Path, dst: &Path, depth: u32) {
 /// (or `<stem>.pdf` when no jobname is given).
 pub fn compile(
     path: &str,
+    project_dir: &str,
     engine: &str,
     passes: u32,
     jobname: Option<String>,
@@ -258,14 +280,17 @@ pub fn compile(
     if !src.exists() {
         return Err(format!("No existe el archivo: {path}"));
     }
-    let dir = src
+    // The engine RUNS from the project folder — that is what makes relative
+    // paths in the source (\includegraphics{xref/…}, a .sty next to the
+    // document) resolve exactly as the author wrote them — but it WRITES to the
+    // working directory, which lives outside the project entirely. See
+    // workspace.rs for why.
+    let dir = Path::new(project_dir);
+    let out_dir = src
         .parent()
-        .ok_or("El documento no tiene carpeta contenedora")?;
-    let file = src
-        .file_name()
-        .ok_or("Nombre de archivo inválido")?
-        .to_string_lossy()
-        .to_string();
+        .ok_or("El documento no tiene carpeta contenedora")?
+        .to_path_buf();
+    let file = src.to_string_lossy().to_string();
 
     let engine = match engine {
         "pdflatex" | "lualatex" | "xelatex" => engine,
@@ -295,15 +320,13 @@ pub fn compile(
     // the source (\includegraphics{xref/…}, \input{cap/…}) resolve exactly as
     // they did before. And keeping the .aux files between runs is what lets
     // cross-references settle in two passes instead of three.
-    const BUILD_DIR: &str = ".pyxbuild";
-    let build_dir = dir.join(BUILD_DIR);
-    std::fs::create_dir_all(&build_dir)
+    std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("No se pudo crear la carpeta de compilación: {e}"))?;
-    mirror_subdirs(dir, &build_dir, 3);
+    mirror_subdirs(dir, &out_dir, 3);
 
     // Snapshot the PDF's mtime BEFORE compiling: success is "this run wrote a
     // PDF", never "a PDF from some earlier compile is still lying around".
-    let pdf = dir.join(format!("{out_name}.pdf"));
+    let pdf = out_dir.join(format!("{out_name}.pdf"));
     let mtime_of = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
     let pdf_mtime_before = mtime_of(&pdf);
 
@@ -321,7 +344,11 @@ pub fn compile(
         cmd.current_dir(dir)
             .arg("-interaction=nonstopmode")
             .arg("-synctex=1")
-            .arg(format!("-output-directory={BUILD_DIR}"));
+            .arg(format!("-output-directory={}", out_dir.display()))
+            // The generated `.build.tex` copies live in the working directory,
+            // so the engine has to look there for the children a parent pulls
+            // in. The trailing separator keeps the default search paths.
+            .env("TEXINPUTS", texinputs(&out_dir));
         // A pass we ALREADY know is not the last one exists only to settle
         // references and the table of contents — its PDF is thrown away. In
         // draft mode the engine skips font loading, image processing and the
@@ -371,21 +398,10 @@ pub fn compile(
         }
     }
 
-    // Bring the two OUTPUTS (as opposed to scratch) back next to the document:
-    // the PDF the viewer opens, and the SyncTeX index, which the `synctex` CLI
-    // looks for beside the PDF it is handed.
-    for suffix in [".pdf", ".synctex.gz"] {
-        let from = build_dir.join(format!("{out_name}{suffix}"));
-        if !from.exists() {
-            continue;
-        }
-        let to = dir.join(format!("{out_name}{suffix}"));
-        // rename() is atomic and free within one volume; copy is the fallback
-        // for the case the folder sits on a different mount.
-        if std::fs::rename(&from, &to).is_err() {
-            let _ = std::fs::copy(&from, &to).map(|_| std::fs::remove_file(&from));
-        }
-    }
+    // Nothing is moved back: the PDF and its SyncTeX index stay in the working
+    // directory, side by side, which is exactly where the `synctex` CLI expects
+    // to find the index for a given PDF. The viewer opens it from there, and
+    // the user's folder keeps only what the user put in it.
 
     // Fresh = created now, or overwritten (mtime advanced) by this run.
     let pdf_fresh = match (pdf_mtime_before, mtime_of(&pdf)) {
@@ -404,4 +420,85 @@ pub fn compile(
         log,
         engine: engine.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    const MAIN: &str = r"\documentclass{book}
+\begin{document}
+\tableofcontents
+\chapter{Uno}\label{c:1}
+Ver \ref{c:1}.
+\include{cap/dos.build}
+\end{document}
+";
+    const CHILD: &str = r"\chapter{Dos}
+Texto del capitulo dos.
+";
+
+    /// Compile a small multi-file project and check the CONTRACT the whole
+    /// working-directory design exists for: the user's folder keeps only the
+    /// user's own files, and everything the engine produces lands elsewhere.
+    ///
+    /// Skipped when no TeX engine is installed, so the suite still runs on a
+    /// machine (or a CI runner) without a LaTeX distribution.
+    #[test]
+    fn build_leaves_the_project_folder_untouched() {
+        let engine = match ["pdflatex", "xelatex"].iter().find(|e| engine_works(e)) {
+            Some(e) => *e,
+            None => return, // no LaTeX here; nothing to assert
+        };
+
+        let base = std::env::temp_dir().join(format!("pyx-latex-test-{}", std::process::id()));
+        let proj = base.join("proj");
+        let work = base.join("work");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(proj.join("cap")).unwrap();
+        fs::create_dir_all(work.join("cap")).unwrap();
+
+        fs::write(work.join("main.build.tex"), MAIN).unwrap();
+        fs::write(work.join("cap/dos.build.tex"), CHILD).unwrap();
+        // A source file the author owns: it must still be there afterwards.
+        fs::write(proj.join("notas.sty"), "% paquete del usuario\n").unwrap();
+
+        let res = compile(
+            work.join("main.build.tex").to_str().unwrap(),
+            proj.to_str().unwrap(),
+            engine,
+            2,
+            Some("main".to_string()),
+        )
+        .expect("la compilacion deberia ejecutarse");
+
+        // The PDF exists and lives in the working directory, not the project.
+        let pdf = res.pdf_path.expect("deberia haberse escrito un PDF");
+        assert!(
+            pdf.starts_with(work.to_str().unwrap()),
+            "el PDF salio del area de trabajo: {pdf}"
+        );
+        assert!(work.join("main.aux").exists(), "el .aux deberia estar en el area de trabajo");
+        assert!(work.join("main.toc").exists(), "el .toc deberia estar en el area de trabajo");
+        // The child chapter's own .aux goes to the mirrored subfolder, which is
+        // what TeX Live needs to exist up front.
+        assert!(work.join("cap/dos.build.aux").exists());
+
+        // THE POINT: the project folder still holds exactly what we put in it.
+        let mut left: Vec<String> = fs::read_dir(&proj)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec!["cap".to_string(), "notas.sty".to_string()],
+            "quedaron archivos sueltos en el proyecto: {left:?}"
+        );
+        assert_eq!(fs::read_dir(proj.join("cap")).unwrap().flatten().count(), 0);
+
+        let _ = fs::remove_dir_all(&base);
+    }
 }

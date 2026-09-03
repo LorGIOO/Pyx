@@ -11,7 +11,9 @@ import {
   annotWidth, setAnnotWidth,
 } from '../stores/previewStore.js';
 import { undoLast, clearPage } from '../../pdf/annotate.js';
-import { openExternal, openViewerWindow, messageDialog } from '../../core/platform.js';
+import {
+  openExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
+} from '../../core/platform.js';
 
 const S = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
 const ic = {
@@ -29,6 +31,7 @@ const ic = {
   contrast: `<svg viewBox="0 0 20 20"><circle ${S} cx="10" cy="10" r="7"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>`,
   max: `<svg viewBox="0 0 20 20"><path ${S} d="M4 8V4h4M16 8V4h-4M4 12v4h4M16 12v4h-4"/></svg>`,
   float: `<svg viewBox="0 0 20 20"><path ${S} d="M9 4H4v12h12v-5M12 4h4v4M16 4l-7 7"/></svg>`,
+  save: `<svg viewBox="0 0 20 20"><path ${S} d="M10 3v9m0 0l-3.5-3.5M10 12l3.5-3.5M4 15v2h12v-2"/></svg>`,
   detach: `<svg viewBox="0 0 20 20"><rect ${S} x="3" y="6" width="10" height="10"/><path ${S} d="M7 6V3.5h9.5V13H14"/></svg>`,
   close: `<svg viewBox="0 0 20 20"><path ${S} d="M5 5l10 10M15 5L5 15"/></svg>`,
   find: `<svg viewBox="0 0 20 20"><circle ${S} cx="8.5" cy="8.5" r="5"/><path ${S} d="M16 16l-3.7-3.7"/><path ${S} d="M6.5 8.5h4M8.5 6.5v4" opacity="0"/></svg>`,
@@ -150,6 +153,21 @@ export default function PreviewPane() {
   onMount(() => setPreviewContainer(scrollRef));
 
   const floatWindow = () => { const p = getPdfPath(); if (p) openExternal(p); };
+  // The compiled PDF lives in the project's working directory, out of sight
+  // with the rest of the build. Exporting is how a copy leaves it.
+  const exportPdf = async () => {
+    const p = getPdfPath();
+    if (!p) return;
+    const name = (previewFile() || 'documento.pdf').replace(/\.[^.]*$/, '') + '.pdf';
+    const dest = await savePdfDialog(name);
+    if (!dest) return;
+    try {
+      await copyFile(p, dest);
+    } catch (e) {
+      messageDialog(`No se pudo guardar el PDF: ${String((e && e.message) || e)}`,
+        { title: 'Exportar PDF', kind: 'error' });
+    }
+  };
   const detachViewer = () => {
     const p = getPdfPath();
     if (!p) return;
@@ -208,6 +226,7 @@ export default function PreviewPane() {
         <Btn icon={ic.max} title="Ampliar visor (ocultar el editor)" active={state.viewerMaximized}
           onClick={() => (state.viewerMaximized = !state.viewerMaximized)} />
         <Btn icon={ic.detach} title="Sacar el visor de Pyx a una ventana auxiliar" disabled={!hasPdf()} onClick={detachViewer} />
+        <Btn icon={ic.save} title="Guardar una copia del PDF…" disabled={!hasPdf()} onClick={exportPdf} />
         <Btn icon={ic.float} title="Abrir el PDF en la aplicación externa" disabled={!hasPdf()} onClick={floatWindow} />
 
         <span class="pv-spacer"></span>

@@ -29,6 +29,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { readBinaryFile, openExternal, synctexEdit, pathExists, emitToWindow } from '../core/platform.js';
 import { baseName } from '../core/paths.js';
+import { buildPathToSource } from '../compile/build-maps.js';
 import { setAnnotDoc, buildAnnotLayer } from './annotate.js';
 import { general } from '../solid/stores/settingsStore.js';
 import {
@@ -578,12 +579,14 @@ async function synctexJump(pageNo, xPt, yPt, word) {
     // inverse search a Windows-only feature: on macOS and Linux the resulting
     // path never existed, so Ctrl+click in the PDF silently did nothing.
     let p = String(hit.input || '');
-    // The engine compiles <stem>.build.tex — map back to the real source file.
-    // The build is CLEAN LaTeX (cells removed), so its line numbers shift
-    // below every cell: translate through the compiler's line map.
+    // The engine compiles the .build.tex copies, which live in the project's
+    // WORKING DIRECTORY, outside the project. Map the reported path back to the
+    // real source file. The build is CLEAN LaTeX (cells removed), so its line
+    // numbers shift below every cell: translate through the compiler's map.
     const wasBuild = /\.build\.tex$/i.test(p);
     if (wasBuild) {
-      const stem = p.replace(/\.build\.tex$/i, '');
+      const back = buildPathToSource(p);
+      const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
       for (const cand of [stem + '.pltx', stem + '.tex']) {
         if (await pathExists(cand)) { p = cand; break; }
       }
@@ -1047,51 +1050,130 @@ function highlightMatches(pageN, query) {
 }
 
 /* ---------- circular magnifier loupe (double-click or magnifier tool) ----------
-   The loupe samples the page's HIGH-DENSITY backing canvas (os× the display
-   resolution) and its own backing is LDENS× too, so the magnified text stays
-   crisp ("vectorial"), not a blown-up blurry raster. */
+   RESOLUTION CONTRACT — this is why the loupe is not pixelated.
+
+   The loupe used to sample the page's on-screen canvas and scale it up by
+   LZOOM. That canvas is rasterized for the CURRENT zoom, so magnifying it 3×
+   is a 3× upscale of a finished bitmap: blurry at best, blocky at worst. No
+   amount of `imageSmoothingQuality` fixes missing pixels.
+
+   The loupe now asks PDF.js to rasterize the region under the cursor AT THE
+   MAGNIFIED RESOLUTION — scale × LZOOM × device density — so what it shows was
+   never a small image. Text is as sharp as if the page were really at 300%.
+
+   The cost is bounded by only rendering a TILE a little larger than the loupe
+   and reusing it until the cursor leaves it, and by never having more than one
+   render in flight. Moving the loupe inside a tile is a plain drawImage. */
 let loupe = null, loupeCtx = null;
-const LSIZE = 200, LZOOM = 3, LDENS = 2;
+const LSIZE = 200, LZOOM = 3;
+const TILE_PAD = 1.6;      // tile side, in loupe diameters
+let tile = null;           // { page, scale, left, top, w, h, canvas } in CSS px
+let tileBusy = false;      // one PDF.js render at a time
+let tileWanted = null;     // last request while a render was in flight
+
 function openLoupe() {
   if (loupe) return;
+  const dens = dpr() * LZOOM;
   loupe = document.createElement('canvas');
-  loupe.width = LSIZE * LDENS; loupe.height = LSIZE * LDENS;
-  loupe.style.width = LSIZE + 'px'; loupe.style.height = LSIZE + 'px';
+  loupe.width = Math.round(LSIZE * dens);
+  loupe.height = Math.round(LSIZE * dens);
+  loupe.style.width = LSIZE + 'px';
+  loupe.style.height = LSIZE + 'px';
   loupe.className = 'pdf-loupe';
   document.body.appendChild(loupe);
-  loupeCtx = loupe.getContext('2d');
+  loupeCtx = loupe.getContext('2d', { alpha: false });
 }
 function closeLoupe() {
   if (loupe) loupe.remove();
-  loupe = null; loupeCtx = null;
+  loupe = null; loupeCtx = null; tile = null; tileWanted = null;
 }
-function drawLoupe(e) {
-  if (!loupe) return;
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  const page = el && el.closest ? el.closest('.pdf-page') : null;
-  const canvas = page ? page.querySelector('canvas') : null;
-  loupe.style.left = e.clientX - LSIZE / 2 + 'px';
-  loupe.style.top = e.clientY - LSIZE / 2 + 'px';
-  const B = LSIZE * LDENS;
-  if (!canvas) { loupeCtx.clearRect(0, 0, B, B); return; }
-  const rect = canvas.getBoundingClientRect();
-  const fx = (e.clientX - rect.left) / rect.width;
-  const fy = (e.clientY - rect.top) / rect.height;
-  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-  // os = backing pixels per displayed pixel; sample a region that magnifies the
-  // DISPLAYED page by exactly LZOOM, taken from the dense backing → sharp.
-  const os = canvas.width / (parseFloat(canvas.style.width) || rect.width);
-  const cx = fx * canvas.width, cy = fy * canvas.height;
-  const sw = (LSIZE / LZOOM) * os, sh = (LSIZE / LZOOM) * os;
+
+/** Rasterize a region of `pageN` (page-local CSS px) at the loupe's resolution. */
+async function renderTile(pageN, left, top, side) {
+  if (!pdfDoc) return;
+  tileBusy = true;
+  try {
+    const page = await pdfDoc.getPage(pageN);
+    const s = getScale();
+    const dens = dpr() * LZOOM;
+    const vp = page.getViewport({ scale: s * dens });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(side * dens);
+    canvas.height = Math.round(side * dens);
+    const ctx = canvas.getContext('2d', { alpha: false });
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Shift the page so the requested region lands at the canvas origin.
+    await page.render({
+      canvasContext: ctx,
+      viewport: vp,
+      transform: [1, 0, 0, 1, -left * dens, -top * dens],
+    }).promise;
+    tile = { page: pageN, scale: s, left, top, w: side, h: side, canvas, dens };
+  } catch (_) {
+    // A cancelled or failed render just leaves the previous tile in place.
+  } finally {
+    tileBusy = false;
+    const next = tileWanted;
+    tileWanted = null;
+    if (next && loupe) renderTile(next.pageN, next.left, next.top, next.side).then(paintLoupe);
+  }
+}
+
+/** Draw the current tile into the loupe, centred on the cursor position. */
+let loupeAt = null; // { pageN, x, y } page-local CSS px
+function paintLoupe() {
+  if (!loupe || !loupeAt) return;
+  const B = loupe.width;
   loupeCtx.save();
-  loupeCtx.clearRect(0, 0, B, B);
   loupeCtx.beginPath();
-  loupeCtx.arc(B / 2, B / 2, B / 2 - LDENS, 0, Math.PI * 2);
+  loupeCtx.arc(B / 2, B / 2, B / 2 - 2, 0, Math.PI * 2);
   loupeCtx.clip();
   loupeCtx.fillStyle = '#fff';
   loupeCtx.fillRect(0, 0, B, B);
-  loupeCtx.imageSmoothingEnabled = true;
-  loupeCtx.imageSmoothingQuality = 'high';
-  loupeCtx.drawImage(canvas, cx - sw / 2, cy - sh / 2, sw, sh, 0, 0, B, B);
+  const t = tile;
+  if (t && t.page === loupeAt.pageN && t.scale === getScale()) {
+    // 1 CSS px of page → `dens` px of tile → the same in the loupe backing,
+    // so the tile is drawn 1:1 and nothing is resampled.
+    const sx = (loupeAt.x - t.left) * t.dens - B / 2;
+    const sy = (loupeAt.y - t.top) * t.dens - B / 2;
+    loupeCtx.drawImage(t.canvas, sx, sy, B, B, 0, 0, B, B);
+  }
   loupeCtx.restore();
+}
+
+function drawLoupe(e) {
+  if (!loupe) return;
+  loupe.style.left = e.clientX - LSIZE / 2 + 'px';
+  loupe.style.top = e.clientY - LSIZE / 2 + 'px';
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const pageEl = el && el.closest ? el.closest('.pdf-page') : null;
+  if (!pageEl) {
+    loupeAt = null;
+    loupeCtx.fillStyle = '#fff';
+    loupeCtx.fillRect(0, 0, loupe.width, loupe.height);
+    return;
+  }
+  const r = pageEl.getBoundingClientRect();
+  const pageN = parseInt(pageEl.dataset.page, 10);
+  loupeAt = { pageN, x: e.clientX - r.left, y: e.clientY - r.top };
+
+  // Does the cursor still sit comfortably inside the cached tile?
+  const need = LSIZE / LZOOM;           // page CSS px the loupe shows
+  const side = need * TILE_PAD;
+  const t = tile;
+  const inside = t && t.page === pageN && t.scale === getScale()
+    && loupeAt.x - need / 2 >= t.left && loupeAt.x + need / 2 <= t.left + t.w
+    && loupeAt.y - need / 2 >= t.top && loupeAt.y + need / 2 <= t.top + t.h;
+  if (!inside) {
+    const req = {
+      pageN,
+      left: Math.max(0, loupeAt.x - side / 2),
+      top: Math.max(0, loupeAt.y - side / 2),
+      side,
+    };
+    if (tileBusy) tileWanted = req;
+    else renderTile(req.pageN, req.left, req.top, req.side).then(paintLoupe);
+  }
+  paintLoupe();
 }

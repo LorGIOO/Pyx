@@ -8,7 +8,7 @@
 
 Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-![versión](https://img.shields.io/badge/versión-1.2.1-007ACC?style=flat-square)
+![versión](https://img.shields.io/badge/versión-1.3.0-007ACC?style=flat-square)
 ![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
 ![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
@@ -61,7 +61,7 @@ from pyx import figure, figtex, tabletex, tex, texesc
 - **Interrupción sin perder la sesión** — parar una celda lanza `KeyboardInterrupt` como en Jupyter: **las variables ya calculadas siguen en memoria**.
 - **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
 - **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
-- **Carpeta limpia** — todo lo que ensucia el motor LaTeX (`.aux`, `.log`, `.fls`, `.toc`, `.out`, `.maf`…) va a una única carpeta `.pyxbuild`, y al guardar un `.pltx` se empaqueta dentro del documento y desaparece: junto a tu proyecto solo quedan `documento.pltx` y `documento.pdf`.
+- **Tu carpeta solo tiene lo tuyo** — el motor LaTeX no escribe nada junto al documento: los `.build.tex`, el `.aux`, `.log`, `.toc`, `.out`, `.mtc*`, el índice SyncTeX y el PDF viven en un directorio de trabajo fuera del proyecto, y al guardar se empaquetan **dentro del `.pltx`** como hace un `.docx`. Lo único que se queda fuera, a propósito, son tus fuentes: `.tex`, imágenes y `.sty`.
 - **Comodidades de IDE** — autocompletado y snippets, corrector ortográfico (español e inglés), plegado de código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables y temas claro/oscuro/azul.
 - **Funciona sin conexión** — las fórmulas de handcalcs se componen con KaTeX empaquetado en la app; nada depende de una CDN.
 
@@ -85,8 +85,8 @@ Descarga el instalador de tu sistema desde la [**última release**](https://gith
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | `Pyx_1.2.1_x64-setup.exe` |
-| **macOS** (Intel y Apple Silicon) | `Pyx_1.2.1_universal.dmg` |
+| **Windows** (x64) | `Pyx_1.3.0_x64-setup.exe` |
+| **macOS** (Intel y Apple Silicon) | `Pyx_1.3.0_universal.dmg` |
 | **Linux** | `.deb` (Debian/Ubuntu) · `.rpm` (Fedora) · `.AppImage` (cualquier distro) |
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.

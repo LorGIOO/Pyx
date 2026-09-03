@@ -21,6 +21,18 @@ export function stemOf(path) {
   return dot > 0 ? b.slice(0, dot) : b;
 }
 
+/** Path of `p` relative to `base`, with `/` separators, or null when `p` is
+ *  not under `base`. Comparison is case-insensitive and separator-agnostic,
+ *  which is what Windows needs and what does no harm elsewhere. */
+export function relativeTo(base, p) {
+  if (!base || !p) return null;
+  const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '');
+  const b = norm(base), f = norm(p);
+  if (f.toLowerCase() === b.toLowerCase()) return '';
+  const prefix = b.toLowerCase() + '/';
+  return f.toLowerCase().startsWith(prefix) ? f.slice(prefix.length) : null;
+}
+
 /** Join a directory and a name using the directory's own separator style. */
 export function joinPath(dir, name) {
   const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';

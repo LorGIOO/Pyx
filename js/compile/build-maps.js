@@ -18,12 +18,43 @@ let buildMap = Object.create(null);
 let knownFiles = new Set();
 /** basename of the root build file */
 let rootFile = null;
+/** the project's folder, and its working directory (outside the project) */
+let projectDir = null;
+let workDir = null;
 
-export function setBuildMaps({ lineMaps, buildToReal, known, root }) {
+export function setBuildMaps({ lineMaps, buildToReal, known, root, project, work }) {
   maps = lineMaps || Object.create(null);
   buildMap = buildToReal || Object.create(null);
   knownFiles = known || new Set();
   rootFile = root || null;
+  projectDir = project || null;
+  workDir = work || null;
+}
+
+export const projectRoot = () => projectDir;
+export const workingDir = () => workDir;
+
+const norm = (s) => String(s || '').replace(/\\/g, '/').replace(/\/+$/, '');
+
+/** A path the engine reported (inside the working directory) mapped back to the
+ *  real source file in the project — the inverse of what the compiler wrote.
+ *  Returns null when the path is not one of ours. */
+export function buildPathToSource(enginePath) {
+  if (!workDir || !projectDir || !enginePath) return null;
+  const p = norm(enginePath);
+  const w = norm(workDir);
+  if (!p.toLowerCase().startsWith(w.toLowerCase() + '/')) return null;
+  const rel = p.slice(w.length + 1).replace(/\.build\.tex$/i, '');
+  return { dir: norm(projectDir), stem: rel };
+}
+
+/** The working-directory copy the engine compiles for a real source file. */
+export function sourceToBuildPath(realPath) {
+  if (!workDir || !projectDir || !realPath) return null;
+  const p = norm(realPath);
+  const base = norm(projectDir);
+  if (!p.toLowerCase().startsWith(base.toLowerCase() + '/')) return null;
+  return norm(workDir) + '/' + p.slice(base.length + 1).replace(/\.(tex|pltx)$/i, '') + '.build.tex';
 }
 
 export const lineMaps = () => maps;

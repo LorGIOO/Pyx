@@ -3,6 +3,63 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.3.0] — 2026-09-01
+
+La carpeta del proyecto vuelve a ser tuya: solo contiene lo que tú pusiste.
+
+### Cambiado
+
+- **Ni un solo archivo de compilación en tu carpeta.** El motor LaTeX ya no
+  escribe junto al documento: cada proyecto tiene un directorio de trabajo
+  **fuera** de la carpeta (en la caché del sistema), y ahí van los `.build.tex`,
+  el `.aux`, `.log`, `.toc`, `.out`, `.fls`, `.maf`, los `.mtc*` de minitoc, el
+  índice SyncTeX y el PDF. La carpeta `.pyxbuild` que introdujo la 1.2.1
+  desaparece: tampoco era asunto del usuario.
+
+  El motor sigue **ejecutándose** desde la carpeta del proyecto, así que las
+  rutas relativas del documento (`\includegraphics{xref/…}`, un `.sty` al lado)
+  se resuelven exactamente como las escribiste.
+
+- **Todo eso se guarda dentro del `.pltx`.** Al guardar, el directorio de
+  trabajo entero se empaqueta en el contenedor comprimido, y al abrir se
+  restaura. Estructuras anidadas (`_Proyecto.pltx` con sus `documento1.pltx`)
+  siguen funcionando igual: cada documento tiene su propio directorio de
+  trabajo y ninguno ensucia nada.
+
+- **El PDF también vive ahí**, invisible. El visor lo abre desde el directorio
+  de trabajo; para sacar una copia hay un botón nuevo en la barra del visor,
+  **«Guardar una copia del PDF…»**.
+
+- **Al abrir un documento se limpia lo que dejaron las versiones anteriores**:
+  su `.build.tex`, sus `.aux`/`.log`/`.toc`/`.out`/`.mtc*`… y la carpeta
+  `.pyxbuild`. Solo se borran los archivos que llevan el nombre de ese
+  documento; nada más se toca.
+
+### Añadido
+
+- **Se pueden abrir y editar archivos `.sty`** (y `.cls` y `.bib`). Son fuentes
+  del proyecto y son lo único que se queda, a propósito, junto al documento.
+
+### Corregido
+
+- **La lupa ya no pixela.** Ampliaba 3× el lienzo que ya estaba dibujado en
+  pantalla, es decir, escalaba un mapa de bits pequeño. Ahora le pide a PDF.js
+  que rasterice la zona bajo el cursor **a la resolución de la lupa**, así que
+  el texto se ve tan nítido como si la página estuviera de verdad al 300 %. El
+  coste está acotado: se rasteriza un recuadro algo mayor que la lupa y se
+  reutiliza mientras el cursor no salga de él.
+
+- **No se recompila cuando nada puede cambiar el PDF.** El texto de compilación
+  ya lleva los valores de `\py{}` resueltos y los bloques de handcalcs, así que
+  si es idéntico al de la vez anterior, una pasada nueva produciría el mismo
+  PDF. Escribir prosa, editar un comentario o ejecutar una celda que solo
+  imprime en el editor pasan de costar entre 2 y 3 segundos de motor (más la
+  recarga del PDF) a costar **cero**. Una compilación manual siempre se
+  ejecuta: es el usuario pidiendo la verdad.
+
+- Al conservarse el `.aux` entre sesiones dentro del `.pltx`, las referencias
+  cruzadas y el índice se asientan en una pasada en lugar de dos.
+
 ## [1.2.1] — 2026-09-01
 
 Un IDE no decide por ti qué librerías son importantes. Esta versión quita todos
@@ -131,6 +188,7 @@ ha cambiado, y que abrir un informe no dependa de tener Python instalado.
 - Instaladores para Windows, macOS y Linux.
 - Soporte de interfaz en inglés.
 
+[1.3.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.0
 [1.2.1]: https://github.com/LorGIOO/Pyx/releases/tag/v1.2.1
 [1.2.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.2.0
 [1.1.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.1.0

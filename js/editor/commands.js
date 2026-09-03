@@ -12,7 +12,7 @@ import {
   tableSetColumnAlign, insertTable,
 } from './latex-table.js';
 import { buildToSrcLine, srcToBuildLine } from '../compile/latex-bridge.js';
-import { lineMapFor } from '../compile/build-maps.js';
+import { lineMapFor, sourceToBuildPath } from '../compile/build-maps.js';
 
 const withView = (fn) => () => {
   const v = getView();
@@ -358,8 +358,9 @@ export async function forwardSearch(lineNo, word) {
     ? Math.min(lineNo, v.state.doc.lines)
     : v.state.doc.lineAt(v.state.selection.main.head).number;
   const { synctexView } = await import('../core/platform.js');
-  const stem = d.path.replace(/\.(tex|pltx)$/i, '');
-  const buildTex = stem + '.build.tex';
+  // The engine compiled the copy that lives in the project's working
+  // directory, not a file next to the document.
+  const buildTex = sourceToBuildPath(d.path) || d.path.replace(/\.(tex|pltx)$/i, '') + '.build.tex';
   const map = lineMapFor(d.path);
   for (const tex of [buildTex, d.path]) {
     try {

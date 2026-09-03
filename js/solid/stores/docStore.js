@@ -236,7 +236,7 @@ export async function openDocument() {
  *  second launch while the app is already running). */
 export async function openFromOs(paths) {
   for (const p of paths || []) {
-    if (typeof p === 'string' && /\.(pltx|tex|txt)$/i.test(p)) await openPath(p);
+    if (typeof p === 'string' && /\.(pltx|tex|sty|cls|bib|txt)$/i.test(p)) await openPath(p);
   }
 }
 

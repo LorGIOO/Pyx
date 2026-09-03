@@ -57,9 +57,14 @@ export async function openFileDialog() {
   return dialog.open({
     multiple: false,
     filters: [
-      { name: 'Documentos Pyx', extensions: ['pltx', 'tex'] },
+      // `.sty` (and its siblings `.cls`/`.bib`) are project SOURCES that stay
+      // in the user's folder — the only build-adjacent files Pyx never moves —
+      // so they have to be openable and editable like any other source.
+      { name: 'Documentos Pyx', extensions: ['pltx', 'tex', 'sty', 'cls', 'bib'] },
       { name: 'Pyx', extensions: ['pltx'] },
       { name: 'LaTeX', extensions: ['tex'] },
+      { name: 'Paquetes y clases', extensions: ['sty', 'cls'] },
+      { name: 'Bibliografía', extensions: ['bib'] },
       { name: 'Texto', extensions: ['txt'] },
     ],
   });
@@ -134,6 +139,13 @@ export async function writeBinaryFile(path, bytes) {
   if (!isTauri()) return notDesktop('Guardar archivo');
   return fs.writeFile(path, bytes);
 }
+export async function savePdfDialog(defaultName) {
+  if (!isTauri()) return null;
+  return dialog.save({
+    defaultPath: defaultName,
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+}
 export async function saveImageDialog(defaultName) {
   if (!isTauri()) return null;
   return dialog.save({
@@ -148,8 +160,15 @@ export async function pathExists(path) {
 
 /* ---------- Backend commands (Rust) ---------- */
 export const detectEnv = () => invoke('detect_env');
-export const compileLatex = (path, engine, passes = 1, jobname = null) =>
-  invoke('compile_latex', { path, engine, passes, jobname });
+// `path` is the root .build.tex INSIDE the working directory; `projectDir` is
+// the folder the engine runs from, so relative paths in the source resolve as
+// the author wrote them.
+export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null) =>
+  invoke('compile_latex', { path, projectDir, engine, passes, jobname });
+// The project's working directory (created on demand). Everything the build
+// produces lives there, outside the user's folder.
+export const buildDirFor = (path) => invoke('build_dir', { path });
+export const copyFile = (from, to) => invoke('copy_file', { from, to });
 // SyncTeX inverse search: PDF position (points, top-left origin) → source+line.
 export const synctexEdit = (pdf, page, x, y) => invoke('synctex_edit', { pdf, page, x, y });
 // SyncTeX forward search: source file + 1-based line → PDF page/position.

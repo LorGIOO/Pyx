@@ -1,6 +1,7 @@
 mod kernel;
 mod latex;
 mod pltx;
+mod workspace;
 
 use kernel::KernelState;
 use tauri::{Emitter, Manager};
@@ -31,13 +32,43 @@ async fn detect_env() -> Result<latex::EnvInfo, String> {
 #[tauri::command]
 async fn compile_latex(
     path: String,
+    project_dir: String,
     engine: String,
     passes: u32,
     jobname: Option<String>,
 ) -> Result<latex::CompileResult, String> {
-    tauri::async_runtime::spawn_blocking(move || latex::compile(&path, &engine, passes, jobname))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        latex::compile(&path, &project_dir, &engine, passes, jobname)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Copy a file. Used to export the compiled PDF out of the project's working
+/// directory, which is the only way it leaves: the build output no longer sits
+/// next to the document, so "save a copy" has to be an explicit action.
+#[tauri::command]
+async fn copy_file(from: String, to: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::copy(&from, &to)
+            .map(|_| ())
+            .map_err(|e| format!("No se pudo copiar el archivo: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The working directory for a project, created if needed.
+///
+/// Everything the build produces lives here, outside the user's folder: the
+/// `.build.tex` copies, the engine's scratch, the PDF and the SyncTeX index.
+#[tauri::command]
+async fn build_dir(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace::ensure_build_dir(&path).map(|p| p.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// List the font FAMILIES installed on the system, for the editor's font
@@ -84,12 +115,9 @@ async fn synctex_edit(
     x: f64,
     y: f64,
 ) -> Result<latex::SyncTexHit, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        // A clean-folder .pltx keeps its .synctex.gz inside the zip — extract it
-        // next to the PDF on demand so inverse search still works.
-        pltx::ensure_synctex_for_pdf(&pdf);
-        latex::synctex_edit(&pdf, page, x, y)
-    })
+    // The PDF and its SyncTeX index live side by side in the project's working
+    // directory, which is where the CLI looks — nothing to stage first.
+    tauri::async_runtime::spawn_blocking(move || latex::synctex_edit(&pdf, page, x, y))
     .await
     .map_err(|e| e.to_string())?
 }
@@ -101,10 +129,7 @@ async fn synctex_view(
     line: u32,
     pdf: String,
 ) -> Result<latex::SyncTexLoc, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        pltx::ensure_synctex_for_pdf(&pdf);
-        latex::synctex_view(&tex, line, &pdf)
-    })
+    tauri::async_runtime::spawn_blocking(move || latex::synctex_view(&tex, line, &pdf))
     .await
     .map_err(|e| e.to_string())?
 }
@@ -600,6 +625,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             detect_env,
             compile_latex,
+            build_dir,
+            copy_file,
             synctex_edit,
             synctex_view,
             pltx_read,

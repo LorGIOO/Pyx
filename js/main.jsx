@@ -8,7 +8,7 @@ import {
 } from './core/platform.js';
 import { setChangeHandler } from './editor/setup.js';
 import {
-  newDocument, openDocument, saveActive, closeActive, splitActivePane, openFromOs,
+  openDocument, saveActive, closeActive, splitActivePane, openFromOs,
 } from './solid/stores/docStore.js';
 import { compileActive, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
 import { loadPdf } from './pdf/preview.js';
@@ -169,15 +169,15 @@ if (viewerBoot) {
       .catch(() => {});
     ensureKernel().catch(() => {});
     // Anything the OS delivered before the listener above existed (a cold
-    // start always beats the webview). Falls back to a blank document.
+    // start always beats the webview).
+    //
+    // Nothing is opened when the OS delivered nothing: the app starts on its
+    // start page. A blank "sin-título" used to appear instead, which meant
+    // every launch began by offering an unsaved document nobody had asked
+    // for — and closing it was the first thing to do before opening the real
+    // project.
     invoke('take_pending_open')
-      .then(async (paths) => {
-        if (Array.isArray(paths) && paths.length) await openFromOs(paths);
-        if (!state.documents.length) newDocument();
-      })
-      .catch(() => { if (!state.documents.length) newDocument(); });
-  } else {
-    // Open a starter document so the app is useful on first launch.
-    newDocument();
+      .then((paths) => (Array.isArray(paths) && paths.length ? openFromOs(paths) : null))
+      .catch(() => {});
   }
 }

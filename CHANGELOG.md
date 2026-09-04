@@ -3,6 +3,62 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.3.1] — 2026-09-04
+
+Compilar deja de repetir trabajo que ya estaba hecho.
+
+### Corregido
+
+- **«Compilar y ver» ya no reinicia el kernel.** Cada pulsación vaciaba el
+  espacio de nombres y volvía a ejecutar **todas** las celdas del documento:
+  reimportar numpy, matplotlib, handcalcs y pandas, y repetir cada cálculo,
+  aunque solo hubieras cambiado una coma. De ahí venían los 10–50 s.
+
+  El registro del espacio de nombres ya garantizaba lo mismo sin ese coste:
+  solo se salta un prefijo de celdas cuando es **exactamente** un prefijo, y
+  ante cualquier divergencia —otra celda, otro directorio de trabajo, un
+  kernel reiniciado, una celda interrumpida— vuelve a ejecutarlo todo. El
+  reinicio forzado era una precaución encima de una garantía que ya existía, y
+  se cobraba en cada compilación.
+
+  La red de seguridad que antes solo cubría las compilaciones en segundo plano
+  ahora cubre las dos: si un `\py{}` no evalúa —la señal de que el espacio de
+  nombres ha derivado— se relanza el documento entero antes de que nada llegue
+  al PDF. Para forzar una ejecución completa a mano sigue estando **«Reiniciar
+  el kernel»**.
+
+  La primera compilación tras abrir un documento sigue costando lo mismo: ahí
+  hay que construir el espacio de nombres de verdad, y eso es trabajo real.
+
+- **Los `\input` de un proyecto se resuelven en paralelo.** Localizar en disco
+  el archivo al que apunta cada `\input` costaba una consulta al backend por
+  capítulo, **en serie**, en cada compilación —incluidas las que dispara una
+  pausa al escribir—. Un proyecto de cien capítulos pagaba cien viajes de ida
+  y vuelta encadenados. Ahora salen todos a la vez y el resultado se recuerda
+  durante la sesión, porque la ruta a la que resuelve `cap/uno` no cambia entre
+  compilaciones. Un archivo incluido dos veces se lee una sola.
+
+- **Guardar un `.pltx` ya no recomprime el PDF.** El contenedor volvía a
+  aplicar Deflate a todo el directorio de compilación en cada guardado, PDF y
+  figuras incluidos. Eso es CPU quemada para nada: ya venían comprimidos. El
+  texto (`.aux`, `.log`, `.toc`) se sigue comprimiendo, que ahí sí compensa.
+
+### Añadido
+
+- **Desglose de tiempos al final del log**, con lo que costó Python, lo que
+  costó el motor LaTeX y cuántas celdas se ejecutaron de cuántas. Cuando
+  compilar se hace lento, la única pregunta útil es «lento haciendo qué», y
+  adivinar la respuesta ya salió mal una vez.
+
+### Cambiado
+
+- **La aplicación arranca en su página de inicio**, no en un documento en
+  blanco. Antes cada arranque ofrecía un «sin-título» que nadie había pedido y
+  que había que cerrar antes de abrir el proyecto de verdad. Ahora aparecen el
+  logo y los dos botones que hacen falta: **Nuevo documento** y **Abrir**.
+  Abrir un `.pltx` con doble clic sigue llevando directamente al documento.
+- Nuevo logo de Pyx en la página de inicio.
+
 ## [1.3.0] — 2026-09-01
 
 La carpeta del proyecto vuelve a ser tuya: solo contiene lo que tú pusiste.
@@ -198,6 +254,7 @@ ha cambiado, y que abrir un informe no dependa de tener Python instalado.
 - Instaladores para Windows, macOS y Linux.
 - Soporte de interfaz en inglés.
 
+[1.3.1]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.1
 [1.3.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.0
 [1.2.1]: https://github.com/LorGIOO/Pyx/releases/tag/v1.2.1
 [1.2.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.2.0

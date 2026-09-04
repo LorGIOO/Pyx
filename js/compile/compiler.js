@@ -248,14 +248,29 @@ async function readChildrenCached(paths) {
   return out;
 }
 
+/* Where an \input's text resolves to on disk.
+ *
+ * "cap/uno" and the folder it sits in do not change between compiles, but
+ * answering it costs a pathExists round-trip per candidate extension. A
+ * hundred-chapter project paid all of them, in series, on EVERY compile —
+ * including the ones a typing pause fires. Hits are kept for the session;
+ * misses are not, so a chapter written after the last compile is still found. */
+const childPathCache = new Map();
+
 async function resolveChildPath(rootDir, raw) {
   // Forward slashes work on every OS (Windows included) — converting them to
   // backslashes broke \input resolution on Linux/macOS.
   const rel = raw.trim();
+  const key = `${rootDir} ${rel}`;
+  const hit = childPathCache.get(key);
+  if (hit) return hit;
   const base = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : joinPath(rootDir, rel);
   const cands = /\.[a-z0-9]+$/i.test(base) ? [base] : [base + '.tex', base + '.pltx'];
-  for (const c of cands) if (await pathExists(c)) return c;
-  return null;
+  // Both candidates at once, but `.tex` still wins: Promise.all preserves order.
+  const found = (await Promise.all(
+    cands.map(async (c) => (await pathExists(c) ? c : null)))).find(Boolean) || null;
+  if (found) childPathCache.set(key, found);
+  return found;
 }
 
 /**
@@ -370,16 +385,26 @@ async function gatherTree(rootPath, rootContent, rootDir) {
 
     // Resolve this file's \input targets first, then batch-read the ones that
     // aren't already open in the editor.
+    // Resolve every \input of this file in ONE parallel batch. Doing it in the
+    // matching loop meant a round-trip per chapter, in series, and that is the
+    // cost that grows with the size of the project.
     const re = new RegExp(INPUT_SRC, 'g');
-    const pending = [];
+    const raws = [];
     let m;
-    while ((m = re.exec(content))) {
-      const child = await resolveChildPath(rootDir, m[2]);
-      if (!child) continue;
-      f.raws.set(m[2], child);
-      if (files.has(child)) continue;
+    while ((m = re.exec(content))) raws.push(m[2]);
+    if (!raws.length) return;
+    const resolved = await Promise.all(raws.map((r) => resolveChildPath(rootDir, r)));
+
+    const pending = [];
+    const queued = new Set(); // a file \input twice must be read once
+    raws.forEach((raw, i) => {
+      const child = resolved[i];
+      if (!child) return;
+      f.raws.set(raw, child);
+      if (files.has(child) || queued.has(child)) return;
+      queued.add(child);
       pending.push(child);
-    }
+    });
     if (!pending.length) return;
 
     const fromDisk = [];
@@ -428,6 +453,10 @@ export async function compileActive(showViewer = true) {
   state.compiling = true;
   state.lastCompileOk = null;
   const t0 = performance.now();
+  // Where the time actually goes, reported at the end of the log. Compiling is
+  // this app's inner loop, and when it feels slow the only useful question is
+  // "slow doing what" — guessing that answer has already been wrong once.
+  const phase = { cells: 0, tex: 0, ran: 0, total: 0 };
   // The detached viewer replaces the in-app pane: don't reopen it while the
   // auxiliary window is the one showing the PDF.
   if (showViewer && !auxOpen()) state.previewVisible = true;
@@ -517,6 +546,7 @@ export async function compileActive(showViewer = true) {
         walkOrder(rootPath);
       }
       const hashes = runOrder.map((e) => e.cell.codeHash);
+      phase.total = runOrder.length;
 
       /* Run the cells the kernel does not already hold.
        *
@@ -528,12 +558,20 @@ export async function compileActive(showViewer = true) {
        * directory, or an unknown namespace forces a reset and a full re-run,
        * so a skip can never produce a value that a full run would not.
        *
-       * A MANUAL "Compilar y ver" always resets: it is the ground truth. */
+       * "Compilar y ver" used to force a reset, on the reasoning that a manual
+       * compile is the ground truth. It cost a full re-run — every import,
+       * every dataset, every simulation — on EVERY press, which is most of the
+       * 10-50 s a compile used to take. The ledger already provides that
+       * guarantee: it skips a prefix only when it is exactly a prefix, and any
+       * doubt at all falls back to a reset. Forcing one on top bought nothing
+       * and charged for it every time. A full re-run is still available, and
+       * still explicit: "Reiniciar el kernel". */
       const runTree = async (force) => {
         problems = '';
         const start = force ? 0 : nsPrefix(hashes, cwd);
         if (start === 0) await runCellCode('', { cwd, reset: true });
         for (let i = start; i < runOrder.length; i++) {
+          phase.ran++;
           const { path, cell, nth } = runOrder[i];
           const od = state.documents.find((d) => d.path === path && !d.kind);
           const view = od ? getViewOfDoc(od.id) : null;
@@ -573,8 +611,9 @@ export async function compileActive(showViewer = true) {
       // ONE lock for the whole sequence: reset + every cell + \py{} evaluation
       // run atomically — a manual Shift+Enter can never mutate the namespace
       // between running the cells and reading the values for the document.
+      const tCells = performance.now();
       await withKernelLock(async () => {
-        await runTree(showViewer);
+        await runTree(false);
 
         // 2) Resolve \py{...} expressions against that exact namespace.
         if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
@@ -582,11 +621,18 @@ export async function compileActive(showViewer = true) {
         // Self-heal: if an incremental run met a namespace that had drifted
         // (the kernel was restarted between compiles, a cell was interrupted),
         // rerun everything once inside the same lock.
-        if (!showViewer && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
+        //
+        // This is the ONLY thing standing between an incremental run and a
+        // wrong number, and it is enough: a namespace that no longer holds
+        // what the document expects shows up as a \py{} that fails to
+        // evaluate, and that triggers the full re-run right here, before
+        // anything reaches the PDF.
+        if (exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
           await runTree(true);
           if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
         }
       });
+      phase.cells = performance.now() - tCells;
     }
 
     // Python-only .pltx (no LaTeX document): running the cells IS the compile.
@@ -784,10 +830,18 @@ export async function compileActive(showViewer = true) {
       return null;
     }
 
+    const tTex = performance.now();
     const res = await compileLatex(buildPath, cwd, engine, passes, stem);
+    phase.tex = performance.now() - tTex;
 
     state.lastLog =
-      (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') + (res.log || '');
+      (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') + (res.log || '')
+      + `\n\n===== Tiempos de Pyx =====\n`
+      + `Celdas Python : ${Math.round(phase.cells)} ms `
+      + `(${phase.ran} ejecutada${phase.ran === 1 ? '' : 's'} de ${phase.total})\n`
+      + `Motor LaTeX   : ${Math.round(phase.tex)} ms `
+      + `(${engine}, ${passes} pasada${passes === 1 ? '' : 's'})\n`
+      + `Total         : ${Math.round(performance.now() - t0)} ms`;
     state.lastCompileOk = res.ok;
 
     // TeXstudio-style: pdf_path is only set when THIS run wrote a PDF, so show

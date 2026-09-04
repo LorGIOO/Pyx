@@ -277,7 +277,9 @@
   color: var(--theme-text-secondary);
   background: var(--theme-content-bg);
 }
-.placeholder svg { width: 56px; height: 56px; opacity: 0.5; }
+/* Height, not a square: the Pyx mark is taller than it is wide (82×97), and
+   forcing it into 56×56 would squash it. */
+.placeholder svg { height: 64px; width: auto; opacity: 0.5; }
 .placeholder h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--theme-text); }
 .placeholder p { margin: 0; font-size: 13px; }
 .placeholder .hint-keys {

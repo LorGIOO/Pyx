@@ -168,6 +168,14 @@ pub fn read(path: &str) -> Result<PltxRead, String> {
 /// The working directory is NOT deleted afterwards: it lives outside the
 /// user's folder, it is invisible, and keeping it is what lets the next compile
 /// reuse the engine's cross-reference state instead of starting from zero.
+/// Payloads that are already compressed, so the zip stores them verbatim.
+fn precompressed(rel: &str) -> bool {
+    matches!(
+        rel.rsplit('.').next().map(str::to_ascii_lowercase).as_deref(),
+        Some("pdf" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "gz" | "zip" | "xz" | "7z")
+    )
+}
+
 pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), String> {
     let p = Path::new(path);
     let tmp = p.with_extension("pltx.tmp");
@@ -175,22 +183,32 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
         let file = fs::File::create(&tmp)
             .map_err(|e| format!("No se pudo escribir el .pltx: {e}"))?;
         let mut zip = zip::ZipWriter::new(file);
-        let opts: zip::write::FileOptions<'_, ()> =
+        let deflate: zip::write::FileOptions<'_, ()> =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let store: zip::write::FileOptions<'_, ()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-        let mut put = |name: &str, data: &[u8]| -> Result<(), String> {
+        let mut put = |name: &str,
+                       data: &[u8],
+                       opts: zip::write::FileOptions<'_, ()>|
+         -> Result<(), String> {
             zip.start_file(name, opts).map_err(|e| format!("zip: {e}"))?;
             zip.write_all(data).map_err(|e| format!("zip: {e}"))?;
             Ok(())
         };
-        put(MANIFEST_ENTRY, MANIFEST_BODY.as_bytes())?;
-        put(SOURCE_ENTRY, source.as_bytes())?;
+        put(MANIFEST_ENTRY, MANIFEST_BODY.as_bytes(), deflate)?;
+        put(SOURCE_ENTRY, source.as_bytes(), deflate)?;
         if let Some(o) = outputs.filter(|o| !o.is_empty()) {
-            put(OUTPUTS_ENTRY, o.as_bytes())?;
+            put(OUTPUTS_ENTRY, o.as_bytes(), deflate)?;
         }
         for (rel, abs) in workspace::walk(&workspace::build_dir(path)) {
             if let Ok(data) = fs::read(&abs) {
-                put(&format!("{BUILD_PREFIX}{rel}"), &data)?;
+                // The text of a build directory (.aux, .log, .toc) deflates to
+                // a fraction of its size and is worth compressing. The PDF and
+                // the figures are ALREADY compressed: re-deflating them costs
+                // most of the save on a figure-heavy report and buys nothing.
+                let opts = if precompressed(&rel) { store } else { deflate };
+                put(&format!("{BUILD_PREFIX}{rel}"), &data, opts)?;
             }
         }
         zip.finish().map_err(|e| format!("zip: {e}"))?;

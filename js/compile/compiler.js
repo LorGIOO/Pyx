@@ -18,6 +18,7 @@ import {
   findPyExprs, resolvePyText, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
   findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
   safetyPreamble, injectPreamble, findPyxLeaks, buildToSrcLine, scanVerbatimUse,
+  stripTexComment,
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
 import { auxOpen } from '../solid/stores/previewStore.js';
@@ -114,15 +115,38 @@ export async function showSavedPdf() {
   const doc = activeDoc();
   if (!doc || doc.kind || !doc.path || state.compiling) return;
   try {
-    const root = await resolveRootPath(doc, getDocContent(doc.id));
+    const content = getDocContent(doc.id);
+    const root = await resolveRootPath(doc, content);
     const pdf = joinPath(await buildDirFor(root), `${stemOf(root)}.pdf`);
     if (samePath(pdf, getPdfPath())) return;
     // Only a PDF at least as new as the document is ITS PDF. An older one was
     // built from some other version of the file — edited outside Pyx, copied
     // over from another machine — and showing it would present text and
     // numbers the document no longer contains.
-    const [src, out] = await fileStamps([root, pdf]);
-    if (!out || out.mtime < 0 || (src && src.mtime > out.mtime)) return;
+    //
+    // "The document" is the root AND the chapters it \inputs, as deep as the
+    // compile follows them (3 levels). Checking the root alone showed a
+    // report's old PDF as current after its chapters had been rewritten: the
+    // chapters are where the text lives, and editing them never touches the
+    // root. Chapters come through the compile's own read cache.
+    const rootText = samePath(root, doc.path) ? content : await readSourceFile(root).catch(() => '');
+    const children = [];
+    const seen = new Set([root]);
+    let level = [[root, rootText]];
+    for (let depth = 0; depth < 3 && level.length; depth++) {
+      const found = [];
+      for (const [p, text] of level) {
+        const kids = await Promise.all(analyzeFile(p, text).events
+          .filter((e) => e.kind === 'input')
+          .map((e) => resolveChildPath(dirOf(root), e.raw)));
+        for (const c of kids) if (c && !seen.has(c)) { seen.add(c); found.push(c); }
+      }
+      children.push(...found);
+      const texts = depth < 2 ? await readChildrenCached(found) : new Map();
+      level = found.filter((c) => texts.has(c)).map((c) => [c, texts.get(c)]);
+    }
+    const [out, ...srcs] = await fileStamps([pdf, root, ...children]);
+    if (!out || out.mtime < 0 || srcs.some((s) => s && s.mtime > out.mtime)) return;
     // A compile that started meanwhile is about to show a NEWER PDF.
     if (state.compiling) return;
     lastPdfPath = pdf;
@@ -177,10 +201,12 @@ const isPltx = (p) => /\.pltx$/i.test(p || ''); // ZIP container — never write
 // as text. Every disk read in this module uses this — never readTextFile.
 async function readSourceFile(path) {
   if (isPltx(path)) {
-    try {
-      const r = await pltxRead(path);
-      if (r && r.is_zip && r.source != null) return r.source;
-    } catch (_) { /* fall through to plain read */ }
+    // A zip is read as a zip or not at all. A damaged one used to fall
+    // through to a TEXT read, and the engine was handed binary garbage. Only
+    // a legacy plain-text .pltx (is_zip false) is read as text; pltx_read
+    // itself fails, with the reason, for a damaged zip or one without source.
+    const r = await pltxRead(path);
+    if (r && r.is_zip) return r.source;
   }
   return readTextFile(path);
 }
@@ -263,6 +289,7 @@ const diskCache = new Map(); // path -> { mtime, size, content }
 
 async function readChildrenCached(paths) {
   const out = new Map();
+  out.failed = new Map(); // path -> why it could not be read
   if (!paths.length) return out;
   let stamps = [];
   try {
@@ -281,7 +308,11 @@ async function readChildrenCached(paths) {
       const content = await readSourceFile(p);
       diskCache.set(p, { mtime: st.mtime, size: st.size, content });
       out.set(p, content);
-    } catch (_) { /* unreadable child: skipped by the caller */ }
+    } catch (e) {
+      // Unreadable (a damaged .pltx…): the caller shows it in the PDF and
+      // lists the reason, instead of dropping the chapter without a word.
+      out.failed.set(p, String((e && e.message) || e));
+    }
   }));
   return out;
 }
@@ -358,10 +389,15 @@ function analyzeFile(path, content) {
         continue;
       }
       if (line.indexOf('\\') >= 0) {
-        scanVerbatimUse(line, verbUse);
-        inputRe.lastIndex = 0;
-        let m;
-        while ((m = inputRe.exec(line))) events.push({ kind: 'input', raw: m[2] });
+        const code = stripTexComment(line); // `% \input{…}` is switched off
+        scanVerbatimUse(code, verbUse);
+        // …and so is one SHOWN inside a verbatim block (documentation often
+        // prints an example \input): it is text, not a chapter to compile.
+        if (!verb) {
+          inputRe.lastIndex = 0;
+          let m;
+          while ((m = inputRe.exec(code))) events.push({ kind: 'input', raw: m[2] });
+        }
       }
       continue;
     }
@@ -431,10 +467,10 @@ async function gatherTree(rootPath, rootContent, rootDir) {
     // Resolve every \input of this file in ONE parallel batch. Doing it in the
     // matching loop meant a round-trip per chapter, in series, and that is the
     // cost that grows with the size of the project.
-    const re = new RegExp(INPUT_SRC, 'g');
-    const raws = [];
-    let m;
-    while ((m = re.exec(content))) raws.push(m[2]);
+    // From the analysis, not a fresh regex over the text: that one also took
+    // commented-out \input lines (running the cells of a chapter the author
+    // had switched off) and \input text inside a Python cell's code.
+    const raws = f.events.filter((e) => e.kind === 'input').map((e) => e.raw);
     if (!raws.length) return;
     const resolved = await Promise.all(raws.map((r) => resolveChildPath(rootDir, r)));
 
@@ -442,13 +478,10 @@ async function gatherTree(rootPath, rootContent, rootDir) {
     const queued = new Set(); // a file \input twice must be read once
     raws.forEach((raw, i) => {
       const child = resolved[i];
-      if (!child) {
-        // A .tex the engine may still find on its own search path, but a
-        // .pltx it can never read: it is a zip. Left as is, the engine gets
-        // the container and the error it prints says nothing useful.
-        if (isPltx(raw.trim())) (f.missingPltx ||= []).push(raw.trim());
-        return;
-      }
+      // Not found: left as written. The engine may still find a .tex on its
+      // own search path, and when nothing is there the build's guards print
+      // "No encontrado: <path>" in its place (latex-bridge.js).
+      if (!child) return;
       f.raws.set(raw, child);
       if (files.has(child) || queued.has(child)) return;
       queued.add(child);
@@ -476,7 +509,16 @@ async function gatherTree(rootPath, rootContent, rootDir) {
     for (const child of pending) {
       if (files.has(child)) continue; // a sibling branch got there first
       const c = live.has(child) ? live.get(child) : disk.get(child);
-      if (c == null) continue; // unreadable
+      if (c == null) {
+        // Unreadable. It must leave the tree: every later step looks a
+        // child up in `files`, and a missing entry crashed the compile with
+        // "Cannot read properties of undefined". Its \input is replaced in
+        // the build by a visible "No se pudo leer" (see the build loop).
+        for (const [raw, p] of f.raws) {
+          if (p === child) { f.raws.delete(raw); (f.unreadable ||= new Map()).set(raw, disk.failed.get(child) || ''); }
+        }
+        continue;
+      }
       await walk(child, c, depth + 1);
     }
   };
@@ -734,7 +776,10 @@ export async function compileActive(showViewer = true) {
       if (needs.has(path)) return needs.get(path);
       needs.set(path, false); // cycle guard
       const f = files.get(path);
-      let n = f.needsBuild;
+      // A file whose \input points at an unreadable chapter needs its own
+      // copy, with that \input replaced — the original would feed the engine
+      // the damaged file.
+      let n = f.needsBuild || !!(f.unreadable && f.unreadable.size);
       for (const child of f.raws.values()) if (calcNeeds(child)) n = true;
       needs.set(path, n);
       return n;
@@ -758,9 +803,9 @@ export async function compileActive(showViewer = true) {
         problems += `\n[${baseName(path)} · línea ${f.unterminated}] celda sin %#end:`
           + ' no se ejecuta y el resto del archivo no llega al PDF.';
       }
-      for (const raw of f.missingPltx || []) {
-        problems += `\n[${baseName(path)}] \\input{${raw}}: no se encontró ese .pltx`
-          + ` en ${cwd} (las rutas se leen desde la carpeta del documento principal).`;
+      for (const [raw, why] of f.unreadable || []) {
+        problems += `\n[${baseName(path)}] no se pudo leer \\input{${raw}}`
+          + `${why ? ` (${why})` : ''}: en el PDF aparece «No se pudo leer» en su lugar.`;
       }
     }
     const shim = safetyPreamble(use);
@@ -823,6 +868,9 @@ export async function compileActive(showViewer = true) {
         }
       }
       processed = processed.replace(new RegExp(INPUT_SRC, 'g'), (all, cmd, raw) => {
+        if (f.unreadable && f.unreadable.has(raw)) {
+          return `\\fbox{\\normalfont\\ttfamily\\small No se pudo leer: \\detokenize{${raw}}}`;
+        }
         const child = f.raws.get(raw);
         if (!child || !needs.get(child)) return all;
         // Point at the child's copy by its path INSIDE the working directory.

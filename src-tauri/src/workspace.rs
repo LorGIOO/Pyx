@@ -81,6 +81,49 @@ pub fn build_dir(doc_path: &str) -> PathBuf {
     cache_root().join(format!("{stem}-{:016x}", fingerprint(&key)))
 }
 
+/// Working directories an engine is writing into right now.
+///
+/// Saving a `.pltx` packs its working directory. A save that lands while a
+/// compile runs — Ctrl+S, then Ctrl+S again before the first compile ends —
+/// packed files the engine had not finished: a user's document came back with
+/// a `build/X.synctex(busy)` and a log cut off mid-line inside it. The engine
+/// marks the directory for as long as it runs, and the save leaves it alone.
+static BUSY: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// One spelling per directory: both separators, any case, no trailing slash.
+fn busy_key(dir: &Path) -> String {
+    dir.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// While this lives, `dir` counts as being written by an engine.
+pub struct BusyGuard(String);
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        if let Ok(mut v) = BUSY.lock() {
+            if let Some(i) = v.iter().position(|k| *k == self.0) {
+                v.remove(i);
+            }
+        }
+    }
+}
+
+pub fn mark_busy(dir: &Path) -> BusyGuard {
+    let k = busy_key(dir);
+    if let Ok(mut v) = BUSY.lock() {
+        v.push(k.clone());
+    }
+    BusyGuard(k)
+}
+
+pub fn is_busy(dir: &Path) -> bool {
+    let k = busy_key(dir);
+    BUSY.lock().map(|v| v.contains(&k)).unwrap_or(false)
+}
+
 /// Create (if needed) and return the project's working directory.
 pub fn ensure_build_dir(doc_path: &str) -> Result<PathBuf, String> {
     let d = build_dir(doc_path);

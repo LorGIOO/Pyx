@@ -158,7 +158,10 @@ export function parseLatexLog(log, opts = {}) {
   };
 
   /* file-stack char scanner (updateFileStackHeuristic2) */
-  const updateFileStack = (strLine) => {
+  // A project file, by exact basename (not merely "has an extension").
+  const isKnown = (name) => !!known && known.has(name.split(/[\\/]/).pop().toLowerCase());
+
+  const updateFileStack = (strLine, nextLine = '') => {
     if (fsState === FS_START) fsPartial = '';
     let fnStart = 0;
     for (let i = 0; i < strLine.length; i++) {
@@ -208,7 +211,17 @@ export function parseLatexLog(log, opts = {}) {
     // end of line
     if (fsState === FS_INNAME) {
       fsPartial += strLine.slice(fnStart);
-      if (strLine.length < 78 || entryExists(fsPartial)) {
+      // TeX wraps its log at 79 columns, and the working directory's paths
+      // are long: `(C:/…/Pyx/build/_Raiz-62c6…/_Raiz.build.te` + `x` on the
+      // next line. The fragment "has an extension" (.te), so it used to be
+      // taken as the whole name — every problem in the root file was then
+      // listed under "_Raiz.build.te", with build-copy line numbers. When the
+      // fragment plus the start of the next line is a known project file, the
+      // name continues there.
+      const rest = (nextLine.match(/^[^\s()"]+/) || [''])[0];
+      const continues = strLine.length >= 78 && rest && !isKnown(fsPartial)
+        && isKnown(fsPartial + rest);
+      if (!continues && (strLine.length < 78 || entryExists(fsPartial))) {
         stack.push({ file: fsPartial, reliable: false });
         fsPartial = '';
         fsState = FS_START;
@@ -303,7 +316,7 @@ export function parseLatexLog(log, opts = {}) {
           break;
         }
         // 4) nothing matched: keep tracking which file TeX is in
-        updateFileStack(ln);
+        updateFileStack(ln, lines[n + 1]);
         break;
       }
 

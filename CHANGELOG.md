@@ -17,12 +17,35 @@ Lo que escribes es lo que ves, siempre.
   comprimido. Tampoco se podían guardar `.tex` allí. Ahora todo pasa por los
   comandos propios de Pyx, sin esa restricción, y un `\input` a un `.pltx` que
   no se encuentra aparece en «Problemas».
-- **Una imagen que falta ya no deja un PDF roto sin explicación.** Con xelatex,
-  una imagen que no se encuentra detiene a xdvipdfmx a mitad del PDF; Pyx
-  intentaba abrir el archivo cortado y el único mensaje era «Invalid PDF
-  structure», que además sustituía todo el registro. Ahora se descarta el PDF
-  incompleto, se conserva el anterior en el visor y «Problemas» dice qué
-  imágenes faltan y en qué línea.
+- **Un archivo enlazado que no existe ya no impide compilar ni da errores.**
+  Imágenes (`\includegraphics`, con o sin extensión), PDF (`\includepdf`),
+  documentos (`\input`, `\include`) y listados (`\lstinputlisting`,
+  `\verbatiminput`): en su lugar aparece un recuadro «No encontrado: <ruta>»,
+  el resto del documento se compone con lo último que escribiste y «Problemas»
+  lo lista como **aviso**, con su archivo y su línea. Antes, con xelatex una
+  sola imagen que faltaba detenía a xdvipdfmx a mitad del PDF —el visor seguía
+  enseñando el anterior y nada de lo escrito después aparecía—, y un `\input`
+  o un `\lstinputlisting` a un archivo inexistente abortaba la compilación
+  entera. Un `.pltx` dañado se muestra como «No se pudo leer» y se explica el
+  motivo, en vez de romper la compilación.
+- Si aun así el motor deja un PDF a medias, se descarta, se conserva el
+  anterior y se explica por qué (antes el único mensaje era «Invalid PDF
+  structure», que además sustituía todo el registro).
+- **Guardar durante una compilación ya no empaqueta archivos a medio escribir**
+  dentro del `.pltx` (un `synctex(busy)`, un registro cortado): ese guardado
+  conserva el directorio de trabajo del guardado anterior; la fuente y los
+  resultados sí son siempre los actuales.
+- Los problemas del documento principal aparecían bajo un nombre cortado
+  («_Raiz.build.te») y con números de línea de la copia interna: TeX parte el
+  registro a 79 columnas. Ahora llevan el archivo y la línea reales.
+- **Al abrir un proyecto se veía el PDF de una versión antigua** si sus
+  capítulos habían cambiado después del último guardado de la raíz: el PDF
+  restaurado del `.pltx` llevaba la hora de apertura y solo se comparaba con la
+  raíz. Ahora conserva la hora del guardado y se compara también con los
+  documentos que la raíz incluye con `\input`; si alguno es más nuevo, no se
+  enseña un PDF que ya no corresponde.
+- Un `\input` **comentado** (`% \input{capitulo}`) ya no se procesa: antes se
+  leía el capítulo desactivado y se ejecutaban sus celdas.
 - Un error del visor al abrir el PDF se **añade** al registro de la
   compilación en vez de reemplazarlo, y un fallo interno de la compilación
   aparece en «Problemas» (antes decía «Sin errores ni avisos detectados» bajo

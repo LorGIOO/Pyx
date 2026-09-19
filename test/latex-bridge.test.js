@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   findPyExprs, resolvePyText, findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey,
   neutralizeCells, buildToSrcLine, srcToBuildLine, findPyxLeaks, safetyPreamble,
-  injectPreamble, protectedRanges, createVerbatimTracker,
+  injectPreamble, protectedRanges, createVerbatimTracker, stripTexComment,
 } from '../js/compile/latex-bridge.js';
 
 const ok = (v) => ({ ok: true, value: v });
@@ -154,8 +154,34 @@ describe('safetyPreamble', () => {
     expect(block).toContain('\\usepackage{listings}');
     expect(block).toContain('lst@style@mio');
   });
-  it('is null when nothing needs guarding', () => {
-    expect(safetyPreamble({ envs: new Set(), styles: new Set(), usesPy: false })).toBe(null);
+  it('adds nothing but the missing-file hooks when nothing else needs guarding', () => {
+    const block = safetyPreamble({ envs: new Set(), styles: new Set(), usesPy: false });
+    expect(block).not.toContain('\\usepackage');
+    expect(block).not.toContain('\\providecommand\\py');
+    expect(block).toContain('\\providecommand\\Pyx@missing[1]');
+  });
+  // A linked file that is not there never stops the document (the user's
+  // rule): it is drawn as "No encontrado: <path>" and logged as a WARNING.
+  // Every hook wraps the original and only acts on a missing file.
+  it('hooks every kind of linked file, each one only once and only if loaded', () => {
+    const block = safetyPreamble({ envs: new Set(), styles: new Set(), usesGraphics: true });
+    expect(block).toContain("\\@latex@warning{File `#1' not found}");
+    expect(block).toContain('No encontrado: \\detokenize{#1}');
+    for (const hook of [
+      '\\let\\Pyx@iinput\\@iinput', // \input
+      '\\let\\Pyx@include\\@include', // \include
+      '\\let\\Pyx@Gin@setfile\\Gin@setfile', // \includegraphics with extension
+      '\\let\\Pyx@Ginclude@graphics\\Ginclude@graphics', // …and without
+      '\\NewCommandCopy\\Pyx@includepdf\\includepdf', // \includepdf
+      '\\def\\lst@MissingFileError#1#2', // \lstinputlisting
+      '\\let\\Pyx@verbatim@input\\verbatim@input', // \verbatiminput
+    ]) expect(block).toContain(hook);
+    // \include's argument is space-delimited: the space must survive.
+    expect(block).toContain('\\def\\@include#1 {');
+    expect(block).toContain('\\Pyx@include#1 }');
+    // Hooks come after the package guards, so graphicx/listings exist.
+    expect(block.indexOf('Pyx@Gin@setfile')).toBeGreaterThan(block.indexOf('\\usepackage{graphicx}'));
+    expect(block).toMatch(/\\@ifundefined\{Gin@setfile\}\{\}\{\\@ifundefined\{Pyx@Gin@setfile\}/);
   });
 });
 
@@ -188,5 +214,19 @@ describe('createVerbatimTracker', () => {
     expect(t('\\end{minted}')).toBe(true);   // wrong env: still inside
     expect(t('\\end{verbatim}')).toBe(true); // the closing line itself
     expect(t('prosa')).toBe(false);
+  });
+});
+
+describe('stripTexComment', () => {
+  // A commented-out \input is a chapter the author switched off: it must not
+  // be gathered, run or reported missing.
+  it('cuts at the first unescaped %', () => {
+    expect(stripTexComment('%\t\\input{./documento_2.tex}')).toBe('');
+    expect(stripTexComment('\\input{a} % \\input{b}')).toBe('\\input{a} ');
+  });
+  it('keeps an escaped percent sign, but not a comment after a line break', () => {
+    expect(stripTexComment('50\\% del total')).toBe('50\\% del total');
+    expect(stripTexComment('fin\\\\% comentario')).toBe('fin\\\\');
+    expect(stripTexComment('sin comentario')).toBe('sin comentario');
   });
 });

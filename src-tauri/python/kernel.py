@@ -1094,6 +1094,8 @@ def handle(req):
 # worker; read by the reader thread.
 _exec_tid = None
 _interrupt_pending = False
+# Where the kernel waits between requests: never a folder of the user's.
+_IDLE_DIR = os.path.abspath(os.environ.get("TEMP") or os.environ.get("TMPDIR") or os.path.expanduser("~"))
 
 
 def _raise_in_thread(tid, exctype):
@@ -1138,6 +1140,15 @@ def _worker(req_q):
         if _interrupt_pending:
             _raise_in_thread(_exec_tid, None)
             _interrupt_pending = False
+        # Leave the project folder between requests. On Windows no folder can
+        # be renamed, moved or deleted while it is some process's current
+        # directory: with the kernel parked in it, the user could not rename
+        # their own project folder until Pyx was closed. Every request sets
+        # its cwd again before running anything.
+        try:
+            os.chdir(_IDLE_DIR)
+        except Exception:
+            pass
         try:
             _REAL_STDOUT.write(json.dumps(resp) + "\n")
             _REAL_STDOUT.flush()

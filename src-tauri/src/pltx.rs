@@ -176,7 +176,23 @@ pub fn read(path: &str, restore: bool) -> Result<PltxRead, String> {
                         if let Some(parent) = dest.parent() {
                             let _ = fs::create_dir_all(parent);
                         }
-                        let _ = fs::write(dest, &buf);
+                        // As old as the save that packed it, not "now". A
+                        // restored PDF stamped with the moment of opening looked
+                        // newer than every chapter, so a PDF built before the
+                        // chapters were edited was shown as if it were current.
+                        if fs::write(&dest, &buf).is_ok() {
+                            if let Some(t) = saved_at {
+                                let stamped = fs::File::options()
+                                    .write(true)
+                                    .open(&dest)
+                                    .and_then(|f| f.set_modified(t));
+                                if let Err(e) = stamped {
+                                    // Not fatal (the file is restored), but it
+                                    // now looks as new as the opening: say so.
+                                    eprintln!("pyx: no se pudo fechar {}: {e}", dest.display());
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -186,13 +202,8 @@ pub fn read(path: &str, restore: bool) -> Result<PltxRead, String> {
     Ok(PltxRead { is_zip: true, source: Some(source), outputs })
 }
 
-/// Save a `.pltx`: source + cell results + the project's whole working
-/// directory, written to a temp file and renamed so a crash mid-write can never
-/// corrupt the document.
-///
-/// The working directory is NOT deleted afterwards: it lives outside the
-/// user's folder, it is invisible, and keeping it is what lets the next compile
-/// reuse the engine's cross-reference state instead of starting from zero.
+static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Payloads that are already compressed, so the zip stores them verbatim.
 fn precompressed(rel: &str) -> bool {
     matches!(
@@ -201,9 +212,29 @@ fn precompressed(rel: &str) -> bool {
     )
 }
 
+/// Save a `.pltx`: source + cell results + the project's whole working
+/// directory, written to a temp file and renamed so a crash mid-write can never
+/// corrupt the document.
+///
+/// The working directory is NOT deleted afterwards: it lives outside the
+/// user's folder, it is invisible, and keeping it is what lets the next compile
+/// reuse the engine's cross-reference state instead of starting from zero.
+///
+/// While an engine is writing into that directory (a save during a compile),
+/// its half-written files are not packed: the document keeps the working
+/// directory of its previous save, copied over as it was. The source and the
+/// results — what the user actually saved — are always the current ones.
 pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), String> {
+    // One save at a time. Two at once — Ctrl+S pressed again before the first
+    // save finished — wrote the SAME temp file: one of them found it already
+    // renamed away ("os error 2"), and two writers interleaving in one file
+    // could rename a damaged zip over the document.
+    let _one_at_a_time = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let p = Path::new(path);
     let tmp = p.with_extension("pltx.tmp");
+    let dir = workspace::build_dir(path);
+    let busy = workspace::is_busy(&dir);
+    let previous = if busy { fs::read(p).ok().filter(|b| is_zip(b)) } else { None };
     {
         let file = fs::File::create(&tmp)
             .map_err(|e| format!("No se pudo escribir el .pltx: {e}"))?;
@@ -226,14 +257,33 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
         if let Some(o) = outputs.filter(|o| !o.is_empty()) {
             put(OUTPUTS_ENTRY, o.as_bytes(), deflate)?;
         }
-        for (rel, abs) in workspace::walk(&workspace::build_dir(path)) {
-            if let Ok(data) = fs::read(&abs) {
-                // The text of a build directory (.aux, .log, .toc) deflates to
-                // a fraction of its size and is worth compressing. The PDF and
-                // the figures are ALREADY compressed: re-deflating them costs
-                // most of the save on a figure-heavy report and buys nothing.
-                let opts = if precompressed(&rel) { store } else { deflate };
-                put(&format!("{BUILD_PREFIX}{rel}"), &data, opts)?;
+        if !busy {
+            for (rel, abs) in workspace::walk(&dir) {
+                // XeTeX's scratch name for a SyncTeX file it is still writing;
+                // one left behind by an engine that died is never state.
+                if rel.contains("(busy)") {
+                    continue;
+                }
+                if let Ok(data) = fs::read(&abs) {
+                    // The text of a build directory (.aux, .log, .toc) deflates
+                    // to a fraction of its size and is worth compressing. The
+                    // PDF and the figures are ALREADY compressed: re-deflating
+                    // them costs most of the save on a figure-heavy report and
+                    // buys nothing.
+                    let opts = if precompressed(&rel) { store } else { deflate };
+                    put(&format!("{BUILD_PREFIX}{rel}"), &data, opts)?;
+                }
+            }
+        } else if let Some(bytes) = previous.as_deref() {
+            // Raw copies: the entries go over byte for byte, not recompressed.
+            if let Ok(mut old) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) {
+                for i in 0..old.len() {
+                    if let Ok(f) = old.by_index_raw(i) {
+                        if f.name().starts_with(BUILD_PREFIX) {
+                            zip.raw_copy_file(f).map_err(|e| format!("zip: {e}"))?;
+                        }
+                    }
+                }
             }
         }
         zip.finish().map_err(|e| format!("zip: {e}"))?;
@@ -289,6 +339,53 @@ mod tests {
         fs::File::options().write(true).open(&build).unwrap().set_modified(old).unwrap();
         read(doc, true).unwrap();
         assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION GUARDADA");
+        // …stamped with the time of the SAVE, not of the opening: a chapter
+        // edited after that save must still look newer than what came back.
+        let saved = fs::metadata(doc).unwrap().modified().unwrap();
+        assert_eq!(fs::metadata(&build).unwrap().modified().unwrap(), saved);
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A save that lands while the engine writes into the working directory
+    /// must not pack its half-written files: it keeps the previous save's
+    /// working directory. A left-over `(busy)` file is never packed.
+    #[test]
+    fn a_save_during_a_compile_keeps_the_previous_working_directory() {
+        let dir = std::env::temp_dir().join(format!("pyx-pltx-busy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("_Informe.pltx");
+        let doc = doc.to_str().unwrap();
+        let work = workspace::ensure_build_dir(doc).unwrap();
+        let entry = |name: &str| -> Option<String> {
+            let bytes = fs::read(doc).unwrap();
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut s = String::new();
+            z.by_name(name).ok()?.read_to_string(&mut s).ok()?;
+            Some(s)
+        };
+
+        fs::write(work.join("_Informe.log"), "LOG COMPLETO").unwrap();
+        write(doc, "v1", None).unwrap();
+        assert_eq!(entry("build/_Informe.log").as_deref(), Some("LOG COMPLETO"));
+
+        // The engine is mid-run: a half-written log and XeTeX's scratch file.
+        fs::write(work.join("_Informe.log"), "LOG A MED").unwrap();
+        fs::write(work.join("_Informe.synctex(busy)"), "x").unwrap();
+        {
+            let _engine = workspace::mark_busy(&work);
+            write(doc, "v2", None).unwrap();
+            assert_eq!(entry("source.tex").as_deref(), Some("v2"), "the source is always the current one");
+            assert_eq!(entry("build/_Informe.log").as_deref(), Some("LOG COMPLETO"));
+            assert!(entry("build/_Informe.synctex(busy)").is_none());
+        }
+
+        // Engine done: the next save packs the directory as it now is.
+        write(doc, "v3", None).unwrap();
+        assert_eq!(entry("build/_Informe.log").as_deref(), Some("LOG A MED"));
+        assert!(entry("build/_Informe.synctex(busy)").is_none());
 
         let _ = fs::remove_dir_all(&work);
         let _ = fs::remove_dir_all(&dir);

@@ -188,7 +188,11 @@ export function newDocument(content = '', fileName = 'sin-título.pltx', path = 
     fileName,
     path,
     modified: false,
-    engine: state.env.latex || 'xelatex',
+    // No engine until the user picks one in Configuración. A default stored
+    // here counted as that explicit choice, so `% !TeX program = pdflatex` in
+    // the document never applied; the compiler falls back to the detected
+    // engine by itself.
+    engine: undefined,
   });
   const pane = activePane();
   pane.docId = id;

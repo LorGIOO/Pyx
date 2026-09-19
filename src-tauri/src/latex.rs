@@ -382,6 +382,8 @@ pub fn compile(
     // cross-references settle in two passes instead of three.
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("No se pudo crear la carpeta de compilación: {e}"))?;
+    // Until this returns, a save must not pack this directory (workspace.rs).
+    let _busy = crate::workspace::mark_busy(&out_dir);
     mirror_subdirs(dir, &out_dir, 3);
 
     // Snapshot the PDF's mtime BEFORE compiling: success is "this run wrote a

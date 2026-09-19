@@ -426,6 +426,19 @@ const reStyleOpt = /(?:^|,)\s*style\s*=\s*([A-Za-z@][A-Za-z@0-9]*)/;
 /** Record the verbatim environments (and lstlisting styles) one line opens.
  *  Called from the compiler's single per-file walk — the guards must cost no
  *  extra pass over a project that can be tens of megabytes. */
+/** A LaTeX line without its comment. The comment starts at the first `%` that
+ *  is not escaped — `\%` is a percent sign, `\\%` is a line break followed by
+ *  a comment. `% \input{capitulo}` is a chapter the author switched OFF: the
+ *  compiler must not gather it, run its cells or report it missing. */
+export function stripTexComment(line) {
+  for (let i = line.indexOf('%'); i >= 0; i = line.indexOf('%', i + 1)) {
+    let bs = 0;
+    for (let j = i - 1; j >= 0 && line.charCodeAt(j) === 92; j--) bs++;
+    if (bs % 2 === 0) return line.slice(0, i);
+  }
+  return line;
+}
+
 export function scanVerbatimUse(line, out) {
   if (line.indexOf('\\begin') < 0) return;
   reBeginOpt.lastIndex = 0;
@@ -446,6 +459,56 @@ export function scanVerbatimUse(line, out) {
  * `envs` / `styles` are aggregated over the WHOLE project: a child's
  * \begin{lstlisting} needs `listings` loaded in the ROOT preamble.
  */
+/* Anything the document links to that is not there — an image, a PDF, a
+ * chapter, a code listing — must not stop the document. It is drawn as a
+ * frame with its path, "No encontrado: …", so what is missing is obvious on
+ * the page, and the log gets a WARNING (`File `x' not found`, with its line,
+ * listed in «Problemas») instead of an error.
+ *
+ * What each one did before:
+ *  - \includegraphics: under xelatex ONE missing image cost the whole PDF —
+ *    TeX recovers, but xdvipdfmx, fed through a pipe, dies with "Image
+ *    inclusion failed", and the viewer kept the previous PDF however many times
+ *    you compiled. Without an extension it was an error and an empty space.
+ *  - \input{…} and \lstinputlisting: the engine asks the terminal for another
+ *    name, and with no terminal (nonstopmode) the WHOLE compile aborts.
+ *  - \includepdf: an error, and the pages silently absent.
+ *  - \include{…} and \verbatiminput: silently nothing at all.
+ *
+ * The hooks wrap the existing definitions and only act when the file is
+ * missing, so a present file goes through exactly the code it always did —
+ * including any package that patched it. They are installed right before
+ * \begin{document}: only the BODY is covered (a missing file in the preamble
+ * is still an error; there is nowhere to show it). Every hook is guarded, so a
+ * document that does not load the package is untouched. */
+const BT = '`'; // TeX's opening quote, which a template literal cannot hold
+const MISSING_FILE_GUARDS = [
+  String.raw`\providecommand\Pyx@missing[1]{\@latex@warning{File ${BT}#1' not found}\leavevmode\fbox{\normalfont\ttfamily\small No encontrado: \detokenize{#1}}}`,
+  // \input{…}
+  String.raw`\@ifundefined{Pyx@iinput}{\let\Pyx@iinput\@iinput\def\@iinput#1{\IfFileExists{#1}{\Pyx@iinput{#1}}{\Pyx@missing{#1}}}}{}`,
+  // \include{…} (its argument is space-delimited: `\@include name `)
+  String.raw`\@ifundefined{Pyx@include}{\let\Pyx@include\@include\def\@include#1 {\IfFileExists{#1.tex}{\Pyx@include#1 }{\clearpage\Pyx@missing{#1.tex}\clearpage}}}{}`,
+  // \includegraphics. graphicx commits to a file in \Gin@setfile, searching
+  // the \graphicspath folders, so the \IfFileExists there looks exactly where
+  // \includegraphics looked. The frame is graphicx's own draft box, at the
+  // size the image was asked to have (4:3 for the proportions). A name with
+  // no extension fails earlier, with an error: that one is caught too.
+  String.raw`\@ifundefined{Gin@setfile}{}{\@ifundefined{Pyx@Gin@setfile}{\let\Pyx@Gin@setfile\Gin@setfile\def\Pyx@Gin@missing#1#2#3{\Gin@drafttrue\Gin@bboxtrue\def\Gin@llx{0}\def\Gin@lly{0}\def\Gin@urx{400}\def\Gin@ury{300}\Pyx@Gin@setfile{#1}{#2}{No encontrado: #3}}\def\Gin@setfile#1#2#3{\IfFileExists{#3}{\Pyx@Gin@setfile{#1}{#2}{#3}}{\Pyx@Gin@missing{#1}{#2}{#3}}}\let\Pyx@Ginclude@graphics\Ginclude@graphics\def\Ginclude@graphics#1{\begingroup\def\Pyx@nf{File ${BT}#1' not found}\let\Pyx@err\@latex@error\def\@latex@error##1##2{\def\Pyx@m{##1}\ifx\Pyx@m\Pyx@nf\@latex@warning{File ${BT}#1' not found}\Pyx@Gin@missing{eps}{}{#1}\else\Pyx@err{##1}{##2}\fi}\Pyx@Ginclude@graphics{#1}\endgroup}}{}}`,
+  // \includepdf (pdfpages): ONE page with the path where its pages would be.
+  // Decided up front with pdfpages' own lookup (\AM@findfile@i: the name, the
+  // name + .pdf, the \graphicspath folders), because once \includepdf starts
+  // on a file that is not there it keeps expanding page ranges against a page
+  // count that never got set, one error after another. \NewCommandCopy, not
+  // \let: \includepdf takes an optional argument.
+  String.raw`\@ifundefined{includepdf}{}{\@ifundefined{NewCommandCopy}{}{\@ifundefined{Pyx@includepdf}{\NewCommandCopy\Pyx@includepdf\includepdf\renewcommand\includepdf[2][]{\begingroup\AM@findfile@i{#2}{pdf}\ifx\AM@currentdocname\relax\aftergroup\@secondoftwo\else\aftergroup\@firstoftwo\fi\endgroup{\Pyx@includepdf[#1]{#2}}{\clearpage\null\vfill\begin{center}\Pyx@missing{#2}\end{center}\vfill\clearpage}}}{}}}`,
+  // \lstinputlisting (listings). Its missing-file branch then runs
+  // \lst@doendpe outside the group that defined it — never noticed, because
+  // that branch used to end the compile first.
+  String.raw`\@ifundefined{lst@MissingFileError}{}{\def\lst@MissingFileError#1#2{\Pyx@missing{#1.#2}\@ifundefined{lst@doendpe}{\global\let\lst@doendpe\@empty}{}}}`,
+  // \verbatiminput (verbatim): its caller opened a group the hook must close.
+  String.raw`\@ifundefined{verbatim@input}{}{\@ifundefined{Pyx@verbatim@input}{\let\Pyx@verbatim@input\verbatim@input\def\verbatim@input#1#2{\IfFileExists{#2}{\Pyx@verbatim@input{#1}{#2}}{\endgroup\Pyx@missing{#2}}}}{}}`,
+];
+
 export function safetyPreamble({ envs, styles, usesPy, usesGraphics }) {
   const guards = [];
   const seen = new Set();
@@ -475,7 +538,9 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics }) {
     guards.push('\\providecommand\\py{\\@ifstar\\Pyx@eat@i\\Pyx@eat@i}');
     guards.push('\\providecommand\\pyif[3]{}');
   }
-  if (!guards.length) return null;
+  // LAST: the hooks wrap whatever the guards above may have just loaded
+  // (graphicx, listings).
+  guards.push(...MISSING_FILE_GUARDS);
 
   return [
     '% ---- Pyx: garantías de compilación (generado automáticamente) ----',

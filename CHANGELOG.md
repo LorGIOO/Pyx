@@ -3,6 +3,90 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar]
+
+Lo que escribes es lo que ves, siempre.
+
+### Corregido
+
+- **Proyectos fuera de la carpeta de usuario no compilaban.** Un proyecto en
+  otra unidad (`E:\…`), un USB o una carpeta de red: la interfaz solo podía
+  leer, escribir y comprobar archivos dentro de `C:\Users\<usuario>`, y fuera de
+  ahí «¿existe `capitulo.pltx`?» respondía que no, en silencio. El
+  `\input{capitulo.pltx}` no se traducía y el motor recibía el `.pltx`
+  comprimido. Tampoco se podían guardar `.tex` allí. Ahora todo pasa por los
+  comandos propios de Pyx, sin esa restricción, y un `\input` a un `.pltx` que
+  no se encuentra aparece en «Problemas».
+- **Una imagen que falta ya no deja un PDF roto sin explicación.** Con xelatex,
+  una imagen que no se encuentra detiene a xdvipdfmx a mitad del PDF; Pyx
+  intentaba abrir el archivo cortado y el único mensaje era «Invalid PDF
+  structure», que además sustituía todo el registro. Ahora se descarta el PDF
+  incompleto, se conserva el anterior en el visor y «Problemas» dice qué
+  imágenes faltan y en qué línea.
+- Un error del visor al abrir el PDF se **añade** al registro de la
+  compilación en vez de reemplazarlo, y un fallo interno de la compilación
+  aparece en «Problemas» (antes decía «Sin errores ni avisos detectados» bajo
+  una barra de estado que marcaba error).
+- Los capítulos `\input` en `latin-1`/`windows-1252` se leen igual que al
+  abrirlos en el editor, sin convertir los acentos en «�».
+- **Cambios que no llegaban al PDF.** Leer un `.pltx` restauraba su directorio
+  de compilación desde el último guardado, y el compilador lee `.pltx` todo el
+  rato: la raíz del capítulo que editas, cada capítulo, cada candidato al
+  buscar la raíz. Cada una de esas lecturas ponía los `.build.tex` guardados
+  encima de los recién escritos, y el motor componía el texto viejo. Ahora solo
+  se restaura al **abrir** un documento.
+- **Pulsar «Compilar» durante otra compilación no hacía nada** —y el botón se
+  desactivaba, justo cuando la compilación de fondo de la pausa al escribir
+  estaba en marcha—. Ahora ninguna petición se pierde: las que llegan mientras
+  se compila se funden en una sola compilación que empieza en cuanto termina la
+  actual, con el texto tal como esté entonces.
+- **El visor podía quedarse con el PDF anterior** cuando dos compilaciones
+  terminaban seguidas: el que acababa de analizarse el último ganaba, aunque
+  fuera el más viejo.
+- **Ctrl+S guardaba dos veces** con el cursor en el editor: el editor atendía
+  la tecla y la dejaba seguir hasta el atajo global, que volvía a guardar. Cada
+  guardado de un `.pltx` empaqueta su directorio de compilación entero.
+- **Reabrir un documento mostraba el PDF de una edición antes.** Guardar
+  empaqueta el directorio de compilación antes de la compilación que dispara,
+  y al abrir, la restauración pisaba el PDF nuevo con el empaquetado. Ahora se
+  conserva todo archivo de compilación más reciente que el propio documento, y
+  al abrir solo se muestra un PDF que no sea más antiguo que el documento: uno
+  de otra versión del archivo (editada fuera de Pyx, copiada de otro equipo) no
+  se enseña como si fuera suyo.
+- El compilador ya no se fía de su memoria para saltarse escribir un
+  `.build.tex`: comprueba que el archivo en disco sigue siendo el que escribió.
+- El mismo documento podía tener dos directorios de trabajo según existiera o
+  no en ese instante, y un guardado empaquetaba uno mientras la apertura
+  restauraba el otro.
+
+### Cambiado
+
+- **Ctrl+S guarda, compila y muestra el PDF**, igual que «Compilar y ver»:
+  ejecuta las celdas que lo necesiten y LaTeX, y abre el visor si estaba
+  cerrado. Antes lanzaba una compilación de fondo que no abría el visor.
+- **Los botones de compilar dicen lo que están haciendo.** Mientras compila,
+  «Compilar y ver» pasa a «Compilando…», resaltado y con una barra en marcha;
+  si se pulsa otra vez, «En cola…». Antes se veía igual en reposo que
+  trabajando —y en la 1.3.1 se desactivaba—, así que pulsar durante una
+  compilación larga parecía no hacer nada.
+- **Los `.pltx` funcionan como capítulos igual que un `.tex`**, lleven celdas o
+  no. Antes un `.pltx` de LaTeX puro no recibía copia de compilación y TeX
+  intentaba leer el zip. Las imágenes y paquetes junto a un capítulo en una
+  subcarpeta se encuentran también, sin tapar nunca un archivo del mismo nombre
+  junto al documento principal (comprobado con pdflatex y xelatex).
+- **Una pasada de LaTeX en vez de dos.** Se forzaban dos en cualquier documento
+  que tuviera `\ref`, `\cite` o `\tableofcontents`, es decir, casi todos, aunque
+  el `.aux` ya se conserva. Ahora el motor relanza solo cuando hace falta: si
+  cambian las referencias o si cambia el contenido del índice, que LaTeX no
+  avisa.
+- **Al abrir un documento se ve su PDF al instante**, el que venía guardado
+  dentro del `.pltx`, sin esperar a compilar.
+- **Repintar el PDF tras compilar es ~4× más rápido** (de ~135 ms a ~34 ms en
+  un informe de 494 páginas): el visor reutiliza un único proceso de PDF.js en
+  vez de arrancar uno nuevo en cada compilación.
+- El visor pinta primero las páginas que estás viendo y deja la capa de texto
+  seleccionable para después de tener todos los lienzos.
+
 ## [1.3.1] — 2026-09-04
 
 Compilar deja de repetir trabajo que ya estaba hecho.

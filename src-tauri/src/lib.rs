@@ -36,9 +36,11 @@ async fn compile_latex(
     engine: String,
     passes: u32,
     jobname: Option<String>,
+    search_dirs: Option<Vec<String>>,
 ) -> Result<latex::CompileResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        latex::compile(&path, &project_dir, &engine, passes, jobname)
+        let dirs = search_dirs.unwrap_or_default();
+        latex::compile(&path, &project_dir, &engine, passes, jobname, &dirs)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -138,8 +140,11 @@ async fn synctex_view(
 /// is a zip the bundled build artifacts are extracted next to it. Legacy
 /// plain-text `.pltx` reports `is_zip=false` (the JS side decodes it as text).
 #[tauri::command]
-async fn pltx_read(path: String) -> Result<pltx::PltxRead, String> {
-    tauri::async_runtime::spawn_blocking(move || pltx::read(&path))
+async fn pltx_read(path: String, restore: Option<bool>) -> Result<pltx::PltxRead, String> {
+    // Absent = a plain read. Only opening a document restores its working
+    // directory (see pltx::read for what went wrong when every read did).
+    let restore = restore.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || pltx::read(&path, restore))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -173,6 +178,77 @@ async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
     .await
     .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Write a text file, in any folder.
+///
+/// The frontend used plugin-fs for this, whose scope only reaches the user's
+/// home folders. A project on another drive (`E:\…`), a USB stick or a network
+/// share could not be written at all — and worse, `exists` answered "no" for
+/// every file there, so the compiler never found the chapters a document
+/// `\input`s and handed the engine a raw `.pltx` zip. Opening, packing and
+/// compiling already went through Rust commands with no such limit; reading,
+/// writing and probing a source file now do too.
+#[tauri::command]
+async fn write_text(path: String, content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, content.as_bytes())
+            .map_err(|e| format!("No se pudo escribir {path}: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Write raw bytes (a document in a non-UTF-8 encoding, an exported image).
+///
+/// The bytes arrive as the request BODY, not as JSON — the same reason
+/// `read_file_bytes` answers with raw bytes — and the path in a header,
+/// percent-encoded because header values are ASCII.
+#[tauri::command]
+async fn write_bytes(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("write_bytes espera los bytes en el cuerpo de la petición".into());
+    };
+    let path = request
+        .headers()
+        .get("path")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .ok_or("write_bytes necesita la cabecera «path»")?;
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, bytes).map_err(|e| format!("No se pudo escribir {path}: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Undo `encodeURIComponent`: `%XX` escapes are UTF-8 bytes.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16);
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Does a file or folder exist? In any folder (see `write_text`).
+#[tauri::command]
+async fn path_exists(path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || std::path::Path::new(&path).exists())
+        .await
+        .unwrap_or(false)
 }
 
 /// Modification stamp of a file: (mtime in ms, size in bytes). `-1` for a file
@@ -633,6 +709,9 @@ pub fn run() {
             pltx_write,
             list_fonts,
             read_file_bytes,
+            write_text,
+            write_bytes,
+            path_exists,
             read_dir,
             file_stamps,
             kernel_start,
@@ -676,4 +755,22 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Pyx");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent_decode;
+
+    /// The frontend sends `encodeURIComponent(path)`: accents, spaces and a
+    /// Windows drive must come back exactly, and a stray `%` must survive.
+    #[test]
+    fn percent_decode_round_trips_encode_uri_component() {
+        assert_eq!(
+            percent_decode("E%3A%5C1.%20ULL%5C_Pre%C3%A1mbulo.pltx"),
+            r"E:\1. ULL\_Preámbulo.pltx"
+        );
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("a%zzb"), "a%zzb");
+        assert_eq!(percent_decode(""), "");
+    }
 }

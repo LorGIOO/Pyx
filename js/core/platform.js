@@ -6,7 +6,6 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen as tauriListen, emitTo as tauriEmitTo } from '@tauri-apps/api/event';
 import * as dialog from '@tauri-apps/plugin-dialog';
-import * as fs from '@tauri-apps/plugin-fs';
 
 export function isTauri() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -112,14 +111,31 @@ export async function askDialog(message, opts = {}) {
   return dialog.ask(message, { kind: 'warning', ...opts });
 }
 
-/* ---------- File system ---------- */
+/* ---------- File system ----------
+   Every file operation goes through Pyx's own Rust commands, never
+   @tauri-apps/plugin-fs. The plugin only reaches the folders its scope lists
+   (the user's home), and a project anywhere else — another drive, a USB stick,
+   a network share — broke silently: `exists` answered "no" for every file
+   there, so a document's \input'ed chapters were never found and the engine
+   was handed a raw .pltx zip. */
+
+/** Decode a text file the way the editor opens one: strict UTF-8 first (a BOM
+ *  is dropped), then windows-1252, so a legacy .tex with accents saved as
+ *  latin-1 reads correctly instead of turning every accent into "�". */
+export function decodeText(bytes) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (_) {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}
 export async function readTextFile(path) {
   if (!isTauri()) return notDesktop('Leer archivo');
-  return fs.readTextFile(path);
+  return decodeText(await readBinaryFile(path));
 }
 export async function writeTextFile(path, content) {
   if (!isTauri()) return notDesktop('Guardar archivo');
-  return fs.writeTextFile(path, content);
+  return tauriInvoke('write_text', { path, content });
 }
 export async function readBinaryFile(path) {
   if (!isTauri()) return notDesktop('Leer PDF');
@@ -137,7 +153,8 @@ export async function readBinaryFile(path) {
 }
 export async function writeBinaryFile(path, bytes) {
   if (!isTauri()) return notDesktop('Guardar archivo');
-  return fs.writeFile(path, bytes);
+  // Raw body (not a JSON array of numbers); the path rides in a header.
+  return tauriInvoke('write_bytes', bytes, { headers: { path: encodeURIComponent(path) } });
 }
 export async function savePdfDialog(defaultName) {
   if (!isTauri()) return null;
@@ -155,16 +172,17 @@ export async function saveImageDialog(defaultName) {
 }
 export async function pathExists(path) {
   if (!isTauri()) return false;
-  try { return await fs.exists(path); } catch (_) { return false; }
+  try { return await tauriInvoke('path_exists', { path }); } catch (_) { return false; }
 }
 
 /* ---------- Backend commands (Rust) ---------- */
 export const detectEnv = () => invoke('detect_env');
 // `path` is the root .build.tex INSIDE the working directory; `projectDir` is
 // the folder the engine runs from, so relative paths in the source resolve as
-// the author wrote them.
-export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null) =>
-  invoke('compile_latex', { path, projectDir, engine, passes, jobname });
+// the author wrote them. `searchDirs` are the folders of the \input'ed files:
+// an image beside a chapter resolves, behind anything beside the main file.
+export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = []) =>
+  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs });
 // The project's working directory (created on demand). Everything the build
 // produces lives there, outside the user's folder.
 export const buildDirFor = (path) => invoke('build_dir', { path });
@@ -174,8 +192,10 @@ export const synctexEdit = (pdf, page, x, y) => invoke('synctex_edit', { pdf, pa
 // SyncTeX forward search: source file + 1-based line → PDF page/position.
 export const synctexView = (tex, line, pdf) => invoke('synctex_view', { tex, line, pdf });
 // .pltx container (ZIP): read → {is_zip, source, outputs}; write packs
-// source + cell results + build artifacts.
-export const pltxRead = (path) => invoke('pltx_read', { path });
+// source + cell results + build artifacts. `restore` unpacks the saved working
+// directory too — ONLY for opening a document: a compile-time read that
+// restored put the last save's build files on top of the fresh ones.
+export const pltxRead = (path, restore = false) => invoke('pltx_read', { path, restore });
 export const pltxWrite = (path, source, outputs = null) =>
   invoke('pltx_write', { path, source, outputs });
 // Installed font family names for the editor's font picker.

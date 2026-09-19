@@ -53,11 +53,22 @@ fn fingerprint(s: &str) -> u64 {
 /// the cache is still readable by a human debugging a build.
 pub fn build_dir(doc_path: &str) -> PathBuf {
     let p = Path::new(doc_path);
-    // Canonicalize when possible so the same document reached by two different
-    // paths (a mapped drive, a symlink) shares one working directory.
-    let key = std::fs::canonicalize(p)
-        .map(|c| c.to_string_lossy().to_string())
-        .unwrap_or_else(|_| doc_path.to_string())
+    // Canonicalize so the same document reached by two different paths (a
+    // mapped drive, a symlink) shares one working directory.
+    //
+    // The FOLDER, not the file: canonicalizing fails for a file that does not
+    // exist yet, and the fallback is a different string (on Windows the
+    // canonical form is `\\?\C:\…`). The same document then hashed to two
+    // working directories depending on whether it had been saved at that
+    // instant — a save packed one and an open restored into the other. For a
+    // file that exists, folder + name is exactly what canonicalizing the file
+    // gave, so existing working directories keep their identity.
+    let key = p
+        .parent()
+        .and_then(|d| std::fs::canonicalize(d).ok())
+        .zip(p.file_name())
+        .map(|(d, f)| d.join(f).to_string_lossy().to_string())
+        .unwrap_or_else(|| doc_path.to_string())
         .to_lowercase();
     let stem: String = p
         .file_stem()

@@ -9,6 +9,7 @@ import {
   openFileDialog,
   saveFileDialog,
   readBinaryFile,
+  decodeText,
   writeTextFile,
   writeBinaryFile,
   pltxRead,
@@ -52,26 +53,22 @@ const isPltxPath = (p) => /\.pltx$/i.test(p || '');
 
 // Read a text file detecting the encoding: strict UTF-8 first, then
 // windows-1252 (legacy .tex files with accents saved as latin1 stay readable).
+// The compiler reads \input'ed chapters through the same decoder.
 async function readTextSmart(path) {
-  const bytes = await readBinaryFile(path);
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch (_) {
-    return new TextDecoder('windows-1252').decode(bytes);
-  }
+  return decodeText(await readBinaryFile(path));
 }
 
-// Read a document's source. A .pltx is a ZIP container (source + cell results
-// + build artifacts): pltxRead returns its source and extracts the artifacts
-// next to it. A legacy plain-text .pltx (is_zip=false) and every other file
-// decode as text. .build.tex etc. never go through here.
+// Read a document's source FOR OPENING. A .pltx is a ZIP container (source +
+// cell results + working directory): this is the one read that restores the
+// working directory, so its saved PDF can be shown at once. A legacy
+// plain-text .pltx (is_zip=false) and every other file decode as text.
 //
 // Returns `{ text, outputs }`; `outputs` is the serialized cell-result store
 // saved with the document, or null.
 async function readSource(path) {
   if (isPltxPath(path)) {
     try {
-      const r = await pltxRead(path);
+      const r = await pltxRead(path, true);
       if (r && r.is_zip && r.source != null) {
         return { text: r.source, outputs: r.outputs || null };
       }
@@ -255,6 +252,8 @@ export async function openPath(path) {
     // changed since is dropped by the store — a number that no longer matches
     // its formula must never come back looking current.
     if (outputs) hydrateDoc(id, outputs, codeHashMap(parseCellsText(text)));
+    // Its saved PDF, at once — no compile needed to see a document you opened.
+    import('../../compile/compiler.js').then((m) => m.showSavedPdf()).catch(() => {});
   } catch (_) { /* not a readable text file */ }
 }
 
@@ -266,10 +265,13 @@ export function switchTo(index) {
   state.activeIndex = index;
 }
 
-// Recompile so the PDF always reflects the saved file (and is recreated if it
-// was deleted). Lazy import avoids a static cycle with the compiler.
-function autoCompile() {
-  import('../../compile/compiler.js').then((m) => m.compileActive(false)).catch(() => {});
+// Saving is "I'm done with this change — show me". It compiles EVERYTHING the
+// document needs, cells and LaTeX, and brings up the viewer: the same as
+// "Compilar y ver". It used to be a background compile, which left the viewer
+// closed if it was closed, so Ctrl+S looked like it only saved.
+// Lazy import avoids a static cycle with the compiler.
+function compileAfterSave() {
+  import('../../compile/compiler.js').then((m) => m.compileActive(true)).catch(() => {});
 }
 
 export async function saveActive() {
@@ -287,7 +289,7 @@ export async function saveActive() {
     doc.modified = false;
     ok = true;
   }
-  if (ok) autoCompile();
+  if (ok) compileAfterSave();
   return ok;
 }
 

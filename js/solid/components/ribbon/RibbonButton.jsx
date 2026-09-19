@@ -7,8 +7,9 @@ export default function RibbonButton(props) {
   const iconOnly = () => !props.label;
   return (
     <button
-      class={`ribbon-btn${props.size === 'small' ? ' small' : ''}${iconOnly() ? ' icon-only' : ''}${props.active ? ' active' : ''}`}
+      class={`ribbon-btn${props.size === 'small' ? ' small' : ''}${iconOnly() ? ' icon-only' : ''}${props.active ? ' active' : ''}${props.busy ? ' busy' : ''}`}
       title={props.title}
+      aria-busy={props.busy ? 'true' : undefined}
       disabled={props.disabled}
       onClick={props.onClick}
     >

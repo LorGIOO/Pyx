@@ -132,6 +132,35 @@
 }
 .ribbon-btn:disabled { opacity: 0.4; pointer-events: none; }
 
+/* Working: a compile is running. Highlighted like an active button, plus a bar
+   sweeping along the bottom edge, so a press is visibly acknowledged even when
+   the build takes a while. The button stays clickable — another press queues a
+   compile for when this one ends. */
+.ribbon-btn.busy {
+  position: relative;
+  overflow: hidden;
+  background: var(--theme-ribbon-btn-active-bg);
+  border-color: var(--theme-accent);
+}
+.ribbon-btn.busy .ribbon-btn-icon svg { stroke: var(--theme-accent); }
+.ribbon-btn.busy::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 40%;
+  background: var(--theme-accent);
+  animation: ribbon-busy 1.1s ease-in-out infinite;
+}
+@keyframes ribbon-busy {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-btn.busy::after { animation: none; width: 100%; opacity: 0.6; }
+}
+
 .ribbon-btn-icon {
   width: 28px;
   height: 28px;

@@ -41,6 +41,17 @@ import {
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
+/* ONE PDF.js worker for the life of the viewer.
+ *
+ * getDocument() without a worker spins up a new Web Worker for every document,
+ * and destroying the document tears it down again — so every recompile paid
+ * for starting a worker from scratch to parse a PDF nearly identical to the
+ * last one. Measured on a 494-page report at 1.5× density, repainting the view
+ * after a recompile went from ~135 ms to ~34 ms. Destroying a document loaded
+ * through a shared worker releases that document, not the worker. */
+let pdfWorker = null;
+const sharedWorker = () => (pdfWorker ??= new pdfjsLib.PDFWorker({ name: 'pyx-pdf' }));
+
 let container = null;      // the scrolling element
 let sizer = null;          // single child; its height IS the document height
 let pdfDoc = null;
@@ -61,6 +72,9 @@ let padTop = 0, padX = 0, padY = 0;
 const mounted = new Map(); // page index -> wrap element (ONLY the visible ones)
 
 let renderSeq = 0;         // bumped to cancel in-flight page renders
+let renderLoop = null;     // the running render loop (one at a time)
+let renderAgain = false;   // a pass was requested while one was running
+let activeTask = null;     // the PDF.js RenderTask in flight — cancellable
 let scrollRaf = 0;
 let resizeObs = null;
 let lastWidth = 0;
@@ -215,14 +229,27 @@ export function setPreviewContainer(el) {
   if (currentBytes) openDoc();
 }
 
+/* Loads overlap whenever compiles finish close together, and the older one
+ * must never win. Reading the file and parsing it are both awaits: without a
+ * guard, the PDF that finished parsing LAST was the one left on screen — often
+ * the previous version, which looked exactly like "my change did not compile".
+ * Every load takes a number; anything that resolves after a newer load started
+ * is discarded. */
+let loadSeq = 0;
+let openSeq = 0;
+
 export async function loadPdf(path) {
+  const seq = ++loadSeq;
   try {
+    const bytes = await readBinaryFile(path);
+    if (seq !== loadSeq) return; // a newer PDF is already on its way
     currentPath = path;
-    currentBytes = await readBinaryFile(path);
+    currentBytes = bytes;
     setPreviewFile(baseName(path));
     await openDoc();
-    setLoadError('');
+    if (seq === loadSeq) setLoadError('');
   } catch (e) {
+    if (seq !== loadSeq) return; // a failure nobody is waiting for any more
     // Never a silent blank pane: the viewer shows WHY the PDF didn't load.
     setLoadError(`No se pudo cargar el PDF: ${String((e && e.message) || e)}`);
     throw e;
@@ -239,13 +266,21 @@ async function openDoc() {
   const keepTop = sameDoc ? container.scrollTop : 0;
   const keepLeft = sameDoc ? container.scrollLeft : 0;
   const bytes = currentBytes.slice();
-  const prev = pdfDoc;
+  const seq = ++openSeq;
   cancelTextIndex();          // new document → drop the search index
-  pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise;
-  if (prev) { try { await prev.destroy(); } catch (_) {} }
+  // Stop painting the old version the moment the new one starts loading:
+  // parsing it takes a while, and every page rasterized meanwhile is wasted.
+  renderSeq++;
+  if (activeTask) activeTask.cancel();
+  const doc = await pdfjsLib.getDocument({ data: bytes, worker: sharedWorker() }).promise;
+  if (seq !== openSeq) { doc.destroy().catch(() => {}); return; } // superseded
+  // Replace and release whatever is CURRENT now — not what was current when
+  // this parse started, which a faster, newer load may already have replaced.
+  const prev = pdfDoc;
+  pdfDoc = doc;
+  if (prev && prev !== doc) prev.destroy().catch(() => {});
 
   const n = pdfDoc.numPages;
-  const samePageCount = n === pageCount();
   setNumPages(n);
   setHasPdf(true);
 
@@ -253,24 +288,34 @@ async function openDoc() {
   // take minutes on a huge document. Each page corrects its own size when it
   // first renders (see renderPage), so mixed-format documents self-heal.
   const p1 = await pdfDoc.getPage(1);
+  if (seq !== openSeq) return; // a newer load owns the viewer now
   const vp = p1.getViewport({ scale: 1 });
   baseW = new Array(n).fill(vp.width);
   baseH = new Array(n).fill(vp.height);
   setAnnotDoc(currentPath, vp.width, vp.height); // load this PDF's saved annotations
 
   renderSeq++;
+  // A page of the PREVIOUS version still rasterizing would hold the new one
+  // back until it finished — for nothing, its result is thrown away.
+  if (activeTask) activeTask.cancel();
   if (!sizer || sizer.parentElement !== container) {
     sizer = document.createElement('div');
     sizer.className = 'pdf-sizer';
     container.replaceChildren(sizer);
     mounted.clear();
-  } else if (samePageCount) {
-    // NO blank flash on recompiles: keep the pages on screen and let each swap
-    // to its new raster the moment it finishes (renderPage replaces atomically).
-    for (const wrap of mounted.values()) wrap.dataset.rscale = '';
-  } else {
+  } else if (!sameDoc) {
+    // A DIFFERENT document: its predecessor's pages must not linger on screen.
     sizer.replaceChildren();
     mounted.clear();
+  } else {
+    // NO blank flash on recompiles — including the ones that add or remove a
+    // page, which is exactly what typing a paragraph does. The old viewer
+    // emptied itself whenever the page count changed. Every raster on screen
+    // now stays until its page's new one is ready (renderPage swaps them
+    // atomically); only pages past the new end of the document go.
+    for (const [i, wrap] of mounted) {
+      if (i >= n) { wrap.remove(); mounted.delete(i); } else wrap.dataset.rscale = '';
+    }
   }
 
   // Establish a VALID geometry before any fit math runs — applyFit asks which
@@ -321,20 +366,74 @@ function fitToView() {
   syncWindow();
 }
 
-async function renderVisible() {
-  if (!pdfDoc || !pageCount()) return;
+/* Rendering: the pages you can see FIRST, then the scroll buffer; canvases
+ * FIRST, then the text, link and annotation layers.
+ *
+ * Three things made a long or freshly recompiled document slow to appear:
+ *  - the window starts 0.8 screens ABOVE the view and was walked top-down, so
+ *    reading page 50 rasterized page 49 — which you cannot see — first;
+ *  - every page built its selectable text layer and its links before the next
+ *    page even started rasterizing;
+ *  - a pass started on every scroll frame while the previous one was still
+ *    awaiting, so the same page could be rasterized twice at once.
+ *
+ * Now ONE loop runs at a time. A request made while it runs folds into a
+ * single follow-up pass that starts from the view as it is by then, and the
+ * promise every caller gets resolves only when that is done too. */
+function renderVisible() {
+  if (!pdfDoc || !pageCount()) return Promise.resolve();
+  if (renderLoop) { renderAgain = true; return renderLoop; }
+  renderLoop = (async () => {
+    try {
+      do { renderAgain = false; await renderPass(); } while (renderAgain);
+    } finally {
+      renderLoop = null;
+    }
+    setCurrentPage(currentVisiblePage());
+  })();
+  return renderLoop;
+}
+
+async function renderPass() {
   const seq = renderSeq;
   const s = getScale();
   const [lo, hi] = syncWindow();
   if (hi < lo) return;
-
-  for (let i = lo; i <= hi; i++) {
+  const order = renderOrder(lo, hi);
+  for (const i of order) {
     if (seq !== renderSeq) return;
     const wrap = mounted.get(i);
     if (!wrap || wrap.dataset.rscale === String(s)) continue;
     await renderPage(i + 1, wrap, s, seq);
+    // The view moved or a new PDF arrived: start again from where the reader
+    // is NOW rather than finish an order computed for somewhere they left.
+    // One page is always painted first, so a continuous scroll still advances.
+    if (renderAgain) return;
   }
-  setCurrentPage(currentVisiblePage());
+  // Every canvas in the window is up to date: now the layers, same order.
+  for (const i of order) {
+    if (seq !== renderSeq || renderAgain) return;
+    const wrap = mounted.get(i);
+    const layers = wrap && wrap.pyxLayers;
+    if (!layers) continue;
+    wrap.pyxLayers = null;
+    await layers();
+  }
+}
+
+/** The window's pages, nearest the reader first: those on screen top to
+ *  bottom, then outward — below before above, the direction you read in. */
+function renderOrder(lo, hi) {
+  const y = container.scrollTop - padTop;
+  const first = Math.min(hi, Math.max(lo, indexAtY(y)));
+  const last = Math.min(hi, Math.max(first, indexAtY(y + container.clientHeight)));
+  const order = [];
+  for (let i = first; i <= last; i++) order.push(i);
+  for (let d = 1; first - d >= lo || last + d <= hi; d++) {
+    if (last + d <= hi) order.push(last + d);
+    if (first - d >= lo) order.push(first - d);
+  }
+  return order;
 }
 
 async function renderPage(n, wrap, s, seq) {
@@ -374,9 +473,15 @@ async function renderPage(n, wrap, s, seq) {
   canvas.style.height = canvas.height / os + 'px';
 
   const ctx = canvas.getContext('2d', { alpha: false });
+  const task = page.render({ canvasContext: ctx, viewport: vp, transform: os !== 1 ? [os, 0, 0, os, 0, 0] : null });
+  activeTask = task;
   try {
-    await page.render({ canvasContext: ctx, viewport: vp, transform: os !== 1 ? [os, 0, 0, os, 0, 0] : null }).promise;
-  } catch (_) { return; }
+    await task.promise;
+  } catch (_) {
+    return; // cancelled by a newer PDF, or a broken page
+  } finally {
+    if (activeTask === task) activeTask = null;
+  }
   if (seq !== renderSeq || !mounted.has(n - 1)) return;
 
   // Canvas + text layer live in one content div so the zoom relayout can
@@ -385,10 +490,16 @@ async function renderPage(n, wrap, s, seq) {
   content.className = 'pdf-page-content';
   content.appendChild(canvas);
   wrap.replaceChildren(content);
-  try { buildTextLayer(page, vp, content); } catch (_) {}
-  try { await buildLinkLayer(page, vp, content); } catch (_) {}
-  try { buildAnnotLayer(n, content); } catch (_) {}
   wrap.dataset.rscale = String(s);
+  // The page is VISIBLE now. What makes it selectable and clickable is built
+  // once every canvas in the window is painted (see renderPass) — and only if
+  // this raster is still the one on screen by then.
+  wrap.pyxLayers = async () => {
+    if (wrap.firstChild !== content) return;
+    try { await buildTextLayer(page, vp, content); } catch (_) {}
+    try { await buildLinkLayer(page, vp, content); } catch (_) {}
+    try { buildAnnotLayer(n, content); } catch (_) {}
+  };
 }
 
 /* ---------- scroll anchoring (used when geometry shifts under us) ---------- */
@@ -609,7 +720,7 @@ async function synctexJump(pageNo, xPt, yPt, word) {
 }
 
 function buildTextLayer(page, vp, wrap) {
-  page.getTextContent().then((tc) => {
+  return page.getTextContent().then((tc) => {
     const layer = document.createElement('div');
     layer.className = 'pdf-textlayer';
     layer.style.width = vp.width + 'px';

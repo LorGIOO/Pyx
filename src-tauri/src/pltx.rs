@@ -98,14 +98,25 @@ fn tidy_legacy(doc: &Path) {
     let _ = fs::remove_dir_all(dir.join(".pyxbuild"));
 }
 
-/// Open a `.pltx`. If it is a zip, return the source and restore the project's
-/// working directory so the next compile can reuse it (cross-references settle
-/// in one pass instead of two). If it is legacy plain text, report
-/// `is_zip=false`.
-pub fn read(path: &str) -> Result<PltxRead, String> {
+/// Read a `.pltx`: its source and saved cell results. If it is legacy plain
+/// text, report `is_zip=false`.
+///
+/// `restore` also unpacks the saved working directory, so the first compile
+/// after OPENING a document reuses its cross-references and its PDF can be shown
+/// at once. It must be true ONLY when a document is opened for editing.
+///
+/// It used to happen on every read, and the compiler reads `.pltx` files all
+/// the time — the root of a child being edited, every chapter, every candidate
+/// when it searches a folder for the root. Each of those reads overwrote the
+/// working directory with the copy from the LAST SAVE: the `.build.tex` files
+/// the compile had just written were replaced by stale ones, and the engine
+/// typeset the old text. Edits intermittently vanished from the PDF.
+pub fn read(path: &str, restore: bool) -> Result<PltxRead, String> {
     let bytes = fs::read(path).map_err(|e| format!("No se pudo leer {path}: {e}"))?;
-    // Whatever an older version scattered beside this document goes now.
-    tidy_legacy(Path::new(path));
+    if restore {
+        // Whatever an older version scattered beside this document goes now.
+        tidy_legacy(Path::new(path));
+    }
     if !is_zip(&bytes) {
         return Ok(PltxRead { is_zip: false, source: None, outputs: None });
     }
@@ -135,19 +146,33 @@ pub fn read(path: &str) -> Result<PltxRead, String> {
     // extra compile pass, never the document).
     let names: Vec<String> = (0..zip.len())
         .filter_map(|i| zip.name_for_index(i).map(str::to_string))
-        .filter(|n| n.starts_with(BUILD_PREFIX))
+        .filter(|n| restore && n.starts_with(BUILD_PREFIX))
         .collect();
     if !names.is_empty() {
+        // When the document itself was last written. Anything in the working
+        // directory NEWER than that came from a compile after the save — and
+        // saving packs the working directory BEFORE the compile it triggers
+        // runs, so the zip always holds the build from one edit earlier.
+        // Restoring over those files replaced the latest PDF with the previous
+        // one, and reopening a document showed it an edit behind.
+        let saved_at = fs::metadata(path).and_then(|m| m.modified()).ok();
         if let Ok(root) = workspace::ensure_build_dir(path) {
             for name in names {
                 let rel = match safe_rel(&name) {
                     Some(r) => r.to_string(),
                     None => continue,
                 };
+                let dest = root.join(&rel);
+                let newer_here = match (saved_at, dest.metadata().and_then(|m| m.modified()).ok()) {
+                    (Some(saved), Some(here)) => here > saved,
+                    _ => false,
+                };
+                if newer_here {
+                    continue;
+                }
                 if let Ok(mut f) = zip.by_name(&name) {
                     let mut buf = Vec::new();
                     if f.read_to_end(&mut buf).is_ok() {
-                        let dest = root.join(&rel);
                         if let Some(parent) = dest.parent() {
                             let _ = fs::create_dir_all(parent);
                         }
@@ -214,4 +239,68 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
         zip.finish().map_err(|e| format!("zip: {e}"))?;
     }
     fs::rename(&tmp, p).map_err(|e| format!("No se pudo guardar el .pltx: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// THE regression behind "I edit, I compile, and the PDF does not change".
+    ///
+    /// The compiler reads `.pltx` files constantly — the root of the chapter
+    /// being edited, every chapter, every candidate while it looks for the
+    /// root. When every read also restored the saved working directory, each of
+    /// those reads put the LAST SAVE's `.build.tex` back on top of the one the
+    /// compile had just written, and the engine typeset stale text.
+    #[test]
+    fn only_opening_restores_the_working_directory() {
+        let dir = std::env::temp_dir().join(format!("pyx-pltx-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("_Proyecto.pltx");
+        let doc = doc.to_str().unwrap();
+        let work = workspace::ensure_build_dir(doc).unwrap();
+        let build = work.join("_Proyecto.build.tex");
+
+        // Saved with the OLD build in its working directory…
+        fs::write(&build, "VERSION GUARDADA").unwrap();
+        write(doc, r"\documentclass{article}", None).unwrap();
+        // …then the compile the save triggered writes the NEW one. (The pause
+        // keeps the two timestamps apart on a coarse system clock; a real
+        // compile ends seconds after the save.)
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        fs::write(&build, "VERSION RECIEN COMPILADA").unwrap();
+
+        // A compile-time read must leave it alone.
+        let r = read(doc, false).unwrap();
+        assert!(r.is_zip);
+        assert_eq!(r.source.as_deref(), Some(r"\documentclass{article}"));
+        assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION RECIEN COMPILADA");
+
+        // Opening keeps it too: it is NEWER than the saved document, so it is
+        // the latest build, and the zip only has the one from before the save.
+        read(doc, true).unwrap();
+        assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION RECIEN COMPILADA");
+
+        // But a working file OLDER than the document is stale — left by some
+        // other version of it — and opening brings back what was saved.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::write(&build, "VERSION VIEJA DE OTRA COPIA").unwrap();
+        fs::File::options().write(true).open(&build).unwrap().set_modified(old).unwrap();
+        read(doc, true).unwrap();
+        assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION GUARDADA");
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn already_compressed_payloads_are_stored_not_deflated() {
+        for f in ["main.pdf", "cap/fig.PNG", "x.synctex.gz", "a.jpeg"] {
+            assert!(precompressed(f), "{f}");
+        }
+        for f in ["main.aux", "main.log", "cap/uno.build.tex", "main.toc", "sinextension"] {
+            assert!(!precompressed(f), "{f}");
+        }
+    }
 }

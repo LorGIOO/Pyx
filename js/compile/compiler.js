@@ -19,7 +19,7 @@ import {
   findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
   safetyPreamble, injectPreamble, findPyxLeaks, buildToSrcLine, scanVerbatimUse,
 } from './latex-bridge.js';
-import { loadPdf } from '../pdf/preview.js';
+import { loadPdf, getPdfPath } from '../pdf/preview.js';
 import { auxOpen } from '../solid/stores/previewStore.js';
 import { saveActiveAs } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
@@ -99,6 +99,38 @@ export function reloadLastPdf() {
   if (lastPdfPath) loadPdf(lastPdfPath).catch(() => {});
 }
 
+// Paths from Rust carry the OS separator, paths built here forward slashes.
+const samePath = (a, b) => !!a && !!b
+  && a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
+
+/* Show a document's PDF the moment it opens.
+ *
+ * A .pltx carries the PDF of its last save, and opening it already unpacks it
+ * into the working directory — but nothing displayed it: the viewer waited for
+ * a compile, which the first time also means running every cell. On a long
+ * report "opening" took as long as a full build. Word opens instantly because
+ * it shows what was saved; so does this. The next compile replaces it. */
+export async function showSavedPdf() {
+  const doc = activeDoc();
+  if (!doc || doc.kind || !doc.path || state.compiling) return;
+  try {
+    const root = await resolveRootPath(doc, getDocContent(doc.id));
+    const pdf = joinPath(await buildDirFor(root), `${stemOf(root)}.pdf`);
+    if (samePath(pdf, getPdfPath())) return;
+    // Only a PDF at least as new as the document is ITS PDF. An older one was
+    // built from some other version of the file — edited outside Pyx, copied
+    // over from another machine — and showing it would present text and
+    // numbers the document no longer contains.
+    const [src, out] = await fileStamps([root, pdf]);
+    if (!out || out.mtime < 0 || (src && src.mtime > out.mtime)) return;
+    // A compile that started meanwhile is about to show a NEWER PDF.
+    if (state.compiling) return;
+    lastPdfPath = pdf;
+    state.lastPdfPath = pdf;
+    await loadPdf(pdf);
+  } catch (_) { /* no saved PDF: the first compile will make one */ }
+}
+
 /* Handcalcs output, cached by the fingerprint of the cell body that produced
    it. A cell the kernel legitimately skips (see the namespace ledger in
    cell-runner) still has to contribute its typeset block to the build, and its
@@ -112,12 +144,18 @@ function cacheRender(hash, latex) {
   renderCache.set(hash, latex || null);
 }
 
-/* Fingerprint of the last text written to each .build.tex. On a big project
-   most chapters are identical between compiles, so re-writing them all every
-   time was pure disk churn (and, with a live compile firing on every typing
-   pause, constant). Storing the FINGERPRINT rather than the text keeps a
-   thousand-page project from being held in memory a second time. */
-const lastBuildWritten = new Map(); // buildPath -> content fingerprint
+/* What we last wrote to each .build.tex: the text's fingerprint, and the file's
+   {mtime, size} right after writing it. On a big project most chapters are
+   identical between compiles, so re-writing them all every time was pure disk
+   churn. Storing the FINGERPRINT rather than the text keeps a thousand-page
+   project from being held in memory a second time.
+
+   A write is skipped only when the text matches AND the file on disk is still
+   the one we wrote. Trusting the memory alone is how edits went missing: when
+   something else rewrote a build file — restoring a .pltx's saved working
+   directory did, on every read — the record still said "up to date", the
+   write was skipped, and the engine compiled whatever was on disk. */
+const lastBuildWritten = new Map(); // buildPath -> { fp, mtime, size }
 
 // A cell may inject LaTeX into the document ONLY when it declares one of the
 // handcalcs cell magics on its own line. Anything else (stdout, results,
@@ -261,7 +299,7 @@ async function resolveChildPath(rootDir, raw) {
   // Forward slashes work on every OS (Windows included) — converting them to
   // backslashes broke \input resolution on Linux/macOS.
   const rel = raw.trim();
-  const key = `${rootDir} ${rel}`;
+  const key = `${rootDir}\n${rel}`; // no path contains a newline
   const hit = childPathCache.get(key);
   if (hit) return hit;
   const base = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : joinPath(rootDir, rel);
@@ -364,7 +402,12 @@ function analyzeFile(path, content) {
     usesPy: content.indexOf('\\py') >= 0,
     usesGraphics: content.indexOf('\\includegraphics') >= 0,
     // Does this file need a processed .build copy of its own?
-    needsBuild: isPyx && (cells.length > 0 || pyExprs.length > 0 || hasPyIf),
+    //
+    // A .pltx ALWAYS does, cells or not. On disk it is a zip, and the engine
+    // cannot read a zip: a plain-LaTeX chapter saved as .pltx used to get no
+    // copy, so its parent's \input kept pointing at the container and the
+    // chapter never compiled. A .pltx has to work anywhere a .tex does.
+    needsBuild: isPltx(path) || (isPyx && (cells.length > 0 || pyExprs.length > 0 || hasPyIf)),
   };
 }
 
@@ -399,7 +442,13 @@ async function gatherTree(rootPath, rootContent, rootDir) {
     const queued = new Set(); // a file \input twice must be read once
     raws.forEach((raw, i) => {
       const child = resolved[i];
-      if (!child) return;
+      if (!child) {
+        // A .tex the engine may still find on its own search path, but a
+        // .pltx it can never read: it is a zip. Left as is, the engine gets
+        // the container and the error it prints says nothing useful.
+        if (isPltx(raw.trim())) (f.missingPltx ||= []).push(raw.trim());
+        return;
+      }
       f.raws.set(raw, child);
       if (files.has(child) || queued.has(child)) return;
       queued.add(child);
@@ -435,22 +484,45 @@ async function gatherTree(rootPath, rootContent, rootDir) {
   return files;
 }
 
+/* A compile asked for while another one runs.
+ *
+ * One compile at a time is still the rule — two would run cells twice and race
+ * on the same .build.tex. But a request arriving mid-compile used to be DROPPED
+ * (and the button was disabled): press "Compilar" a second after typing, while
+ * the live compile that the pause fired was still running, and nothing
+ * happened — that run had read the text from before your last edit, so the
+ * PDF came back without it.
+ *
+ * Now the request waits. However many arrive, they fold into ONE follow-up
+ * compile that starts the moment the current one ends and reads the text as it
+ * is THEN — so the last thing on screen is always the last thing you wrote.
+ * `true` = someone asked to see the viewer. */
+let queued = null;
+
 export async function compileActive(showViewer = true) {
-  // One compile at a time: a save-triggered auto-compile and a manual compile
-  // would otherwise run cells twice and race on the same .build.tex.
-  if (state.compiling) return;
+  if (state.compiling) {
+    queued = !!(queued || showViewer);
+    state.compileQueued = true;
+    return;
+  }
   let doc = activeDoc();
   if (!doc) return;
 
+  // Claim the slot BEFORE the first await: a second request arriving while the
+  // save dialog below is open must queue, not start a compile of its own.
+  state.compiling = true;
+
   // A file must exist on disk for the engine (and relative paths) to work.
   if (!doc.path) {
-    const ok = await saveActiveAs();
-    if (!ok) return;
+    const ok = await saveActiveAs().catch(() => false);
     doc = activeDoc();
-    if (!doc || !doc.path) return;
+    if (!ok || !doc || !doc.path) {
+      state.compiling = false;
+      queued = null; // nothing to compile until the document has a place on disk
+      state.compileQueued = false;
+      return;
+    }
   }
-
-  state.compiling = true;
   state.lastCompileOk = null;
   const t0 = performance.now();
   // Where the time actually goes, reported at the end of the log. Compiling is
@@ -686,6 +758,10 @@ export async function compileActive(showViewer = true) {
         problems += `\n[${baseName(path)} · línea ${f.unterminated}] celda sin %#end:`
           + ' no se ejecuta y el resto del archivo no llega al PDF.';
       }
+      for (const raw of f.missingPltx || []) {
+        problems += `\n[${baseName(path)}] \\input{${raw}}: no se encontró ese .pltx`
+          + ` en ${cwd} (las rutas se leen desde la carpeta del documento principal).`;
+      }
     }
     const shim = safetyPreamble(use);
 
@@ -717,6 +793,14 @@ export async function compileActive(showViewer = true) {
      * skipped outright. Typing prose, editing a comment or running a cell that
      * prints to the editor now costs nothing at all. */
     let wroteAny = false;
+    const buildFileOf = (p) => joinPath(outDir, buildRel.get(p));
+    const building = [...files.keys()].filter((p) => p === rootPath || needs.get(p));
+    const onDisk = new Map(); // ONE round-trip for the whole project
+    try {
+      const st = await fileStamps(building.map(buildFileOf));
+      building.forEach((p, i) => onDisk.set(buildFileOf(p), st[i]));
+    } catch (_) { /* no stamps: everything is rewritten, which is always correct */ }
+    const written = [];
     for (const [path, f] of files) {
       if (path !== rootPath && !needs.get(path)) continue;
       let processed = f.content;
@@ -771,14 +855,27 @@ export async function compileActive(showViewer = true) {
       // most chapters are untouched between compiles, and skipping their writes
       // keeps the engine's own dependency checks (and the disk) quiet.
       const stampNow = processed.length + ':' + hashString(processed);
-      if (lastBuildWritten.get(buildFile) === stampNow) continue;
+      const rec = lastBuildWritten.get(buildFile);
+      const disk = onDisk.get(buildFile);
+      if (rec && rec.fp === stampNow && disk && disk.mtime >= 0
+        && disk.mtime === rec.mtime && disk.size === rec.size) continue;
       // The working directory mirrors the project's folders; create the branch
       // the first time a chapter in a subfolder is written.
       const parent = dirOf(buildFile);
       if (parent && parent !== outDir) await createDir(parent).catch(() => {});
       await writeTextFile(buildFile, processed);
-      lastBuildWritten.set(buildFile, stampNow);
+      lastBuildWritten.set(buildFile, { fp: stampNow });
+      written.push(buildFile);
       wroteAny = true;
+    }
+    // Record what we wrote AS IT NOW IS ON DISK, again in one round-trip. A
+    // record without a stamp never matches, so a failure here only costs a
+    // rewrite next time.
+    if (written.length) {
+      try {
+        const st = await fileStamps(written);
+        written.forEach((b, i) => Object.assign(lastBuildWritten.get(b), st[i]));
+      } catch (_) { /* unstamped → rewritten next compile */ }
     }
     const buildPath = joinPath(outDir, buildRel.get(rootPath));
 
@@ -800,17 +897,17 @@ export async function compileActive(showViewer = true) {
       ])),
     });
 
-    // Two passes only when something needs references to settle. Test each file
-    // separately and stop at the first hit — the old code concatenated EVERY
-    // file of the project into one giant string just to run this one regex,
-    // which on a thousand-page project meant allocating the whole document a
-    // second time on every compile.
-    const RERUN_RE = /\\(tableofcontents|ref|cite|listoffigures|listoftables)\b/;
-    let needsTwo = false;
-    for (const f of files.values()) {
-      if (RERUN_RE.test(f.content)) { needsTwo = true; break; }
-    }
-    const passes = needsTwo ? 2 : 1;
+    // ONE pass. The engine asks for more when it needs them, and the backend
+    // listens: labels that moved ("Rerun to get cross-references right"), a
+    // listing that did not exist yet, or a .toc/.lof/.lot whose content this
+    // pass changed — which LaTeX never warns about (see latex.rs).
+    //
+    // This used to force TWO passes whenever the text merely contained \ref,
+    // \cite or \tableofcontents: nearly every real document, on every compile,
+    // although the .aux is kept between compiles and the references are
+    // already settled. With xelatex, which has no draft mode, that was a
+    // second full typesetting of the whole document almost every time.
+    const passes = 1;
     // % !TeX program = pdflatex — the document names its own engine, like in
     // TeXstudio. An explicit per-document choice (Configuración) still wins.
     const magicEngine = (
@@ -820,19 +917,38 @@ export async function compileActive(showViewer = true) {
     const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()
       || state.env.latex || 'xelatex';
 
-    // Nothing the engine reads changed, and the PDF from last time is still
-    // there: running it again would burn seconds to produce the same bytes.
-    // A MANUAL compile always runs — it is the user asking for ground truth.
-    if (!showViewer && !wroteAny && lastPdfPath && await pathExists(lastPdfPath)) {
+    // Nothing the engine reads changed: running it again would burn seconds to
+    // produce the same bytes. Skipped ONLY when all of this holds —
+    //  - a background compile (a MANUAL one always runs: it is the user asking
+    //    for ground truth, and it also picks up an image or .sty edited outside);
+    //  - no build file had to be (re)written, checked against the disk;
+    //  - no cell ran: a cell can rewrite a figure the text merely points at,
+    //    and the build text of `\includegraphics{xref/f.png}` does not change
+    //    when f.png does;
+    //  - the viewer is showing THIS document's PDF — after switching to another
+    //    project, "nothing changed" is not a reason to keep someone else's.
+    const expectedPdf = joinPath(outDir, `${stem}.pdf`);
+    if (!showViewer && !wroteAny && phase.ran === 0
+      && samePath(lastPdfPath, expectedPdf) && await pathExists(lastPdfPath)) {
       state.lastLog = (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '')
         + 'Sin cambios que afecten al PDF: no se ha recompilado.';
       state.lastCompileOk = !problems;
       return null;
     }
 
+    // The folder of every file in the tree, so an image or .sty beside a
+    // chapter in a subfolder resolves (behind the project folder; latex.rs).
+    const searchDirs = [...new Set([...files.keys()].map(dirOf))].filter((d) => !samePath(d, cwd));
+
     const tTex = performance.now();
-    const res = await compileLatex(buildPath, cwd, engine, passes, stem);
+    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs);
     phase.tex = performance.now() - tTex;
+    // What the engine actually did: the backend adds passes when TeX needs them.
+    const ranPasses = ((res.log || '').match(/===== Pasada /g) || []).length || passes;
+    // The engine died writing the PDF (latex.rs explains why and names any
+    // missing image): list it as a problem, not only deep in the raw log.
+    const cut = /===== Pyx: el PDF no se completó =====\n([\s\S]*)$/.exec(res.log || '');
+    if (cut) problems += `\n[PDF] ${cut[1].trim().replace(/\s*\n\s*/g, ' ')}`;
 
     state.lastLog =
       (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') + (res.log || '')
@@ -840,7 +956,7 @@ export async function compileActive(showViewer = true) {
       + `Celdas Python : ${Math.round(phase.cells)} ms `
       + `(${phase.ran} ejecutada${phase.ran === 1 ? '' : 's'} de ${phase.total})\n`
       + `Motor LaTeX   : ${Math.round(phase.tex)} ms `
-      + `(${engine}, ${passes} pasada${passes === 1 ? '' : 's'})\n`
+      + `(${engine}, ${ranPasses} pasada${ranPasses === 1 ? '' : 's'})\n`
       + `Total         : ${Math.round(performance.now() - t0)} ms`;
     state.lastCompileOk = res.ok;
 
@@ -855,13 +971,25 @@ export async function compileActive(showViewer = true) {
         // auxiliary window closes).
         emitToWindow('pdf-viewer', 'viewer:load', encodeURIComponent(res.pdf_path));
       } else {
-        await loadPdf(res.pdf_path);
+        try {
+          await loadPdf(res.pdf_path);
+        } catch (e) {
+          // The viewer's failure is ADDED to the engine's log. It used to
+          // replace it (via the catch below), and the one line left —
+          // "Invalid PDF structure" — hid every error that explained it.
+          state.lastLog = `===== Avisos de Pyx =====${problems}\n[Visor] No se pudo abrir el PDF:`
+            + ` ${String((e && e.message) || e)}\n\n${state.lastLog.replace(/^===== Avisos de Pyx =====[\s\S]*?\n\n/, '')}`;
+          state.lastCompileOk = false;
+        }
       }
     }
     // Never force the log open: compilation is silent unless the user opens it.
     return res;
   } catch (e) {
-    state.lastLog = String((e && e.message) || e);
+    // In the "Avisos de Pyx" shape, so the Problems view LISTS the failure. A
+    // bare message there read "✓ Sin errores ni avisos detectados" under a
+    // status bar that said the compile had failed.
+    state.lastLog = `===== Avisos de Pyx =====\n[Pyx] ${String((e && e.message) || e)}`;
     state.lastCompileOk = false;
   } finally {
     // Feed the live-compile backoff: the next background build waits in
@@ -870,5 +998,12 @@ export async function compileActive(showViewer = true) {
     state.compileMs = Math.round(lastCompileMs);
     state.liveSuspended = liveCompileSuspended();
     state.compiling = false;
+    // Serve whatever was asked for while this one ran (see `queued`).
+    if (queued !== null) {
+      const wantViewer = queued;
+      queued = null;
+      state.compileQueued = false;
+      compileActive(wantViewer);
+    }
   }
 }

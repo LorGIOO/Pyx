@@ -57,7 +57,11 @@ const onWrapEnv = (it) => {
 
 export default function HomeTab() {
   const hasDoc = () => state.documents.length > 0;
-  const busy = () => !hasDoc() || state.compiling;
+  // NOT disabled while compiling. A press during a compile — very often the
+  // live one that stopping to type just fired — is queued and served the
+  // moment that run ends, with the text as it is then (compiler.js `queued`).
+  // A greyed-out button there looked exactly like "compile does nothing".
+  const busy = () => !hasDoc();
   const showPreview = () => { state.previewVisible = true; rerender(); };
 
   return (
@@ -72,12 +76,24 @@ export default function HomeTab() {
       </RibbonGroup>
 
       <RibbonGroup label={t('Compilación', 'Compile')}>
-        <RibbonButton icon={icons.compile} label={t('Compilar y ver', 'Compile & view')} disabled={busy()}
-          title={`${t('Compilar y ver el PDF', 'Compile and view the PDF')}${comboOf('compile.run') ? ` (${comboOf('compile.run')})` : ''}`}
+        <RibbonButton icon={icons.compile} disabled={busy()} busy={state.compiling}
+          label={state.compiling
+            ? (state.compileQueued ? t('En cola…', 'Queued…') : t('Compilando…', 'Compiling…'))
+            : t('Compilar y ver', 'Compile & view')}
+          title={state.compiling
+            ? (state.compileQueued
+              ? t('Se volverá a compilar, con lo último que hayas escrito, en cuanto termine la compilación actual.',
+                'Will compile again, with your latest text, as soon as the current compile ends.')
+              : t('Compilando Python y LaTeX… Pulsa otra vez para recompilar al terminar con lo último que escribas.',
+                'Compiling Python and LaTeX… Press again to recompile with your latest text when it ends.'))
+            : `${t('Compilar Python y LaTeX y ver el PDF', 'Compile Python and LaTeX and view the PDF')}${comboOf('compile.run') ? ` (${comboOf('compile.run')})` : ''} · ${t('también al guardar', 'also on save')} (${comboOf('file.save') || 'Ctrl+S'})`}
           onClick={() => compileActive(true)} />
         <div class="ribbon-btn-stack">
-          <RibbonButton size="small" icon={icons.pdf} label={t('Compilar', 'Compile')} disabled={busy()}
-            title={t('Compilar en segundo plano (sin abrir el visor)', 'Compile in the background (without opening the viewer)')} onClick={() => compileActive(false)} />
+          <RibbonButton size="small" icon={icons.pdf} label={t('Compilar', 'Compile')} disabled={busy()} busy={state.compiling}
+            title={state.compiling
+              ? t('Compilando… Pulsa otra vez para recompilar al terminar.', 'Compiling… Press again to recompile when it ends.')
+              : t('Compilar Python y LaTeX sin abrir el visor', 'Compile Python and LaTeX without opening the viewer')}
+            onClick={() => compileActive(false)} />
           <RibbonButton size="small" icon={icons.preview} label={t('Visualizar', 'View')} disabled={!hasDoc()} onClick={showPreview} />
           <RibbonButton size="small" icon={icons.live} label={t('Al escribir', 'On type')} active={state.liveCompile}
             title={t('Compilación automática al dejar de escribir (no bloquea el editor)', "Auto-compile when you stop typing (doesn't block the editor)")}

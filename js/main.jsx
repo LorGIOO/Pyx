@@ -22,6 +22,13 @@ import {
   registerKeyHandlers, comboFromEvent, comboOf, findAction, runAction,
 } from './solid/stores/keysStore.js';
 
+// QA builds only (`VITE_PYX_QA=1 vite build`): the end-to-end suite reads the
+// app's state instead of scraping it from the screen. A normal build replaces
+// the condition with `undefined` and drops this line entirely.
+if (import.meta.env.VITE_PYX_QA) {
+  window.__pyxQA = { state, compileActive, saveActive, openPath, runAction };
+}
+
 // No web-style right-click menu anywhere (removes "Inspeccionar elemento", etc.).
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 

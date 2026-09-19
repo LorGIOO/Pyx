@@ -31,6 +31,11 @@ export const dynamicKeys = Prec.highest(
       }
       if (id === 'file.save') {
         e.preventDefault();
+        // Handled HERE: the window listener in main.jsx maps the same combo to
+        // the same action, and without this the key reached it too. Every
+        // Ctrl+S with the editor focused saved twice — packing the .pltx and
+        // its whole working directory twice — and compiled twice.
+        e.stopPropagation();
         runAction('file.save');
         return true;
       }

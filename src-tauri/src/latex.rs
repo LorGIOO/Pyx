@@ -208,12 +208,20 @@ pub fn synctex_edit(pdf: &str, page: u32, x: f64, y: f64) -> Result<SyncTexHit, 
     }
 }
 
-/// `TEXINPUTS` value that adds the working directory to the search path.
+/// The engine's `TEXINPUTS`, in precedence order:
 ///
-/// The separator is `;` on Windows and `:` elsewhere, and the trailing one is
-/// what tells kpathsea "…and then the usual places" — without it the engine
-/// would stop finding the LaTeX distribution itself.
-fn texinputs(out_dir: &Path) -> String {
+///   1. `.` — the project folder the engine runs from. FIRST, so anything a
+///      document already resolves (an image or `.sty` beside the main file)
+///      keeps resolving to exactly that file.
+///   2. the working directory, where the `.build.tex` copies live.
+///   3. the folder of every file the document pulls in, so an image or package
+///      sitting next to a chapter in a subfolder resolves too. Checked against
+///      pdflatex and xelatex: with a chapter's folder AHEAD of `.`, an image in
+///      that folder silently replaced a same-named one beside the main file.
+///   4. the distribution's defaults. The separator is `;` on Windows and `:`
+///      elsewhere, and the TRAILING one is what tells kpathsea "…and then the
+///      usual places" — without it the engine stops finding LaTeX itself.
+fn texinputs(out_dir: &Path, search_dirs: &[String]) -> String {
     let sep = if cfg!(windows) { ';' } else { ':' };
     let mut v = String::new();
     if let Ok(prev) = std::env::var("TEXINPUTS") {
@@ -224,9 +232,60 @@ fn texinputs(out_dir: &Path) -> String {
             }
         }
     }
+    v.push('.');
+    v.push(sep);
     v.push_str(&out_dir.to_string_lossy());
     v.push(sep);
+    for d in search_dirs.iter().filter(|d| !d.is_empty()) {
+        v.push_str(d);
+        v.push(sep);
+    }
     v
+}
+
+/// Content fingerprint of the listings a pass reads at `\tableofcontents`,
+/// `\listoffigures` and `\listoftables` and rewrites at `\end{document}`.
+fn listings_stamp(out_dir: &Path, job: &str) -> Vec<Option<Vec<u8>>> {
+    ["toc", "lof", "lot"]
+        .iter()
+        .map(|ext| std::fs::read(out_dir.join(format!("{job}.{ext}"))).ok())
+        .collect()
+}
+
+/// Does the file end like a PDF does? A writer that dies mid-document leaves a
+/// file with a FRESH mtime and no trailer: with xelatex that happens every time
+/// an `\includegraphics` target is missing — TeX recovers from the error, but
+/// xdvipdfmx, which receives the pages through a pipe, stops with "Image
+/// inclusion failed" and xelatex then fails writing to the dead pipe. Treating
+/// that file as the result made the viewer fail with "Invalid PDF structure",
+/// which is all the user ever got to see.
+fn pdf_complete(p: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(p) else { return false };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let tail = len.min(2048) as i64;
+    if tail == 0 || f.seek(SeekFrom::End(-tail)).is_err() {
+        return false;
+    }
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).is_ok() && buf.windows(5).any(|w| w == b"%%EOF")
+}
+
+/// Images the engine reported as missing (`File `x.png' not found`), in order,
+/// without repeats.
+fn missing_images(log: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for l in log.lines() {
+        if let Some(rest) = l.strip_prefix("LaTeX Warning: File `") {
+            if let Some(end) = rest.find("' not found") {
+                let name = rest[..end].to_string();
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Recreate the document's subdirectory layout inside the build folder.
@@ -275,6 +334,7 @@ pub fn compile(
     engine: &str,
     passes: u32,
     jobname: Option<String>,
+    search_dirs: &[String],
 ) -> Result<CompileResult, String> {
     let src = Path::new(path);
     if !src.exists() {
@@ -327,8 +387,12 @@ pub fn compile(
     // Snapshot the PDF's mtime BEFORE compiling: success is "this run wrote a
     // PDF", never "a PDF from some earlier compile is still lying around".
     let pdf = out_dir.join(format!("{out_name}.pdf"));
-    let mtime_of = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
-    let pdf_mtime_before = mtime_of(&pdf);
+    // (modified, length): a PDF counts as written by this run if EITHER moved.
+    // The mtime alone missed rewrites on filesystems with coarse timestamps
+    // (FAT, some network shares), where a fast recompile can land in the same
+    // tick — and then the viewer was never told there was a new PDF.
+    let stamp_of = |p: &Path| p.metadata().ok().map(|m| (m.modified().ok(), m.len()));
+    let pdf_before = stamp_of(&pdf);
 
     let passes = passes.clamp(1, 3);
     const MAX_PASSES: u32 = 3;
@@ -348,7 +412,7 @@ pub fn compile(
             // The generated `.build.tex` copies live in the working directory,
             // so the engine has to look there for the children a parent pulls
             // in. The trailing separator keeps the default search paths.
-            .env("TEXINPUTS", texinputs(&out_dir));
+            .env("TEXINPUTS", texinputs(&out_dir, search_dirs));
         // A pass we ALREADY know is not the last one exists only to settle
         // references and the table of contents — its PDF is thrown away. In
         // draft mode the engine skips font loading, image processing and the
@@ -364,6 +428,7 @@ pub fn compile(
             cmd.arg(format!("-jobname={j}"));
         }
         crate::quiet(&mut cmd);
+        let listings_before = listings_stamp(&out_dir, &out_name);
         let output = cmd
             .arg(&file)
             .output()
@@ -389,10 +454,16 @@ pub fn compile(
             && [".toc.", ".lof.", ".lot."]
                 .iter()
                 .any(|ext| pass_out.contains(ext));
+        // …or a listing whose CONTENT this pass changed. LaTeX warns when labels
+        // move but says nothing when the table of contents does: a new section
+        // title is written to the .toc at \end{document}, after the stale one
+        // was already typeset. Comparing the files is what lets the compiler
+        // ask for ONE pass and still never show an out-of-date index.
         let needs_rerun = pass_out.contains("Rerun to get")
             || pass_out.contains("rerun LaTeX")
             || pass_out.contains("Rerun LaTeX")
-            || missing_listing;
+            || missing_listing
+            || listings_stamp(&out_dir, &out_name) != listings_before;
         if i + 1 >= passes && !needs_rerun {
             break;
         }
@@ -404,11 +475,31 @@ pub fn compile(
     // the user's folder keeps only what the user put in it.
 
     // Fresh = created now, or overwritten (mtime advanced) by this run.
-    let pdf_fresh = match (pdf_mtime_before, mtime_of(&pdf)) {
+    let written = match (pdf_before, stamp_of(&pdf)) {
         (None, Some(_)) => true,
-        (Some(before), Some(after)) => after > before,
+        (Some(before), Some(after)) => after != before,
         _ => false,
     };
+    // …and COMPLETE. A truncated file is not this run's PDF: it is removed, so
+    // it can neither be shown nor packed into the .pltx on the next save, and
+    // the viewer keeps the last good one. The log says why, in words.
+    let pdf_fresh = written && pdf_complete(&pdf);
+    if written && !pdf_fresh {
+        let _ = std::fs::remove_file(&pdf);
+        log.push_str("===== Pyx: el PDF no se completó =====\n");
+        log.push_str(&format!(
+            "El motor ({engine}) se detuvo mientras escribía el PDF; se mantiene el anterior.\n"
+        ));
+        let missing = missing_images(&log);
+        if !missing.is_empty() {
+            log.push_str(&format!(
+                "Imágenes que no se encuentran: {}.\n\
+                 Con xelatex una imagen que falta impide generar el PDF: \
+                 comprueba la ruta y la carpeta de \\graphicspath.\n",
+                missing.join(", ")
+            ));
+        }
+    }
 
     Ok(CompileResult {
         ok: clean && pdf_fresh,
@@ -470,6 +561,7 @@ Texto del capitulo dos.
             engine,
             2,
             Some("main".to_string()),
+            &[],
         )
         .expect("la compilacion deberia ejecutarse");
 
@@ -498,6 +590,116 @@ Texto del capitulo dos.
             "quedaron archivos sueltos en el proyecto: {left:?}"
         );
         assert_eq!(fs::read_dir(proj.join("cap")).unwrap().flatten().count(), 0);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A PDF cut off mid-write (xdvipdfmx died on a missing image) is not a
+    /// result; a complete one is, trailing newline or not.
+    #[test]
+    fn a_truncated_pdf_is_not_a_result() {
+        let dir = std::env::temp_dir().join(format!("pyx-pdfcut-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (ok, cut, empty) = (dir.join("ok.pdf"), dir.join("cut.pdf"), dir.join("empty.pdf"));
+        fs::write(&ok, b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n").unwrap();
+        fs::write(&cut, b"%PDF-1.7\n1 0 obj\n<< /Length 900 >>\nstream\nG\xbf\xe6}").unwrap();
+        fs::write(&empty, b"").unwrap();
+        assert!(pdf_complete(&ok));
+        assert!(!pdf_complete(&cut));
+        assert!(!pdf_complete(&empty));
+        assert!(!pdf_complete(&dir.join("missing.pdf")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_images_are_named_once_in_order() {
+        let log = "LaTeX Warning: File `alt1.png' not found on input line 75.\n\
+                   ! Unable to load picture or PDF file 'alt1.png'.\n\
+                   LaTeX Warning: File `sub dir/alt2.png' not found on input line 85.\n\
+                   LaTeX Warning: File `alt1.png' not found on input line 90.\n";
+        assert_eq!(missing_images(log), vec!["alt1.png", "sub dir/alt2.png"]);
+        assert!(missing_images("nada que ver\n").is_empty());
+    }
+
+    fn scratch(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("pyx-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (proj, work) = (base.join("proj"), base.join("work"));
+        fs::create_dir_all(&proj).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        (base, proj, work)
+    }
+
+    fn some_engine() -> Option<&'static str> {
+        ["pdflatex", "xelatex"].into_iter().find(|e| engine_works(e))
+    }
+
+    fn passes_run(log: &str) -> usize {
+        log.matches("===== Pasada ").count()
+    }
+
+    /// The compiler asks for ONE pass. That must never leave a stale table of
+    /// contents — LaTeX prints no warning when the .toc changes — and it must
+    /// stay ONE pass when nothing moved, which is the entire point.
+    #[test]
+    fn one_pass_still_settles_a_changed_table_of_contents() {
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("toc");
+        let main = work.join("main.build.tex");
+        let doc = |sections: &str| {
+            format!("\\documentclass{{article}}\n\\begin{{document}}\n\\tableofcontents\n{sections}\n\\end{{document}}\n")
+        };
+        let run = || {
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[])
+                .expect("la compilacion deberia ejecutarse")
+        };
+
+        fs::write(&main, doc(r"\section{Alfa}")).unwrap();
+        run();
+        let steady = run();
+        assert_eq!(passes_run(&steady.log), 1, "sin cambios tiene que bastar una pasada");
+        assert!(steady.pdf_path.is_some(), "una recompilacion identica tambien es un PDF nuevo");
+
+        fs::write(&main, doc("\\section{Alfa}\n\\section{Beta}")).unwrap();
+        let changed = run();
+        assert!(passes_run(&changed.log) >= 2, "un indice que cambia exige otra pasada");
+        let toc = fs::read_to_string(work.join("main.toc")).unwrap();
+        assert!(toc.contains("Beta"), "el indice tiene que recoger la seccion nueva");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A file beside a chapter in a subfolder resolves, and a same-named file
+    /// beside the main document still wins. Images go through the same lookup
+    /// (verified with real PNGs under pdflatex and xelatex); `\input` pins the
+    /// ORDER without binary fixtures.
+    #[test]
+    fn chapter_folders_resolve_without_shadowing_the_project() {
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("inputs");
+        let cap = proj.join("cap");
+        fs::create_dir_all(&cap).unwrap();
+        fs::write(proj.join("datos.tex"), r"\def\origen{RAIZ}").unwrap();
+        fs::write(cap.join("datos.tex"), r"\def\origen{CAPITULO}").unwrap();
+        fs::write(cap.join("solo.tex"), r"\def\solo{SOLOCAPITULO}").unwrap();
+        let main = work.join("main.build.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\n\\input{datos}\\input{solo}\n\\typeout{ORIGEN=\\origen}\\typeout{SOLO=\\solo}\nx\n\\end{document}\n",
+        )
+        .unwrap();
+
+        let res = compile(
+            main.to_str().unwrap(),
+            proj.to_str().unwrap(),
+            engine,
+            1,
+            Some("main".into()),
+            &[cap.to_string_lossy().to_string()],
+        )
+        .expect("la compilacion deberia ejecutarse");
+        assert!(res.log.contains("ORIGEN=RAIZ"), "un archivo del capitulo tapo al del proyecto");
+        assert!(res.log.contains("SOLO=SOLOCAPITULO"), "no se encontro el archivo junto al capitulo");
 
         let _ = fs::remove_dir_all(&base);
     }

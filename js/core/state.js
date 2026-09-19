@@ -31,6 +31,7 @@ export const state = createMutable({
   env: { python: null, latex: null, engines: [] },
   kernelStatus: 'idle', // idle | starting | ready | busy | error
   compiling: false,
+  compileQueued: false, // a compile was asked for mid-compile and runs right after
   liveCompile: true, // TeXstudio-style: background compile shortly after typing stops
   lastLog: '',
   lastCompileOk: null, // null | true | false

@@ -54,8 +54,19 @@
   height: 94px;
   display: flex;
   align-items: stretch;
-  /* The Home ribbon must fit with NO horizontal scroll — groups are compact. */
-  overflow: hidden;
+  /* The Home ribbon fits with no scrolling from about 1100px up. Narrower
+     than that — down to the 860px the window allows — the groups used to be
+     squeezed below their own content: buttons then drew on top of the next
+     group ("Cortar" over "Compilar y ver") and the last dropdowns fell off
+     the edge. Now they keep their size and the ribbon scrolls sideways. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.ribbon-content::-webkit-scrollbar { height: 6px; }
+.ribbon-content::-webkit-scrollbar-thumb {
+  background: var(--theme-ribbon-group-border);
+  border-radius: 3px;
 }
 
 .ribbon-group {
@@ -64,6 +75,7 @@
   padding: 0 5px;
   border-right: 1px solid var(--theme-ribbon-group-border);
   min-width: 0;
+  flex-shrink: 0; /* never smaller than its buttons: that is what overlapped */
   height: 100%;
 }
 .ribbon-group:last-child { border-right: none; }

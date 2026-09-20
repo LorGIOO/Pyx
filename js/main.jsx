@@ -15,6 +15,7 @@ import { loadPdf } from './pdf/preview.js';
 import { openFind, runAll, gotoLineCol, forwardSearch, buildLineToSource } from './editor/commands.js';
 import { openPath } from './solid/stores/docStore.js';
 import { openNewDoc } from './solid/components/NewDocDialog.jsx';
+import { closeDialogs } from './solid/stores/dialogStore.js';
 import { lastArea, setPdfSearchOpen, setAuxOpen } from './solid/stores/previewStore.js';
 import { ensureKernel, restartKernel } from './editor/cell-runner.js';
 import { initSettings, general, setGeneral } from './solid/stores/settingsStore.js';
@@ -133,6 +134,9 @@ if (viewerBoot) {
   });
 
   window.addEventListener('keydown', (e) => {
+    // Escape closes what is on top: a dialog first (Configuración, Nuevo
+    // documento, the assistants), then zen mode.
+    if (e.key === 'Escape' && closeDialogs()) return;
     if (e.key === 'Escape' && state.zenMode) { state.zenMode = false; return; }
     const combo = comboFromEvent(e);
     if (!combo) return;

@@ -1,7 +1,15 @@
 import { createSignal } from 'solid-js';
 import { createMutable } from 'solid-js/store';
+import { registerDialog, closeDialogs } from './dialogStore.js';
 
-export const [showConfig, setShowConfig] = createSignal(false);
+const [showConfig, setShowConfigSignal] = createSignal(false);
+export { showConfig };
+// Opening it closes any other dialog, and Escape closes it (dialogStore).
+export const setShowConfig = (v) => {
+  if (v) closeDialogs();
+  setShowConfigSignal(v);
+};
+registerDialog(showConfig, () => setShowConfigSignal(false));
 
 // Every customizable syntax token: a CSS class (where the color is applied) and
 // the theme variable that holds its default color. Grouped like TeXstudio's

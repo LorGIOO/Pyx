@@ -3,6 +3,7 @@ import { activeDoc } from '../../core/state.js';
 import { insertSnippet } from '../../editor/commands.js';
 import { openImageDialog } from '../../core/platform.js';
 import { dirOf } from '../../core/paths.js';
+import { registerDialog, closeDialogs } from '../stores/dialogStore.js';
 
 // Table & figure assistants: friendly auxiliary dialogs (movable, themed,
 // Windows-style — reusing the Configuración modal chrome) that generate clean
@@ -10,8 +11,11 @@ import { dirOf } from '../../core/paths.js';
 
 const [tableOpen, setTableOpen] = createSignal(false);
 const [figureOpen, setFigureOpen] = createSignal(false);
-export const openTableWizard = () => setTableOpen(true);
-export const openFigureWizard = () => setFigureOpen(true);
+// Opening one closes any other dialog, and Escape closes it (dialogStore).
+export const openTableWizard = () => { closeDialogs(); setTableOpen(true); };
+export const openFigureWizard = () => { closeDialogs(); setFigureOpen(true); };
+registerDialog(tableOpen, () => setTableOpen(false));
+registerDialog(figureOpen, () => setFigureOpen(false));
 
 function useDrag() {
   const [pos, setPos] = createSignal(null);

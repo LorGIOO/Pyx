@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   findPyExprs, resolvePyText, findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey,
   neutralizeCells, buildToSrcLine, srcToBuildLine, findPyxLeaks, safetyPreamble,
-  injectPreamble, protectedRanges, createVerbatimTracker, stripTexComment,
+  injectPreamble, protectedRanges, createVerbatimTracker, stripTexComment, defusePyxLeaks,
 } from '../js/compile/latex-bridge.js';
 
 const ok = (v) => ({ ok: true, value: v });
@@ -23,6 +23,29 @@ describe('findPyExprs', () => {
   });
   it('costs nothing on a file with no \\py at all', () => {
     expect(findPyExprs('sólo prosa')).toEqual([]);
+  });
+  // A typo in the braces used to stop the scan: every later \py{} stayed raw
+  // and the engine ran off the end of the document ("Emergency stop", no PDF).
+  it('keeps going after one with unbalanced braces', () => {
+    expect(findPyExprs('roto \\py{ {sin cerrar } y luego \\py{ok}').map((e) => e.expr))
+      .toEqual(['ok']);
+  });
+});
+
+describe('defusePyxLeaks', () => {
+  it('drops the command and keeps the text, so the document still compiles', () => {
+    const t = 'antes \\py{ {sin cerrar } después';
+    const out = defusePyxLeaks(t, findPyxLeaks(t));
+    expect(out).toBe('antes { {sin cerrar } después');
+    expect(out).not.toContain('\\py');
+  });
+  it('leaves a document with no leaks untouched', () => {
+    const t = 'A \\texttt{x} B'; // a build where every \py{} was substituted
+    expect(defusePyxLeaks(t, findPyxLeaks(t))).toBe(t);
+  });
+  it('does not touch a \\py{ shown inside verbatim', () => {
+    const t = '\\begin{verbatim}\n\\py{ roto\n\\end{verbatim}\n';
+    expect(defusePyxLeaks(t, findPyxLeaks(t))).toBe(t);
   });
 });
 
@@ -133,13 +156,23 @@ describe('line map translation', () => {
 describe('findPyxLeaks', () => {
   it('reports an unresolved token with its build line', () => {
     const leaks = findPyxLeaks('línea uno\n\\py{roto');
-    expect(leaks).toEqual([{ line: 2, token: '\\py' }]);
+    // `at`/`len` locate the token for defusePyxLeaks; `balanced` says whether
+    // its braces close (an unbalanced one is what kills a compile).
+    expect(leaks).toEqual([{ line: 2, token: '\\py', at: 10, len: 3, balanced: false }]);
   });
   it('does not report an escaped \\py* that was already rewritten', () => {
     expect(findPyxLeaks('\\texttt{\\detokenize{\\py{a}}}')).toEqual([]);
   });
   it('does not report tokens inside verbatim', () => {
     expect(findPyxLeaks('\\begin{verbatim}\n\\py{x}\n\\end{verbatim}')).toEqual([]);
+  });
+  // Only the unbalanced ones are removed from the build: a balanced \py{} in
+  // a plain .tex is left for the preamble's guard to swallow, as always.
+  it('tells a closed group from an open one', () => {
+    const [closed] = findPyxLeaks('\\py{f(a[1], {2: 3})} resto');
+    expect(closed.balanced).toBe(true);
+    const [open] = findPyxLeaks('\\py{a{b} resto');
+    expect(open.balanced).toBe(false);
   });
 });
 
@@ -228,5 +261,16 @@ describe('stripTexComment', () => {
     expect(stripTexComment('50\\% del total')).toBe('50\\% del total');
     expect(stripTexComment('fin\\\\% comentario')).toBe('fin\\\\');
     expect(stripTexComment('sin comentario')).toBe('sin comentario');
+  });
+});
+
+describe('safetyPreamble · handcalcs', () => {
+  // A %%render cell types an `aligned` environment (amsmath's). Without the
+  // package the engine hit an undefined environment and the errors cascaded.
+  it('guarantees amsmath when a cell asks handcalcs to typeset it', () => {
+    const block = safetyPreamble({ envs: new Set(), styles: new Set(), usesRender: true });
+    expect(block).toContain('\\@ifundefined{aligned}{\\usepackage{amsmath}}{}');
+    const without = safetyPreamble({ envs: new Set(), styles: new Set(), usesPy: true });
+    expect(without).not.toContain('amsmath');
   });
 });

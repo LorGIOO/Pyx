@@ -43,6 +43,7 @@ import os
 import io
 import json
 import ast
+import time
 import types
 import ctypes
 import base64
@@ -1156,6 +1157,58 @@ def _worker(req_q):
             return
 
 
+def _request_lines(stream):
+    """Yield protocol lines, never leaving a blocking read in flight.
+
+    On Windows, a pending blocking read on the stdin pipe stops native
+    extension modules from loading in EVERY other thread of the process: with
+    the reader parked on the pipe, `import numpy` (or matplotlib, pandas…)
+    inside a cell never returned. The cell hung, the compile hung behind it,
+    and the interrupt could not even be read — because reading it was the very
+    thing that was blocked. Reproduced down to twenty lines: main thread on a
+    pipe read + `import numpy` in another thread = deadlock; the same import
+    with the main thread asleep takes 0.2 s.
+
+    So: ask the pipe what it already holds, read exactly that, and sleep. Reads
+    then last microseconds instead of minutes. Elsewhere (Linux, macOS) the
+    plain blocking iteration is kept.
+    """
+    if os.name != "nt":
+        for line in stream:
+            yield line
+        return
+
+    import msvcrt
+    from ctypes import wintypes
+
+    k32 = ctypes.windll.kernel32
+    avail = wintypes.DWORD()
+    try:
+        fd = stream.fileno()
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+        if not k32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(avail), None):
+            raise OSError("stdin is not a pipe")
+    except Exception:
+        for line in stream:  # a console or a file: nothing to poll
+            yield line
+        return
+
+    buf = b""
+    while True:
+        if not k32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(avail), None):
+            return  # the other end closed
+        if not avail.value:
+            time.sleep(0.02)
+            continue
+        chunk = os.read(fd, avail.value)
+        if not chunk:
+            return
+        buf += chunk
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            yield line.decode("utf-8", "replace")
+
+
 def main():
     global _REAL_STDOUT
     # Take exclusive ownership of the protocol pipes. From here on, user code
@@ -1179,7 +1232,7 @@ def main():
 
     # READER loop. It must never execute anything itself: staying free is what
     # lets a control message be seen while a cell is still running.
-    for line in real_stdin:
+    for line in _request_lines(real_stdin):
         line = line.strip()
         if not line:
             continue

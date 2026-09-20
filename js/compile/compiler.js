@@ -17,8 +17,8 @@ import { setBuildMaps } from './build-maps.js';
 import {
   findPyExprs, resolvePyText, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
   findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
-  safetyPreamble, injectPreamble, findPyxLeaks, buildToSrcLine, scanVerbatimUse,
-  stripTexComment,
+  safetyPreamble, injectPreamble, findPyxLeaks, defusePyxLeaks, buildToSrcLine,
+  scanVerbatimUse, stripTexComment,
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
 import { auxOpen } from '../solid/stores/previewStore.js';
@@ -96,6 +96,10 @@ export function scheduleLiveCompile() {
 // Last successfully compiled PDF — reloaded into the in-app pane when the
 // auxiliary viewer window closes (all updates went THERE while it was open).
 let lastPdfPath = null;
+// The root document the compile in flight is building, so the viewer can tell
+// "wait, a newer PDF of what you are looking at is coming" from "that is
+// another project's compile".
+let compilingRoot = null;
 export function reloadLastPdf() {
   if (lastPdfPath) loadPdf(lastPdfPath).catch(() => {});
 }
@@ -113,10 +117,14 @@ const samePath = (a, b) => !!a && !!b
  * it shows what was saved; so does this. The next compile replaces it. */
 export async function showSavedPdf() {
   const doc = activeDoc();
-  if (!doc || doc.kind || !doc.path || state.compiling) return;
+  if (!doc || doc.kind || !doc.path) return;
   try {
     const content = getDocContent(doc.id);
     const root = await resolveRootPath(doc, content);
+    // A compile of THIS project is about to show a newer PDF — wait for it.
+    // One of ANOTHER project is not: switching documents while that ran used
+    // to leave its PDF on screen, because this returned for any compile.
+    if (state.compiling && samePath(compilingRoot, root)) return;
     const pdf = joinPath(await buildDirFor(root), `${stemOf(root)}.pdf`);
     if (samePath(pdf, getPdfPath())) return;
     // Only a PDF at least as new as the document is ITS PDF. An older one was
@@ -147,8 +155,8 @@ export async function showSavedPdf() {
     }
     const [out, ...srcs] = await fileStamps([pdf, root, ...children]);
     if (!out || out.mtime < 0 || srcs.some((s) => s && s.mtime > out.mtime)) return;
-    // A compile that started meanwhile is about to show a NEWER PDF.
-    if (state.compiling) return;
+    // A compile of this project started meanwhile: its PDF will be newer.
+    if (state.compiling && samePath(compilingRoot, root)) return;
     lastPdfPath = pdf;
     state.lastPdfPath = pdf;
     await loadPdf(pdf);
@@ -589,6 +597,7 @@ export async function compileActive(showViewer = true) {
     //    \input tree below it). The root may be open (use its live content) or
     //    only on disk.
     const rootPath = await resolveRootPath(doc, content);
+    compilingRoot = rootPath; // which project this run is building (showSavedPdf)
     let rootDoc = doc;
     let rootContent = content;
     if (rootPath !== doc.path) {
@@ -680,6 +689,7 @@ export async function compileActive(showViewer = true) {
        * doubt at all falls back to a reset. Forcing one on top bought nothing
        * and charged for it every time. A full re-run is still available, and
        * still explicit: "Reiniciar el kernel". */
+      // Returns where it started: 0 = everything ran, from a clean namespace.
       const runTree = async (force) => {
         problems = '';
         const start = force ? 0 : nsPrefix(hashes, cwd);
@@ -720,6 +730,7 @@ export async function compileActive(showViewer = true) {
           const latex = renderCache.get(cell.codeHash);
           if (latex) file.renders[cellKey(cell)] = latex;
         }
+        return start;
       };
 
       // ONE lock for the whole sequence: reset + every cell + \py{} evaluation
@@ -727,7 +738,7 @@ export async function compileActive(showViewer = true) {
       // between running the cells and reading the values for the document.
       const tCells = performance.now();
       await withKernelLock(async () => {
-        await runTree(false);
+        const ranFrom = await runTree(false);
 
         // 2) Resolve \py{...} expressions against that exact namespace.
         if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
@@ -741,7 +752,16 @@ export async function compileActive(showViewer = true) {
         // what the document expects shows up as a \py{} that fails to
         // evaluate, and that triggers the full re-run right here, before
         // anything reaches the PDF.
-        if (exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
+        //
+        // Only when cells were SKIPPED, though. After a run that started from
+        // an empty namespace there is nothing to heal: a \py{} that fails
+        // there fails because of what it says — a typo, a division by zero, a
+        // cell that errored or was interrupted — and running every cell a
+        // second time cannot change that. It did exactly that, doubling the
+        // work of every compile with a broken \py{} (and turning one
+        // interrupted 30-second cell into sixty), and the log said "2
+        // ejecutadas de 1".
+        if (ranFrom > 0 && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
           await runTree(true);
           if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
         }
@@ -793,12 +813,18 @@ export async function compileActive(showViewer = true) {
     // the block as prose, spilling Python cells and \py{} internals onto the
     // page. Aggregated over every file — a child's lstlisting needs `listings`
     // loaded in the ROOT.
-    const use = { envs: new Set(), styles: new Set(), usesPy: false, usesGraphics: false };
+    const use = {
+      envs: new Set(), styles: new Set(), usesPy: false, usesGraphics: false, usesRender: false,
+    };
     for (const [path, f] of files) {
       for (const e of f.verbEnvs) use.envs.add(e);
       for (const s of f.verbStyles) use.styles.add(s);
       if (f.usesPy) use.usesPy = true;
       if (f.usesGraphics) use.usesGraphics = true;
+      // Whether any cell asks handcalcs to typeset it (its blocks need amsmath).
+      if (!use.usesRender && f.cells.some((c) => HANDCALCS_MAGIC.test(c.code))) {
+        use.usesRender = true;
+      }
       if (f.unterminated) {
         problems += `\n[${baseName(path)} · línea ${f.unterminated}] celda sin %#end:`
           + ' no se ejecuta y el resto del archivo no llega al PDF.';
@@ -858,15 +884,29 @@ export async function compileActive(showViewer = true) {
         const neut = neutralizeCells(f.content, f.renders);
         processed = resolvePyText(resolvePyIf(neut.text, valueMap), valueMap);
         if (neut.srcLines) lineMaps[mapKey] = neut.srcLines;
-        // Anything Pyx could NOT resolve is an internal incident: it is
-        // reported here, in the app, and silenced in the build by the guards
-        // above — it never becomes a mark on the page.
-        for (const lk of findPyxLeaks(processed)) {
-          const src = buildToSrcLine(lineMaps[mapKey], lk.line);
-          problems += `\n[${baseName(path)} · línea ${src}] ${lk.token} sin resolver`
-            + ' (revisa las llaves): no se imprimirá nada en el PDF.';
-        }
       }
+      /* A \py{} the build still carries.
+       *
+       * In a file Pyx processes it means the value could not be substituted —
+       * an incident to report, silenced on the page by the preamble's guard.
+       * In a plain .tex (no cells: pure LaTeX by the per-file rule) it is
+       * simply not Pyx's to resolve, and the guard prints nothing, as before.
+       *
+       * Either way, one whose braces do NOT close has to go: the guard would
+       * eat an argument that never ends and take the whole document with it
+       * ("Emergency stop", no PDF). That check used to live inside the
+       * processed-file branch, so a plain .tex with a broken \py{} still lost
+       * its whole compile. */
+      const leaks = findPyxLeaks(processed);
+      for (const lk of leaks) {
+        if (!f.isPyx && lk.balanced) continue; // not this file's business
+        const src = buildToSrcLine(lineMaps[mapKey], lk.line);
+        problems += `\n[${baseName(path)} · línea ${src}] ${lk.token} `
+          + (lk.balanced
+            ? 'sin resolver: no se imprimirá nada en el PDF.'
+            : 'con las llaves sin cerrar: se ignora el comando y se compila el resto.');
+      }
+      processed = defusePyxLeaks(processed, leaks.filter((lk) => !lk.balanced));
       processed = processed.replace(new RegExp(INPUT_SRC, 'g'), (all, cmd, raw) => {
         if (f.unreadable && f.unreadable.has(raw)) {
           return `\\fbox{\\normalfont\\ttfamily\\small No se pudo leer: \\detokenize{${raw}}}`;
@@ -1013,6 +1053,14 @@ export async function compileActive(showViewer = true) {
     if (res.pdf_path) {
       lastPdfPath = res.pdf_path;
       state.lastPdfPath = res.pdf_path; // forward search reads this
+      // Did the user move to a DIFFERENT project while this ran? Then the
+      // viewer is showing that one, and this PDF must not take it over; it is
+      // on disk, and coming back to this document brings it up (switchTo).
+      const now = activeDoc();
+      if (now && !now.kind && now.path && now.id !== doc.id) {
+        const nowRoot = await resolveRootPath(now, getDocContent(now.id)).catch(() => null);
+        if (nowRoot && !samePath(nowRoot, rootPath)) return res;
+      }
       if (auxOpen()) {
         // The detached window is the active viewer: refresh THAT one (the
         // in-app pane is closed; it reloads via reloadLastPdf when the
@@ -1046,6 +1094,7 @@ export async function compileActive(showViewer = true) {
     state.compileMs = Math.round(lastCompileMs);
     state.liveSuspended = liveCompileSuspended();
     state.compiling = false;
+    compilingRoot = null;
     // Serve whatever was asked for while this one ran (see `queued`).
     if (queued !== null) {
       const wantViewer = queued;

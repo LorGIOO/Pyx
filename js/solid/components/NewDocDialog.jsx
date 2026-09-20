@@ -1,13 +1,16 @@
 import { createSignal, Show } from 'solid-js';
 import { t } from '../../core/i18n.js';
 import { newDocument } from '../stores/docStore.js';
+import { registerDialog, closeDialogs } from '../stores/dialogStore.js';
 
 // "New document" chooser (Windows-style modal, movable, stays open on outside
 // click — like the Configuración dialog). Offers a Pyx document (.pltx, with
 // Python cells) or a plain LaTeX document (.tex).
 
 const [open, setOpen] = createSignal(false);
-export const openNewDoc = () => setOpen(true);
+// Opening it closes any other dialog, and Escape closes it (dialogStore).
+export const openNewDoc = () => { closeDialogs(); setOpen(true); };
+registerDialog(open, () => setOpen(false));
 
 const pltxTemplate = () =>
   '\\documentclass{article}\n' +

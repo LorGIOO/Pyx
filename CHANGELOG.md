@@ -38,6 +38,65 @@ Lo que escribes es lo que ves, siempre.
 - Los problemas del documento principal aparecían bajo un nombre cortado
   («_Raiz.build.te») y con números de línea de la copia interna: TeX parte el
   registro a 79 columnas. Ahora llevan el archivo y la línea reales.
+- **Un guardado que falla ya no parece que haya funcionado.** Si el archivo
+  está en solo lectura, la unidad de red se cae o el disco está lleno, el
+  documento sigue marcado como modificado, el motivo sale en «Problemas» y se
+  avisa con un diálogo. Antes no se decía nada: el error se perdía y la barra
+  de estado hasta se ponía en verde por la compilación en vivo, con el trabajo
+  solo en memoria.
+- **Dos guardados a la vez ya no se pisan.** Pulsar Ctrl+S varias veces
+  seguidas lanzaba varios empaquetados sobre el mismo archivo temporal; uno
+  fallaba («os error 2») y dos escrituras simultáneas podían dejar un `.pltx`
+  dañado. Ahora se guardan de uno en uno.
+- **`\py{}` con una llave sin cerrar ya no tumba la compilación entera.** Antes
+  dejaba sin resolver todos los `\py{}` siguientes del archivo y el motor se
+  paraba en seco («Emergency stop», ningún PDF). Ahora se ignora ese comando,
+  el resto del documento se compone y «Problemas» dice en qué línea están las
+  llaves mal puestas.
+- **Un `\py{}` que falla ya no hace que se ejecuten todas las celdas otra
+  vez.** La reejecución de seguridad solo tiene sentido cuando la compilación
+  se saltó celdas; si acababan de ejecutarse todas, repetirlas no cambia nada y
+  duplicaba el tiempo (una celda interrumpida de 30 s costaba 60). El registro
+  también decía «2 ejecutadas de 1».
+- **El visor sigue al documento que estás mirando**: al cambiar de pestaña
+  muestra el PDF de ese proyecto, y una compilación de otro proyecto que
+  termina ya no se adueña de la vista.
+- **La carpeta del proyecto ya no queda bloqueada** mientras Pyx está abierto:
+  el kernel de Python se salía de ella al terminar cada ejecución, y hasta
+  ahora Windows impedía renombrarla o moverla.
+- La cinta se **solapaba consigo misma** por debajo de unos 1100 px (a 860x560,
+  el tamaño mínimo de la ventana, 17 solapes: «Cortar» encima de «Compilar y
+  ver», los desplegables de «Estructura» fuera de la ventana). Ahora los grupos
+  conservan su tamaño y la cinta se desplaza en horizontal.
+- **Escape cierra los diálogos** (Configuración, Nuevo documento, asistentes) y
+  abrir uno cierra el anterior: un atajo podía dejar dos superpuestos.
+- «Tabla» e «Imagen» estaban activos sin ningún documento abierto, y el
+  asistente se quedaba ahí sin sitio donde insertar nada.
+- **Un `.pltx` dañado abierto directamente ya no se abre en silencio.** Un
+  contenedor que no se puede leer mostraba sus bytes en el editor como si
+  fueran el documento, sin avisar, y un Ctrl+S habría empaquetado esa basura
+  encima del original. Ahora se explica por qué no se puede abrir y no se abre
+  ninguna pestaña. (Un `.pltx` antiguo en texto plano se sigue abriendo como
+  texto, como siempre.)
+- Al reabrir un documento, sus celdas volvían a aparecer como si nunca se
+  hubieran ejecutado, aunque sus resultados estaban guardados y el PDF ya
+  mostraba esos números. Ahora se repintan con su número de ejecución.
+- **Una celda que importaba numpy, matplotlib o pandas dejaba la compilación
+  colgada para siempre**, sin mensaje y sin poder interrumpirla: había que
+  cerrar la app. En Windows, mientras el kernel esperaba órdenes bloqueado en
+  su tubería, ningún otro hilo del proceso podía cargar una biblioteca nativa
+  —y cargarla es justo lo que hace `import numpy`—, así que la celda no
+  terminaba nunca y la orden de interrumpir tampoco podía leerse, porque
+  leerla era precisamente lo que estaba bloqueado. Ahora el kernel consulta la
+  tubería en vez de quedarse esperando en ella: `import numpy` tarda 0,2 s,
+  matplotlib 0,8 s, y una celda que se atasca sí se puede interrumpir.
+- Un `\py{}` con las llaves sin cerrar en un `.tex` **sin celdas** seguía
+  tumbando la compilación entera: la limpieza solo se aplicaba a los archivos
+  que Pyx procesa como documentos con Python.
+- Una celda `%%render` (handcalcs) rompía el documento si el preámbulo no
+  cargaba `amsmath`: lo que escribe handcalcs es un entorno `aligned`, que es
+  de ese paquete, y el motor encadenaba errores por toda la página. Ahora se
+  garantiza igual que los demás paquetes que Pyx ya asegura.
 - **Al abrir un proyecto se veía el PDF de una versión antigua** si sus
   capítulos habían cambiado después del último guardado de la raíz: el PDF
   restaurado del `.pltx` llevaba la hora de apertura y solo se comparaba con la

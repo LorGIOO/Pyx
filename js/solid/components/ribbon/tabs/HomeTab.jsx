@@ -136,8 +136,10 @@ export default function HomeTab() {
       </RibbonGroup>
 
       <RibbonGroup label={t('Insertar', 'Insert')}>
-        <RibbonButton icon={icons.table} label={t('Tabla', 'Table')} title={t('Asistente de tabla', 'Table wizard')} onClick={openTableWizard} />
-        <RibbonButton icon={icons.image} label={t('Imagen', 'Image')} title={t('Insertar imagen / figura', 'Insert image / figure')} onClick={openFigureWizard} />
+        {/* Both insert into the open document: with none, the assistant had
+            nowhere to put its LaTeX and stayed on screen doing nothing. */}
+        <RibbonButton icon={icons.table} label={t('Tabla', 'Table')} disabled={!hasDoc()} title={t('Asistente de tabla', 'Table wizard')} onClick={openTableWizard} />
+        <RibbonButton icon={icons.image} label={t('Imagen', 'Image')} disabled={!hasDoc()} title={t('Insertar imagen / figura', 'Insert image / figure')} onClick={openFigureWizard} />
       </RibbonGroup>
 
       <RibbonGroup label={t('Tabla', 'Table')}>

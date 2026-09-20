@@ -148,7 +148,11 @@ export function findPyExprs(text) {
       if (depth === 0) break;
       j++;
     }
-    if (depth !== 0) break; // unbalanced; stop
+    // Unbalanced: this ONE is broken (a typo in the braces). Skip past it and
+    // keep looking — stopping here left every later \py{} in the file
+    // unresolved, and the engine then ran off the end of the document trying
+    // to read an argument that never closed ("Emergency stop", no PDF at all).
+    if (depth !== 0) { i = at + needle.length; continue; }
     out.push({ start: at, end: j + 1, expr: text.slice(at + needle.length, j) });
     i = j + 1;
   }
@@ -509,7 +513,7 @@ const MISSING_FILE_GUARDS = [
   String.raw`\@ifundefined{verbatim@input}{}{\@ifundefined{Pyx@verbatim@input}{\let\Pyx@verbatim@input\verbatim@input\def\verbatim@input#1#2{\IfFileExists{#2}{\Pyx@verbatim@input{#1}{#2}}{\endgroup\Pyx@missing{#2}}}}{}}`,
 ];
 
-export function safetyPreamble({ envs, styles, usesPy, usesGraphics }) {
+export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender }) {
   const guards = [];
   const seen = new Set();
   // A \py{} can expand to an \includegraphics — `figtex()` in the kernel
@@ -518,6 +522,13 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics }) {
   // preamble already loads it.
   if (usesGraphics || usesPy) {
     guards.push('\\@ifundefined{includegraphics}{\\usepackage{graphicx}}{}');
+  }
+  // A %%render cell types its result as handcalcs writes it: an `aligned`
+  // environment, which is amsmath's. In a document that never loaded amsmath
+  // the engine met an undefined environment and the errors cascaded down the
+  // page — from a cell the user only asked to be typeset.
+  if (usesRender) {
+    guards.push('\\@ifundefined{aligned}{\\usepackage{amsmath}}{}');
   }
   for (const env of envs) {
     const provider = VERBATIM_PROVIDER[env];
@@ -593,9 +604,49 @@ export function findPyxLeaks(text) {
     // \py*{…} was rewritten to \texttt{\detokenize{\py{…}}}: literal by
     // construction, not a leak.
     if (text.slice(m.index - 12, m.index) === '\\detokenize{') continue;
-    out.push({ line, token: m[1] === 'if' ? '\\pyif' : '\\py' });
+    // Does its group close? An unbalanced one is the dangerous kind: the
+    // preamble's guard eats an argument that never ends and takes the whole
+    // document down ("File ended while scanning use of…", no PDF).
+    let depth = 1;
+    let j = m.index + m[0].length;
+    for (; j < text.length && depth > 0; j++) {
+      if (text[j] === '{') depth++;
+      else if (text[j] === '}') depth--;
+    }
+    out.push({
+      line,
+      token: m[1] === 'if' ? '\\pyif' : '\\py',
+      at: m.index,
+      len: m[0].length - 1,
+      balanced: depth === 0,
+    });
   }
   return out;
+}
+
+/**
+ * Defuse those leaks: drop the `\py` / `\pyif` command itself and leave the
+ * braces as an ordinary group.
+ *
+ * The preamble's guard defines `\py` as "eat one argument", which is right for
+ * a token whose braces balance — and fatal for one whose braces don't: TeX
+ * scans to the end of the document looking for the closing brace and stops
+ * with "File ended while scanning use of…". Removing the command keeps the
+ * document compiling and the user's own text on the page, where the report in
+ * «Problemas» (same line) tells them to check the braces.
+ *
+ * `leaks` comes from findPyxLeaks over this exact text.
+ */
+export function defusePyxLeaks(text, leaks) {
+  if (!leaks || !leaks.length) return text;
+  let out = '';
+  let from = 0;
+  for (const lk of leaks) {
+    if (lk.at == null) continue;
+    out += text.slice(from, lk.at) + text.slice(lk.at + lk.len, lk.at + lk.len + 1); // keep the `{`
+    from = lk.at + lk.len + 1;
+  }
+  return out + text.slice(from);
 }
 
 /* ---------------- build ↔ source line translation ----------------

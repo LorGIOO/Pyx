@@ -4,7 +4,9 @@
 // are tabs that render a viewer component instead of the editor.
 
 import { state, activeDoc } from '../../core/state.js';
-import { registerDoc, getDocContent, disposeDoc, getViewOfDoc } from '../../editor/setup.js';
+import {
+  registerDoc, getDocContent, disposeDoc, getViewOfDoc, broadcastCellRefresh,
+} from '../../editor/setup.js';
 import {
   openFileDialog,
   saveFileDialog,
@@ -15,6 +17,7 @@ import {
   pltxRead,
   pltxWrite,
   askDialog,
+  messageDialog,
 } from '../../core/platform.js';
 import { general } from './settingsStore.js';
 import { baseName } from '../../core/paths.js';
@@ -69,10 +72,16 @@ async function readSource(path) {
   if (isPltxPath(path)) {
     try {
       const r = await pltxRead(path, true);
-      if (r && r.is_zip && r.source != null) {
-        return { text: r.source, outputs: r.outputs || null };
-      }
-    } catch (_) { /* fall back to plain text (legacy / corrupt) */ }
+      if (r && r.is_zip) return { text: r.source, outputs: r.outputs || null };
+    } catch (e) {
+      // A .pltx that IS a container but cannot be read is DAMAGED, and the
+      // fallback below would open its bytes as if they were the document:
+      // the editor filled with zip bytes, no warning at all, and one Ctrl+S
+      // would have packed that as a perfectly valid .pltx over the original.
+      // Only a legacy plain-text .pltx (not a zip at all) may fall through.
+      const head = await readBinaryFile(path).catch(() => null);
+      if (!head || (head[0] === 0x50 && head[1] === 0x4B)) throw e; // "PK"
+    }
   }
   return { text: await readTextSmart(path), outputs: null };
 }
@@ -255,10 +264,21 @@ export async function openPath(path) {
     // Restore the results saved with the document. Anything whose cell has
     // changed since is dropped by the store — a number that no longer matches
     // its formula must never come back looking current.
-    if (outputs) hydrateDoc(id, outputs, codeHashMap(parseCellsText(text)));
+    if (outputs) {
+      hydrateDoc(id, outputs, codeHashMap(parseCellsText(text)));
+      // Repaint the cells: their badges are drawn when the editor mounts, and
+      // the results arrive here, right after. Without this a document reopened
+      // with its results showed every cell as never run — while its PDF
+      // displayed the very numbers those cells had produced.
+      broadcastCellRefresh();
+    }
     // Its saved PDF, at once — no compile needed to see a document you opened.
     import('../../compile/compiler.js').then((m) => m.showSavedPdf()).catch(() => {});
-  } catch (_) { /* not a readable text file */ }
+  } catch (e) {
+    // Say why. A damaged .pltx used to open silently as raw bytes.
+    await messageDialog(`No se pudo abrir «${baseName(path)}».\n\n${String((e && e.message) || e)}`,
+      { title: 'No se pudo abrir el documento', kind: 'error' }).catch(() => {});
+  }
 }
 
 export function switchTo(index) {
@@ -267,6 +287,11 @@ export function switchTo(index) {
   const pane = activePane();
   pane.docId = doc.id;
   state.activeIndex = index;
+  // The viewer follows the document you are looking at: its project's PDF, if
+  // there is a current one. Without this, switching to another project left
+  // the previous one's PDF on screen with nothing saying so. (A chapter and
+  // its root share a PDF, so moving between them changes nothing.)
+  import('../../compile/compiler.js').then((m) => m.showSavedPdf()).catch(() => {});
 }
 
 // Saving is "I'm done with this change — show me". It compiles EVERYTHING the
@@ -276,6 +301,27 @@ export function switchTo(index) {
 // Lazy import avoids a static cycle with the compiler.
 function compileAfterSave() {
   import('../../compile/compiler.js').then((m) => m.compileActive(true)).catch(() => {});
+}
+
+/* A save that fails must never look like one that worked.
+ *
+ * Writing can fail for ordinary reasons — the file is read-only, the network
+ * drive dropped, the disk is full — and nothing said so: the rejected promise
+ * died unheard, the document was left looking saved, and the status bar even
+ * went green because the live compile (which builds from the editor's text,
+ * not from disk) had just succeeded. The user's work was only in memory.
+ *
+ * So: the document stays MODIFIED, the reason goes to «Problemas», and the
+ * platform's own error dialog says it out loud. Nothing is compiled after a
+ * failed save. */
+async function saveFailed(doc, e) {
+  const msg = String((e && e.message) || e);
+  state.lastLog = `===== Avisos de Pyx =====\n[Guardar · ${doc.fileName}] ${msg}`;
+  try {
+    await messageDialog(`No se pudo guardar «${doc.fileName}».\n\n${msg}`,
+      { title: 'El documento NO se ha guardado', kind: 'error' });
+  } catch (_) { /* no dialog here: the log still carries it */ }
+  return false;
 }
 
 export async function saveActive() {
@@ -289,7 +335,11 @@ export async function saveActive() {
   if (!doc.path || needsPltx) {
     ok = await saveActiveAs();
   } else {
-    await writeSource(doc.path, getDocContent(doc.id), doc);
+    try {
+      await writeSource(doc.path, getDocContent(doc.id), doc);
+    } catch (e) {
+      return saveFailed(doc, e);
+    }
     doc.modified = false;
     ok = true;
   }
@@ -307,7 +357,11 @@ export async function saveActiveAs() {
   // When it has cells the dialog only offers .pltx (no .tex option).
   const path = await saveFileDialog(defName, cells);
   if (!path) return false;
-  await writeSource(path, getDocContent(doc.id), doc);
+  try {
+    await writeSource(path, getDocContent(doc.id), doc);
+  } catch (e) {
+    return saveFailed({ ...doc, fileName: baseName(path) }, e);
+  }
   doc.path = path;
   doc.fileName = baseName(path);
   doc.modified = false;

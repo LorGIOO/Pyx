@@ -1,8 +1,24 @@
-/* VSCode/Jupyter notebook cells. The %#python / %#end markers are hidden
-   (replaced by these blocks); the cell reads as one rounded box:
-     toolbar (run/actions/Python/collapse) → code → output. */
+/* VSCode notebook cells.
+   The %#python / %#end markers are hidden (replaced by these widgets); what
+   is left reads like a VSCode notebook cell — and the geometry is VSCode's
+   own, taken from notebookOptions.ts:
 
-/* Marker lines (%#python / %#end) host the toolbar/output widgets inline;
+     cellRunGutter 36 + codeCellLeftMargin 8  = 44px gutter, left of the box
+     focusIndicatorLeftMargin 4, bar 3px wide, 4px radius
+     cellStatusBarHeight 22, cellOutputPadding 8, cornerRadius.medium 6
+
+   The three decisions that make it read as modern rather than as a 2012
+   panel: TWO flat surfaces and no third (canvas + code box; the output sits
+   on the bare canvas), a hairline 1px border instead of a frame, and a thin
+   left bar instead of a selection box — accent-colored only for the cell you
+   are in. Everything destructive is hidden until the cell is active. */
+
+:root {
+  --cell-gutter: 44px;
+  --cell-radius: 6px;
+}
+
+/* Marker lines (%#python / %#end) host the head/output widgets inline;
    collapse their empty-text height so the widget alone sets the row height. */
 .editor-host .cm-cell-shell {
   font-size: 0;
@@ -10,37 +26,121 @@
   padding: 0;
 }
 
-/* ---- toolbar (top of the box; replaces the %#python line) ---- */
-.cell-bar {
+/* ---- head: the top of the code box, plus the run gutter beside it ---- */
+.cell-head {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 30px;
-  /* Small gap from the line-number gutter on the left; flush to the right so the
-     selection layer (which fills to the content's right edge) stays contained. */
-  margin: 10px 0 0 10px;
-  padding: 0 6px 0 4px;
-  background: var(--theme-cell-toolbar-bg);
+  height: 24px;
+  margin: 6px 0 0 var(--cell-gutter);
+  padding: 0 4px;
+  background: var(--theme-cell-bg);
   border: 1px solid var(--theme-cell-border);
-  border-left: 3px solid var(--theme-cell-border);
   border-bottom: none;
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
+  border-top-left-radius: var(--cell-radius);
+  border-top-right-radius: var(--cell-radius);
+  box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.08);
   font-size: 11px;
   user-select: none;
 }
-.cell-bar.active { border-left-color: var(--theme-cell-accent); }
-.cell-bar.collapsed {
+.cell-head.collapsed {
   border-bottom: 1px solid var(--theme-cell-border);
-  border-radius: 6px;
+  border-radius: var(--cell-radius);
 }
-.cell-bar-left, .cell-bar-right { display: flex; align-items: center; gap: 2px; }
+
+/* The focus bar: 3px, indented 4px into the gutter, full height of the row.
+   Neutral for every cell, accent only for the one holding the caret. */
+.cell-focus,
+.editor-host .cm-cell-code::before,
+.cell-statusbar::before,
+.cell-out-row::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--cell-gutter) + 4px);
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--theme-cell-focus-idle);
+}
+/* TWO bars, perfectly aligned, exactly like VSCode: one down the INPUT (head +
+   code + status bar) and one down the OUTPUT, separated by 3px
+   (`focusIndicatorGap`). Each has 4px rounded ends.
+   The input bar is necessarily drawn in pieces — CodeMirror gives us a
+   separate element per line — so only the first piece is rounded at the top
+   and only the last at the bottom, and every piece bleeds 1px into the next so
+   sub-pixel line heights cannot open hairline gaps. Every piece uses the SAME
+   offset arithmetic from the same origin, or the two halves land on different
+   device pixels and the bar looks stepped.
+   The radius is 1.5px, not VSCode's 4px: on a bar only 3px wide CSS clamps a
+   4px radius into a full pill, and the antialiasing of that curve is what made
+   the two bars look misaligned even though their left edges match exactly. */
+.cell-focus { border-radius: 1.5px 1.5px 0 0; bottom: -1px; }
+.editor-host .cm-cell-code::before { bottom: -1px; }
+.cell-statusbar { position: relative; }
+.cell-statusbar::before { border-radius: 0 0 1.5px 1.5px; }
+.cell-out-row { position: relative; }
+.cell-out-row::before { border-radius: 1.5px; top: 3px; }
+/* The 1px that made the two bars look offset: an absolutely positioned child
+   is placed against its ancestor's PADDING box, so the three pieces that hang
+   off the bordered box (head, code lines, status bar) start one border-width
+   further right than the output row, which has no border. Take that 1px back
+   from them instead of leaving the bars a pixel apart. */
+.cell-focus,
+.editor-host .cm-cell-code::before,
+.cell-statusbar::before { left: calc(-1 * var(--cell-gutter) + 3px); }
+.cell-head.collapsed .cell-focus { border-radius: 1.5px; bottom: 0; }
+.cell-head.active .cell-focus,
+.editor-host .cm-cell-code.active::before,
+.cell-out.active .cell-statusbar::before,
+.cell-out.active .cell-out-row::before { background: var(--theme-cell-accent); }
+
+/* Run / stop and the fold chevron live in the gutter, outside the box, the
+   way VSCode arranges them: chevron first, then the play button. */
+.cell-head .cell-gutter-fold {
+  position: absolute;
+  left: calc(-1 * var(--cell-gutter) + 10px);
+  top: 2px;
+  width: 14px;
+  height: 20px;
+}
+.cell-head .cell-gutter-fold svg { width: 11px; height: 11px; }
+.cell-head .cell-gutter-btn {
+  position: absolute;
+  left: calc(-1 * var(--cell-gutter) + 22px);
+  top: 0;
+  width: 22px;
+  height: 24px;
+}
+
+.cell-head-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+/* The fold chevron is chrome too: at rest the head is just the box's top
+   padding, exactly as in VSCode, where a cell shows only its code. */
+.cell-head .cell-gutter-fold { visibility: hidden; }
+.cell-head:hover .cell-gutter-fold,
+.cell-head.active .cell-gutter-fold,
+.cell-head.collapsed .cell-gutter-fold { visibility: visible; }
+/* VSCode's per-cell toolbar: a small floating group at the top right, with a
+   hairline separator border (notebook.cellToolbarSeparator = #8080805A) and
+   the cell's own background behind it. */
+.cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 4px;
+  background: var(--theme-cell-bg);
+  /* Hover-only chrome: a cell at rest shows code, a count and a timer. */
+  visibility: hidden;
+}
+.cell-head:hover .cell-actions,
+.cell-head.active .cell-actions { visibility: visible; }
 
 .cell-ico {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px; height: 22px;
+  width: 20px; height: 20px;
   padding: 0;
   border: none;
   border-radius: 4px;
@@ -49,97 +149,100 @@
   cursor: default;
 }
 .cell-ico svg { width: 14px; height: 14px; fill: currentColor; }
-.cell-ico:hover { background: var(--theme-hover); color: var(--theme-text); }
-.cell-ico.run { color: #3fb950; }
-.cell-ico.run:hover { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+.cell-ico:hover { background: var(--theme-cell-hover); color: var(--theme-text); }
+.cell-ico.run svg { width: 16px; height: 16px; }
+.cell-ico.run:hover { background: var(--theme-cell-hover); color: var(--theme-cell-accent); }
 .cell-ico.danger:hover { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-.cell-ico.collapse { color: var(--theme-text-secondary); }
+.cell-ico.collapse { opacity: 0.75; }
 
-.cell-count {
-  font-family: "Cascadia Code", Consolas, monospace;
-  color: var(--theme-cell-header);
-  min-width: 26px;
-  text-align: center;
-}
-.cell-status { font-size: 11px; margin-left: 4px; color: var(--theme-text-secondary); }
-.cell-status.ok { color: #3fb950; }
-.cell-status.err { color: var(--theme-cell-error); }
-.cell-status.running { color: var(--theme-cell-accent); }
+.cell-status { font-size: 11px; color: var(--theme-text-secondary); }
 .cell-preview {
-  margin-left: 8px;
+  margin-left: 4px;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11.5px;
   color: var(--theme-text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 60ch;
 }
-.cell-lang {
-  font-size: 10px;
-  color: var(--theme-text-secondary);
-  padding: 0 6px;
-  opacity: 0.8;
-}
 
 /* ---- code band (the cell's editable lines) ---- */
 .editor-host .cm-cell-code {
+  position: relative;
   background: var(--theme-cell-bg);
-  margin-left: 10px;
-  border-left: 3px solid var(--theme-cell-border);
+  margin-left: var(--cell-gutter);
+  border-left: 1px solid var(--theme-cell-border);
   border-right: 1px solid var(--theme-cell-border);
 }
-.editor-host .cm-cell-code.active { border-left-color: var(--theme-cell-accent); }
 
-/* ---- output (bottom of the box; replaces the %#end line) ---- */
-.cell-out {
+/* ---- status bar: 22px, closes the code box ---- */
+.cell-statusbar {
   display: flex;
-  margin: 0 0 10px 10px;      /* left gap from gutter, flush right */
-  background: var(--theme-cell-output-bg);
-  border: 1px solid var(--theme-cell-border);
-  border-left: 3px solid var(--theme-cell-border);
-  border-top: none;
-  border-bottom-left-radius: 6px;
-  border-bottom-right-radius: 6px;
-}
-.cell-out.active { border-left-color: var(--theme-cell-accent); }
-/* keep the empty cap aligned with the box */
-.cell-out.empty { margin: 0 0 10px 10px; }
-/* Empty output still caps the box (thin rounded bottom). */
-.cell-out.empty {
-  display: block;
-  height: 4px;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 8px;
   background: var(--theme-cell-bg);
+  border: 1px solid var(--theme-cell-border);
+  border-top: none;
+  border-bottom-left-radius: var(--cell-radius);
+  border-bottom-right-radius: var(--cell-radius);
+  font-size: 11px;
+  color: var(--theme-cell-header);
+  user-select: none;
 }
+.cell-st-spacer { flex: 1; }
+/* The state icon sits on the text baseline and takes the row's colour. */
+.cell-st { display: inline-flex; align-items: center; gap: 4px; }
+.cell-st svg { width: 13px; height: 13px; flex: 0 0 13px; }
+.cell-st.ok { color: #3fb950; }
+.cell-st.err { color: var(--theme-cell-error); }
+.cell-st.running { color: var(--theme-cell-accent); }
+.cell-st.stale { color: #d29922; }
+.cell-st.time, .cell-st.lang { font-variant-numeric: tabular-nums; opacity: 0.8; }
+
+/* ---- output: on the bare canvas — no border, no second background —
+        aligned to the same 44px so code and result read as one column ---- */
+.cell-out {
+  position: relative;
+  display: block;
+  /* The gutter is a MARGIN here, not padding, so this box and the code lines
+     share the same origin arithmetic — otherwise the two halves of the focus
+     bar land on different device pixels and the line looks broken. */
+  margin: 0 0 6px var(--cell-gutter);
+  background: transparent;
+}
+/* A cell that printed nothing still carries its status bar, so the bar runs
+   the full height of the cell there too — it must not stop short. */
+.cell-out.empty { margin-bottom: 6px; }
+
+.cell-out-row { display: flex; }
 .cell-out-gutter {
   flex-shrink: 0;
-  width: 52px;
-  padding: 5px 6px 5px 2px;
+  /* Sits under the run button, in the same gutter: VSCode puts the execution
+     order at the BOTTOM of the gutter, beside the cell's last line, with the
+     output's own "…" under it. */
+  width: var(--cell-gutter);
+  margin-left: calc(-1 * var(--cell-gutter));
+  padding: 4px 6px 0 0;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 1px;
-  text-align: right;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.3;
   color: var(--theme-cell-header);
 }
-.cell-out-gutter .out-count { line-height: 1.3; }
-/* Execution time, bottom-left of the cell. */
-.cell-time {
-  margin-top: auto;
-  font-size: 10px;
-  color: var(--theme-text-secondary);
-  white-space: nowrap;
-}
-/* Output minimized to a slim strip (independent of the code collapse). */
-.cell-out.out-collapsed .cell-out-body.slim {
-  padding: 4px 12px;
-  font-size: 11px;
-  font-style: italic;
-  color: var(--theme-text-secondary);
-}
+.cell-out-gutter .out-count { opacity: 0.7; }
+/* The output "…" only appears when you are in the cell or pointing at it. */
+.cell-ico.outmore { width: 18px; height: 16px; opacity: 0.85; }
+.cell-ico.outmore svg { width: 13px; height: 13px; }
+.cell-out .cell-ico.outmore { visibility: hidden; }
+.cell-out:hover .cell-ico.outmore,
+.cell-out.active .cell-ico.outmore { visibility: visible; }
 .cell-out-body {
   flex: 1; min-width: 0;
-  padding: 7px 12px 9px;
+  padding: 4px 8px;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 12px; line-height: 1.5;
   color: var(--theme-cell-output-text);
@@ -147,6 +250,14 @@
   /* Grow to fit ALL output — no inner scrollbar. Long outputs are minimized
      with the output collapse button, not scrolled. */
   overflow: visible;
+}
+
+/* Output minimized to a slim strip. */
+.cell-out.out-collapsed .cell-out-body.slim {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--theme-text-secondary);
 }
 .cell-out-body .out-err { color: var(--theme-cell-error); }
 /* Clickable VSCode-style error header: type + exact document line. */
@@ -280,23 +391,39 @@
 .cell-viewer-html th, .cell-viewer-html td { border: 1px solid #d0d0d0; padding: 4px 12px; text-align: right; }
 .cell-viewer-html th { background: #f0f0f0; }
 
-/* ---- Python syntax colors — exact VSCode Dark+/Light+ via --py-* vars
-        (loaded after editor.css to win over the LaTeX token colors) ---- */
+/* ---- Python syntax colors -------------------------------------------
+   One class per VSCode token kind, driven by the --py-* variables (whose
+   values are the ones VSCode's own Dark+/Light+ theme files carry). Loaded
+   after editor.css so these win over the LaTeX token colors.
+   VSCode does NOT italicise Python comments, so neither do we. ---- */
 .editor-host .cm-py-control { color: var(--py-control); }
 .editor-host .cm-py-storage { color: var(--py-storage); }
+.editor-host .cm-py-logic { color: var(--py-logic); }
 .editor-host .cm-py-keyword { color: var(--py-keyword); }
-.editor-host .cm-py-builtin { color: var(--py-builtin); }
-.editor-host .cm-py-type { color: var(--py-type); }
 .editor-host .cm-py-func { color: var(--py-func); }
-.editor-host .cm-py-string { color: var(--py-string); }
-.editor-host .cm-py-number { color: var(--py-number); }
-.editor-host .cm-py-comment { color: var(--py-comment); font-style: italic; }
-.editor-host .cm-py-operator { color: var(--py-operator); }
+.editor-host .cm-py-builtin { color: var(--py-builtin); }
 .editor-host .cm-py-decorator { color: var(--py-decorator); }
+.editor-host .cm-py-type { color: var(--py-type); }
+.editor-host .cm-py-namespace { color: var(--py-namespace); }
 .editor-host .cm-py-variable { color: var(--py-variable); }
-.editor-host .cm-py-self { color: var(--py-self); }
+.editor-host .cm-py-param { color: var(--py-param); }
 .editor-host .cm-py-property { color: var(--py-property); }
+.editor-host .cm-py-magic { color: var(--py-magic); }
+.editor-host .cm-py-constant { color: var(--py-constant); }
+.editor-host .cm-py-self { color: var(--py-self); }
 .editor-host .cm-py-atom { color: var(--py-atom); }
+.editor-host .cm-py-number { color: var(--py-number); }
+.editor-host .cm-py-string { color: var(--py-string); }
+.editor-host .cm-py-escape { color: var(--py-escape); }
+.editor-host .cm-py-fstring-brace { color: var(--py-fstring-brace); }
+.editor-host .cm-py-format { color: var(--py-format); }
+.editor-host .cm-py-comment { color: var(--py-comment); }
+.editor-host .cm-py-operator { color: var(--py-operator); }
+.editor-host .cm-py-magiccmd { color: var(--py-magiccmd); }
+.editor-host .cm-py-rawstring { color: var(--py-rawstring); }
+.editor-host .cm-py-strprefix { color: var(--py-strprefix); }
+.editor-host .cm-py-numprefix { color: var(--py-numprefix); }
+.editor-host .cm-py-placeholder { color: var(--py-placeholder); }
 
 /* ---- stale results ----------------------------------------------------
    A result whose cell has been edited since it ran. In a calculation report

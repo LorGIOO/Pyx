@@ -80,15 +80,20 @@
   --theme-editor-selection: rgba(0, 122, 204, 0.18);
   --theme-editor-cursor: #007acc;
 
-  --theme-cell-bg: #eef1f6;        /* distinct from the white editor background */
-  --theme-cell-border: #d7dde6;
-  --theme-cell-toolbar-bg: #e6eaf0;
-  --theme-cell-accent: #2b7fff;
-  --theme-cell-header: #6a737d;
-  --theme-cell-output-bg: #ffffff;
+  /* Cells — VSCode notebook colors (Light Modern):
+     cellEditorBackground = sideBar.background #F8F8F8, cellBorderColor
+     #E5E5E5, focusedCellBorder = focusBorder #005FB8. The output container
+     is deliberately unset in VSCode, so it shows the canvas through it. */
+  --theme-cell-bg: #f8f8f8;
+  --theme-cell-border: #e5e5e5;
+  --theme-cell-focus-idle: #e5e5e5;
+  --theme-cell-accent: #005fb8;
+  --theme-cell-hover: rgba(0, 0, 0, 0.08);
+  --theme-cell-header: #616161;
+  --theme-cell-output-bg: transparent;
   --theme-cell-output-text: #1e1e1e;
   --theme-cell-error: #c72e2e;
-  --theme-cell-run-text: #2b7fff;
+  --theme-cell-run-text: #005fb8;
 
   --theme-status-bg: #f5f5f5;
   --theme-status-border: #d0d0d0;
@@ -97,50 +102,61 @@
   --theme-status-hover: rgba(0, 122, 204, 0.08);
 
   /* Syntax (CodeMirror) */
-  /* LaTeX syntax — TeXstudio-like palette (commands blue, comments gray). */
-  --cm-keyword: #0030c0;
-  --cm-comment: #7f7f7f;
-  --cm-string: #a31515;
-  --cm-number: #9a6700;
-  --cm-tag: #0030c0;
-  --cm-bracket: #6a737d;
+  /* LaTeX syntax — TeXstudio factory scheme (utilities/qxs/defaultFormats.qxf).
+     The name on each line is TeXstudio's own format id. Note that `numbers` is
+     the MATH BODY color, not the color of digits in text: TeXstudio has no rule
+     for digits outside math, and neither do we. */
+  --lx-cmd: #800000;        /* keyword        — \command, and \% \& \\ escapes */
+  --lx-envkw: #0095ff;      /* extra-keyword  — \begin / \end        (bold)  */
+  --lx-section: #0095ff;    /* extra-keyword  — \section, \chapter…  (bold)  */
+  --lx-envname: #000080;    /* environment    — the name in \begin{…}        */
+  --lx-structure: #000000;  /* structure      — the title in \section{…} (bold) */
+  --lx-mathdelim: #509600;  /* math-delimiter — $ $$ \( \) \[ \]            */
+  --lx-mathbody: #008000;   /* numbers        — everything inside math        */
+  --lx-mathcmd: #808000;    /* math-keyword   — \frac, \sum… inside math     */
+  --lx-amp: #0055FF;        /* align-ampersand — &                    (bold)  */
+  --lx-ref: #008000;        /* referencePresent — argument of \ref           */
+  --lx-cite: #008000;       /* citationPresent  — argument of \cite          */
+  --lx-package: #008000;    /* packagePresent   — argument of \usepackage    */
+  --lx-verbatim: #008080;   /* verbatim       — \verb and verbatim bodies    */
+  --lx-comment: #808080;    /* comment        — %                             */
+  --lx-todo-bg: #a8cf83;    /* commentTodo    — light uses a BACKGROUND       */
+  --lx-todo: inherit;       /* …and no foreground of its own                  */
+  --lx-magic: #555580;      /* magicComment   — % !TeX …                      */
+  --lx-picture: #804000;    /* picture        — tikzpicture body              */
+  --lx-picturekw: #c06000;  /* picture-keyword — \draw… inside a picture     */
+  --lx-py: #d6336c;         /* \py{} — Pyx's own bridge, not a TeXstudio format */
 
-  /* LaTeX granular overlay — one color per construct */
-  --lx-cmd: #0030c0;          /* generic \command */
-  --lx-section: #aa0d91;      /* \section, \chapter… */
-  --lx-envkw: #008080;        /* \begin / \end */
-  --lx-envname: #2f7d32;      /* environment name */
-  --lx-preamble: #7a3e9d;     /* \usepackage, \documentclass… */
-  --lx-ref: #b26a00;          /* \label, \ref, \cite… */
-  --lx-textfmt: #5b2da0;      /* \textbf, \emph, sizes… */
-  --lx-mathcmd: #00627a;      /* \frac, greeks, operators */
-  --lx-mathdelim: #9a6700;    /* $ delimiters */
-  --lx-math-bg: rgba(255, 228, 138, 0.35); /* $…$ region tint */
-  --lx-opt: #b05a00;          /* [options] */
-  --lx-brace: #687387;        /* { } */
-  --lx-number: #098658;       /* numbers + units */
-  --lx-comment: #7f8c7f;      /* % comments */
-  --lx-py: #d6336c;           /* \py — the Python bridge */
-  --lx-amp: #1b56d6;          /* & column separator (electric blue) */
-  --lx-url: #1a52c4;          /* \url, \href — underlined link */
-  --lx-escape: #c2187c;       /* \%, \&, \\ — escape-next */
-
-  /* Python tokens — VSCode Light+ exact values */
-  --py-control: #af00db;   /* import, for, if, return … */
-  --py-storage: #0000ff;   /* def, class, lambda */
-  --py-keyword: #0000ff;
-  --py-builtin: #795e26;   /* builtin functions */
-  --py-type: #267f99;      /* builtin types / classes */
-  --py-func: #795e26;
-  --py-string: #a31515;
-  --py-number: #098658;
-  --py-comment: #008000;
-  --py-operator: #000000;
-  --py-decorator: #795e26;
-  --py-variable: #001080;
-  --py-self: #0000ff;
-  --py-property: #001080;
-  --py-atom: #0000ff;
+  /* Python tokens — VSCode Light+ (verified against light_vs.json +
+     light_plus.json, the theme files VSCode ships). */
+  --py-control: #AF00DB;    /* keyword.control                              */
+  --py-storage: #0000FF;    /* storage.type                                 */
+  --py-logic: #0000FF;      /* keyword.operator.logical.python              */
+  --py-keyword: #0000FF;    /* keyword                                      */
+  --py-func: #795E26;       /* entity.name.function                         */
+  --py-builtin: #795E26;    /* support.function                             */
+  --py-decorator: #795E26;  /* entity.name.function.decorator               */
+  --py-type: #267F99;       /* support.type / entity.name.type              */
+  --py-namespace: #267F99;  /* entity.name.namespace                        */
+  --py-variable: #001080;   /* variable                                     */
+  --py-param: #001080;      /* variable.parameter                           */
+  --py-property: #001080;   /* variable.other.property                      */
+  --py-magic: #001080;      /* support.variable.magic                       */
+  --py-constant: #0070C1;   /* variable.other.constant                      */
+  --py-self: #001080;       /* Pylance selfParameter                        */
+  --py-atom: #0000FF;       /* constant.language                            */
+  --py-number: #098658;     /* constant.numeric                             */
+  --py-string: #A31515;     /* string                                       */
+  --py-escape: #EE0000;     /* constant.character.escape                    */
+  --py-fstring-brace: #0000FF; /* punctuation.definition.template-expression */
+  --py-format: #0000FF;     /* storage.type.format                          */
+  --py-comment: #008000;    /* comment                                      */
+  --py-operator: #000000;   /* keyword.operator                             */
+  --py-magiccmd: #AF00DB;   /* Jupyter magics (%%render, !pip)              */
+  --py-rawstring: #811F3F;  /* string.regexp                                */
+  --py-strprefix: #0000FF;  /* storage.type.string                          */
+  --py-numprefix: #0000FF;  /* storage.type.number                          */
+  --py-placeholder: #0000FF; /* constant.character.format                   */
 }
 
 /* ---------- Dark ---------- */
@@ -218,14 +234,19 @@
   --theme-editor-selection: rgba(0, 122, 204, 0.30);
   --theme-editor-cursor: #5fb0ff;
 
-  --theme-cell-bg: #282828;        /* distinct from the #1e1e1e editor background */
-  --theme-cell-border: #3a3a3a;
-  --theme-cell-toolbar-bg: #2d2d2e;
+  /* Cells — VSCode notebook colors (Dark Modern):
+     cellEditorBackground = sideBar.background #181818 (DARKER than the
+     canvas — that single step does all the grouping work), cellBorderColor
+     #37373D, focusedCellBorder = focusBorder #0078D4. */
+  --theme-cell-bg: #181818;
+  --theme-cell-border: #37373d;
+  --theme-cell-focus-idle: #37373d;
   --theme-cell-accent: #0078d4;
-  --theme-cell-header: #858585;
-  --theme-cell-output-bg: #1a1a1a;
-  --theme-cell-output-text: #d4d4d4;
-  --theme-cell-error: #f48771;
+  --theme-cell-hover: rgba(255, 255, 255, 0.15);
+  --theme-cell-header: #9d9d9d;
+  --theme-cell-output-bg: transparent;
+  --theme-cell-output-text: #cccccc;
+  --theme-cell-error: #f85149;
   --theme-cell-run-text: #3794ff;
 
   --theme-status-bg: #1f1f1f;
@@ -241,45 +262,62 @@
   --cm-tag: #d7ba7d;
   --cm-bracket: #9da3a8;
 
-  /* LaTeX granular overlay — TeXstudio dark inventory: keyword cyan (bold),
-     extra-keyword purple (bold), math delimiters light green, math keyword
-     bright green, numbers peach, ampersand electric blue (bold), environment
-     celeste (bold), link royal blue underlined, escape-next fuchsia (bold). */
-  --lx-cmd: #4fc1ff;
-  --lx-section: #e081bf;
-  --lx-envkw: #4ec9b0;
-  --lx-envname: #61d6ff;
-  --lx-preamble: #c586c0;
-  --lx-ref: #2ecc8f;
-  --lx-textfmt: #9d7cd8;
-  --lx-mathcmd: #3fe07f;
-  --lx-mathdelim: #8fe78f;
-  --lx-math-bg: rgba(140, 150, 60, 0.20);
-  --lx-opt: #ffb86c;
-  --lx-brace: #8a919c;
-  --lx-number: #ffcf9e;
-  --lx-comment: #9a9ec9;
-  --lx-py: #ff7eb6;
-  --lx-amp: #4f9cff;
-  --lx-url: #5a8cff;
-  --lx-escape: #ff5fd2;
+  /* LaTeX syntax — TeXstudio factory dark scheme
+     (utilities/qxs/defaultFormatsDark.qxf; identical to the [formatsDark]
+     block a real TeXstudio install writes). In this scheme `environment` is
+     deliberately the same color as `keyword` — that is how TeXstudio looks. */
+  --lx-cmd: #60cdf2;        /* keyword                                        */
+  --lx-envkw: #a960f2;      /* extra-keyword                          (bold)  */
+  --lx-section: #a960f2;    /* extra-keyword                          (bold)  */
+  --lx-envname: #60cdf2;    /* environment                                    */
+  --lx-structure: inherit;  /* structure — dark sets only <bold>, no color    */
+  --lx-mathdelim: #85f218;  /* math-delimiter                                 */
+  --lx-mathbody: #f2a960;   /* numbers — the math body                        */
+  --lx-mathcmd: #60f285;    /* math-keyword                                   */
+  --lx-amp: #184ef2;        /* align-ampersand                        (bold)  */
+  --lx-ref: #60f260;        /* referencePresent                               */
+  --lx-cite: #60f260;       /* citationPresent                                */
+  --lx-package: #60f260;    /* packagePresent                                 */
+  --lx-verbatim: #85f260;   /* verbatim                                       */
+  --lx-comment: #667299;    /* comment                                        */
+  --lx-todo-bg: transparent;/* commentTodo — dark inverts it: bold foreground */
+  --lx-todo: #a55992;       /* …and no background                             */
+  --lx-magic: #59a56c;      /* magicComment                                   */
+  --lx-picture: #f2f260;    /* picture                                        */
+  --lx-picturekw: #60f285;  /* picture-keyword (same as math-keyword in dark) */
+  --lx-py: #ff7eb6;         /* \py{} — Pyx's own bridge                      */
 
-  /* Python tokens — VSCode Dark+ exact values */
-  --py-control: #c586c0;   /* import, for, if, return … */
-  --py-storage: #569cd6;   /* def, class, lambda */
-  --py-keyword: #569cd6;
-  --py-builtin: #dcdcaa;   /* builtin functions: print, len */
-  --py-type: #4ec9b0;      /* builtin types / classes */
-  --py-func: #dcdcaa;
-  --py-string: #ce9178;
-  --py-number: #b5cea8;
-  --py-comment: #6a9955;
-  --py-operator: #d4d4d4;
-  --py-decorator: #dcdcaa;
-  --py-variable: #9cdcfe;
-  --py-self: #569cd6;
-  --py-property: #9cdcfe;
-  --py-atom: #569cd6;
+  /* Python tokens — VSCode Dark+ (verified against the theme files VSCode
+     ships: extensions/theme-defaults/themes/dark_vs.json + dark_plus.json).
+     The comment on each line is the TextMate scope the value comes from. */
+  --py-control: #C586C0;    /* keyword.control  — import, if, for, return   */
+  --py-storage: #569CD6;    /* storage.type     — def, class, lambda        */
+  --py-logic: #569CD6;      /* keyword.operator.logical.python — and/or/not/in/is */
+  --py-keyword: #569CD6;    /* keyword                                      */
+  --py-func: #DCDCAA;       /* entity.name.function                         */
+  --py-builtin: #DCDCAA;    /* support.function — print, len, range         */
+  --py-decorator: #DCDCAA;  /* entity.name.function.decorator               */
+  --py-type: #4EC9B0;       /* support.type / entity.name.type — int, ValueError */
+  --py-namespace: #4EC9B0;  /* entity.name.namespace — imported modules     */
+  --py-variable: #9CDCFE;   /* variable                                     */
+  --py-param: #9CDCFE;      /* variable.parameter                           */
+  --py-property: #9CDCFE;   /* variable.other.property — obj.attr           */
+  --py-magic: #9CDCFE;      /* support.variable.magic — __name__            */
+  --py-constant: #4FC1FF;   /* variable.other.constant — ALL_CAPS           */
+  --py-self: #9CDCFE;       /* Pylance selfParameter (overrides the grammar) */
+  --py-atom: #569CD6;       /* constant.language — True, False, None        */
+  --py-number: #B5CEA8;     /* constant.numeric                             */
+  --py-string: #CE9178;     /* string                                       */
+  --py-escape: #D7BA7D;     /* constant.character.escape — \n inside a string */
+  --py-fstring-brace: #569CD6; /* punctuation.definition.template-expression */
+  --py-format: #569CD6;     /* storage.type.format — the :.2f of an f-string */
+  --py-comment: #6A9955;    /* comment                                      */
+  --py-operator: #D4D4D4;   /* keyword.operator                             */
+  --py-magiccmd: #C586C0;   /* Jupyter magics (%%render, !pip) — not Python */
+  --py-rawstring: #D16969;  /* string.regexp — r"…" is a different red      */
+  --py-strprefix: #569CD6;  /* storage.type.string — the r/b/f before the quote */
+  --py-numprefix: #569CD6;  /* storage.type.number — the 0x of 0x1F, the j of 4j */
+  --py-placeholder: #569CD6; /* constant.character.format — %s and {0}       */
 }
 
 /* ---------- Blue ---------- */
@@ -357,12 +395,14 @@
   --theme-editor-selection: rgba(0, 180, 216, 0.28);
   --theme-editor-cursor: #48cae4;
 
-  --theme-cell-bg: #122a45;        /* distinct from the #0d1b2a editor background */
-  --theme-cell-border: #2a4a68;
-  --theme-cell-toolbar-bg: #17304a;
+  /* Cells — the same VSCode notebook anatomy in this theme's own tones. */
+  --theme-cell-bg: #0a1626;
+  --theme-cell-border: #23405c;
+  --theme-cell-focus-idle: #23405c;
   --theme-cell-accent: #48cae4;
+  --theme-cell-hover: rgba(255, 255, 255, 0.12);
   --theme-cell-header: #6e93b3;
-  --theme-cell-output-bg: #0a1623;
+  --theme-cell-output-bg: transparent;
   --theme-cell-output-text: #e0e1dd;
   --theme-cell-error: #ff8a8a;
   --theme-cell-run-text: #48cae4;
@@ -380,40 +420,147 @@
   --cm-tag: #ffd6a5;
   --cm-bracket: #98c1d9;
 
-  /* LaTeX granular overlay — one color per construct */
-  --lx-cmd: #48cae4;
-  --lx-section: #f4a4d4;
-  --lx-envkw: #4ec9b0;
-  --lx-envname: #97d8a0;
-  --lx-preamble: #c994e8;
-  --lx-ref: #ffd29b;
-  --lx-textfmt: #b3a0f2;
-  --lx-mathcmd: #6fd6e8;
-  --lx-mathdelim: #ffd6a5;
-  --lx-math-bg: rgba(72, 202, 228, 0.12);
-  --lx-opt: #f0b070;
-  --lx-brace: #7e9ab8;
-  --lx-number: #90e0ef;
-  --lx-comment: #5f7d97;
-  --lx-py: #ff8fc0;
-  --lx-amp: #7fb3ff;
-  --lx-url: #7fb3ff;
-  --lx-escape: #ff8fd6;
+  /* LaTeX syntax — TeXstudio factory dark scheme
+     (utilities/qxs/defaultFormatsDark.qxf; identical to the [formatsDark]
+     block a real TeXstudio install writes). In this scheme `environment` is
+     deliberately the same color as `keyword` — that is how TeXstudio looks. */
+  --lx-cmd: #60cdf2;        /* keyword                                        */
+  --lx-envkw: #a960f2;      /* extra-keyword                          (bold)  */
+  --lx-section: #a960f2;    /* extra-keyword                          (bold)  */
+  --lx-envname: #60cdf2;    /* environment                                    */
+  --lx-structure: inherit;  /* structure — dark sets only <bold>, no color    */
+  --lx-mathdelim: #85f218;  /* math-delimiter                                 */
+  --lx-mathbody: #f2a960;   /* numbers — the math body                        */
+  --lx-mathcmd: #60f285;    /* math-keyword                                   */
+  --lx-amp: #184ef2;        /* align-ampersand                        (bold)  */
+  --lx-ref: #60f260;        /* referencePresent                               */
+  --lx-cite: #60f260;       /* citationPresent                                */
+  --lx-package: #60f260;    /* packagePresent                                 */
+  --lx-verbatim: #85f260;   /* verbatim                                       */
+  --lx-comment: #667299;    /* comment                                        */
+  --lx-todo-bg: transparent;/* commentTodo — dark inverts it: bold foreground */
+  --lx-todo: #a55992;       /* …and no background                             */
+  --lx-magic: #59a56c;      /* magicComment                                   */
+  --lx-picture: #f2f260;    /* picture                                        */
+  --lx-picturekw: #60f285;  /* picture-keyword (same as math-keyword in dark) */
+  --lx-py: #ff7eb6;         /* \py{} — Pyx's own bridge                      */
 
-  /* Python tokens */
-  --py-control: #c586c0;
-  --py-storage: #4fc1ff;
-  --py-keyword: #4fc1ff;
-  --py-builtin: #dcdcaa;
-  --py-type: #4ec9b0;
-  --py-func: #dcdcaa;
-  --py-string: #ffd29b;
-  --py-number: #b5cea8;
-  --py-comment: #6a9c78;
-  --py-operator: #cfd8e3;
-  --py-decorator: #dcdcaa;
-  --py-variable: #9cdcfe;
-  --py-self: #4fc1ff;
-  --py-property: #9cdcfe;
-  --py-atom: #4fc1ff;
+  /* Python tokens — VSCode Dark+ (verified against the theme files VSCode
+     ships: extensions/theme-defaults/themes/dark_vs.json + dark_plus.json).
+     The comment on each line is the TextMate scope the value comes from. */
+  --py-control: #C586C0;    /* keyword.control  — import, if, for, return   */
+  --py-storage: #569CD6;    /* storage.type     — def, class, lambda        */
+  --py-logic: #569CD6;      /* keyword.operator.logical.python — and/or/not/in/is */
+  --py-keyword: #569CD6;    /* keyword                                      */
+  --py-func: #DCDCAA;       /* entity.name.function                         */
+  --py-builtin: #DCDCAA;    /* support.function — print, len, range         */
+  --py-decorator: #DCDCAA;  /* entity.name.function.decorator               */
+  --py-type: #4EC9B0;       /* support.type / entity.name.type — int, ValueError */
+  --py-namespace: #4EC9B0;  /* entity.name.namespace — imported modules     */
+  --py-variable: #9CDCFE;   /* variable                                     */
+  --py-param: #9CDCFE;      /* variable.parameter                           */
+  --py-property: #9CDCFE;   /* variable.other.property — obj.attr           */
+  --py-magic: #9CDCFE;      /* support.variable.magic — __name__            */
+  --py-constant: #4FC1FF;   /* variable.other.constant — ALL_CAPS           */
+  --py-self: #9CDCFE;       /* Pylance selfParameter (overrides the grammar) */
+  --py-atom: #569CD6;       /* constant.language — True, False, None        */
+  --py-number: #B5CEA8;     /* constant.numeric                             */
+  --py-string: #CE9178;     /* string                                       */
+  --py-escape: #D7BA7D;     /* constant.character.escape — \n inside a string */
+  --py-fstring-brace: #569CD6; /* punctuation.definition.template-expression */
+  --py-format: #569CD6;     /* storage.type.format — the :.2f of an f-string */
+  --py-comment: #6A9955;    /* comment                                      */
+  --py-operator: #D4D4D4;   /* keyword.operator                             */
+  --py-magiccmd: #C586C0;   /* Jupyter magics (%%render, !pip) — not Python */
+  --py-rawstring: #D16969;  /* string.regexp — r"…" is a different red      */
+  --py-strprefix: #569CD6;  /* storage.type.string — the r/b/f before the quote */
+  --py-numprefix: #569CD6;  /* storage.type.number — the 0x of 0x1F, the j of 4j */
+  --py-placeholder: #569CD6; /* constant.character.format — %s and {0}       */
+}
+
+/* ============================================================
+   PALETA PYTHON ALTERNATIVA — "2026 Dark/Light"
+   ============================================================
+   VSCode 1.138 estrenó un tema de fábrica nuevo (Dark 2026 / Light 2026,
+   de estilo GitHub). Pyx sigue usando por defecto la paleta clásica
+   Dark+/Light+, que es la que VSCode ha mostrado de forma estable desde
+   2015 y la que se corresponde con lo que se ve en la mayoría de capturas
+   y tutoriales. Quien prefiera la nueva la activa desde Configuración, que
+   pone data-py-palette="2026" en <html> y hace ganar este bloque.
+
+   Los valores NO están escritos a mano: salen de ejecutar el algoritmo de
+   resolución real de VSCode (especificidad del selector de ámbito, y a
+   igualdad gana la regla declarada más tarde) sobre los ficheros de tema
+   instalados, con la capa semántica de Pylance por encima. El comentario de
+   cada línea cita el fichero, el índice en tokenColors y el selector
+   ganador, para que cualquiera pueda auditarlo.
+   ============================================================ */
+/* ===== 2026 Dark ===== */
+[data-py-palette="2026"][data-theme="dark"],
+[data-py-palette="2026"][data-theme="blue"] {
+  /* editor.background #121314  |  editor.foreground #BBBEBF <- el color de todo lo que ninguna regla toca:
+     puntuacion, parentesis, comas, ->, y el texto suelto de un f-string */
+  --py-control: #C586C0;        /* TM  dark_plus[3] keyword.control  |  import, if, for, return, del, await */
+  --py-storage: #FF7B72;        /* TM  2026-dark[8] storage.type  |  def, class, lambda, async def */
+  --py-logic: #569CD6;          /* TM  dark_vs[43] keyword.operator.logical.python  |  and, or, not, in (test), is */
+  --py-keyword: #C586C0;        /* SEM default "keyword" -> probe [keyword.control] -> dark_plus[3] "keyword.control"  |  generico (el clasificador no lo usa) */
+  --py-func: #D2A8FF;           /* SEM default "function" -> probe [entity.name.function] -> 2026-dark[5] "entity.name.function"  |  nombre tras def y llamadas de usuario */
+  --py-builtin: #D2A8FF;        /* SEM default "function" -> probe [entity.name.function] -> 2026-dark[5] "entity.name.function"  |  print, len, range */
+  --py-decorator: #D2A8FF;      /* TM  2026-dark[5] entity.name.function  |  @decorador y la @ */
+  --py-type: #4EC9B0;           /* TM  dark_plus[1] support.type  |  int, str, ValueError, clase */
+  --py-namespace: #4EC9B0;      /* SEM default "namespace" -> probe [entity.name.namespace] -> dark_plus[1] "entity.name.namespace"  |  os, np tras import */
+  --py-variable: #C9D1D9;       /* SEM default "variable" -> probe [variable.other.readwrite] -> 2026-dark[14] "variable.other"  |  variable normal */
+  --py-param: #FFA657;          /* SEM default "parameter" -> probe [variable.parameter] -> 2026-dark[13] "variable"  |  parametro de def/lambda */
+  --py-property: #C9D1D9;       /* SEM default "property" -> probe [variable.other.property] -> 2026-dark[14] "variable.other"  |  obj.attr */
+  --py-magic: #79C0FF;          /* TM  2026-dark[26] support.variable  |  __name__, __debug__ */
+  --py-constant: #79C0FF;       /* SEM default "variable.readonly" -> probe [variable.other.constant] -> 2026-dark[2] "variable.other.constant"  |  MAX_ITER, Final */
+  --py-self: #C9D1D9;           /* SEM default "selfParameter:python" -> probe [variable.parameter.function.language.special.self.python] -> 2026-dark[4] "variable.parameter.function"  |  self / cls */
+  --py-atom: #569CD6;           /* TM  dark_vs[5] constant.language  |  True, False, None */
+  --py-number: #B5CEA8;         /* TM  dark_vs[6] constant.numeric  |  42, 3.14, 0x1F */
+  --py-string: #A5D6FF;         /* TM  2026-dark[10] string  |  "texto", docstrings */
+  --py-escape: #D7BA7D;         /* TM  dark_plus[13] constant.character.escape  |  \n, \t, {{ */
+  --py-fstring-brace: #FF7B72;  /* TM  2026-dark[1] constant.character  |  las llaves de f"{x}" */
+  --py-comment: #8B949E;        /* TM  2026-dark[0] comment  |  # comentario */
+  --py-operator: #D4D4D4;       /* TM  dark_vs[42] keyword.operator  |  + - * / == = < */
+  --py-magiccmd: #C586C0;       /* TM  dark_plus[3] keyword.control  |  invento de Pyx: %%magic, !pip */
+  --py-rawstring: #A5D6FF;      /* TM  2026-dark[22] string.regexp  |  r"..." */
+  --py-strprefix: #FF7B72;      /* TM  2026-dark[8] storage.type  |  la r/b/f antes de la comilla */
+  --py-numprefix: #FF7B72;      /* TM  2026-dark[8] storage.type  |  el 0x de 0x1F, la j de 4j */
+  --py-format: #FF7B72;         /* TM  2026-dark[8] storage.type.format  |  el :.2f de un f-string */
+  --py-placeholder: #FF7B72;    /* TM  2026-dark[1] constant.character  |  %s y {0} dentro de una cadena */
+}
+
+/* ===== 2026 Light ===== */
+[data-py-palette="2026"][data-theme="light"],
+[data-py-palette="2026"]:not([data-theme]) {
+  /* editor.background #FFFFFF  |  editor.foreground #202020 <- el color de todo lo que ninguna regla toca:
+     puntuacion, parentesis, comas, ->, y el texto suelto de un f-string */
+  --py-control: #AF00DB;        /* TM  light_plus[3] keyword.control  |  import, if, for, return, del, await */
+  --py-storage: #CF222E;        /* TM  2026-light[8] storage.type  |  def, class, lambda, async def */
+  --py-logic: #0000FF;          /* TM  light_vs[42] keyword.operator.logical.python  |  and, or, not, in (test), is */
+  --py-keyword: #AF00DB;        /* SEM default "keyword" -> probe [keyword.control] -> light_plus[3] "keyword.control"  |  generico (el clasificador no lo usa) */
+  --py-func: #8250DF;           /* SEM default "function" -> probe [entity.name.function] -> 2026-light[5] "entity.name.function"  |  nombre tras def y llamadas de usuario */
+  --py-builtin: #8250DF;        /* SEM default "function" -> probe [entity.name.function] -> 2026-light[5] "entity.name.function"  |  print, len, range */
+  --py-decorator: #8250DF;      /* TM  2026-light[5] entity.name.function  |  @decorador y la @ */
+  --py-type: #267F99;           /* TM  light_plus[1] support.type  |  int, str, ValueError, clase */
+  --py-namespace: #267F99;      /* SEM default "namespace" -> probe [entity.name.namespace] -> light_plus[1] "entity.name.namespace"  |  os, np tras import */
+  --py-variable: #1F2328;       /* SEM default "variable" -> probe [variable.other.readwrite] -> 2026-light[14] "variable.other"  |  variable normal */
+  --py-param: #953800;          /* SEM default "parameter" -> probe [variable.parameter] -> 2026-light[13] "variable"  |  parametro de def/lambda */
+  --py-property: #1F2328;       /* SEM default "property" -> probe [variable.other.property] -> 2026-light[14] "variable.other"  |  obj.attr */
+  --py-magic: #0550AE;          /* TM  2026-light[26] support.variable  |  __name__, __debug__ */
+  --py-constant: #0550AE;       /* SEM default "variable.readonly" -> probe [variable.other.constant] -> 2026-light[2] "variable.other.constant"  |  MAX_ITER, Final */
+  --py-self: #1F2328;           /* SEM default "selfParameter:python" -> probe [variable.parameter.function.language.special.self.python] -> 2026-light[4] "variable.parameter.function"  |  self / cls */
+  --py-atom: #0000FF;           /* TM  light_vs[5] constant.language  |  True, False, None */
+  --py-number: #098658;         /* TM  light_vs[6] constant.numeric  |  42, 3.14, 0x1F */
+  --py-string: #0A3069;         /* TM  2026-light[10] string  |  "texto", docstrings */
+  --py-escape: #EE0000;         /* TM  light_plus[13] constant.character.escape  |  \n, \t, {{ */
+  --py-fstring-brace: #CF222E;  /* TM  2026-light[1] constant.character  |  las llaves de f"{x}" */
+  --py-comment: #6E7781;        /* TM  2026-light[0] comment  |  # comentario */
+  --py-operator: #000000;       /* TM  light_vs[41] keyword.operator  |  + - * / == = < */
+  --py-magiccmd: #AF00DB;       /* TM  light_plus[3] keyword.control  |  invento de Pyx: %%magic, !pip */
+  --py-rawstring: #0A3069;      /* TM  2026-light[22] string.regexp  |  r"..." */
+  --py-strprefix: #CF222E;      /* TM  2026-light[8] storage.type  |  la r/b/f antes de la comilla */
+  --py-numprefix: #CF222E;      /* TM  2026-light[8] storage.type  |  el 0x de 0x1F, la j de 4j */
+  --py-format: #CF222E;         /* TM  2026-light[8] storage.type.format  |  el :.2f de un f-string */
+  --py-placeholder: #CF222E;    /* TM  2026-light[1] constant.character  |  %s y {0} dentro de una cadena */
 }

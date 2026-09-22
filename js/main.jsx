@@ -18,7 +18,9 @@ import { openNewDoc } from './solid/components/NewDocDialog.jsx';
 import { closeDialogs } from './solid/stores/dialogStore.js';
 import { lastArea, setPdfSearchOpen, setAuxOpen } from './solid/stores/previewStore.js';
 import { ensureKernel, restartKernel } from './editor/cell-runner.js';
-import { initSettings, general, setGeneral } from './solid/stores/settingsStore.js';
+import {
+  initSettings, general, gv, setGeneral, setSession, getSession,
+} from './solid/stores/settingsStore.js';
 import {
   registerKeyHandlers, comboFromEvent, comboOf, findAction, runAction,
 } from './solid/stores/keysStore.js';
@@ -160,7 +162,18 @@ if (viewerBoot) {
   // Ctrl+wheel / touchpad pinch must zoom the PDF (or do nothing), never the
   // whole interface (WebView2's page zoom would scale every panel).
   window.addEventListener('wheel', (e) => {
-    if (e.ctrlKey) e.preventDefault();
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    // Over the editor it zooms the TEXT (Configuración → Editor → «Zoom con
+    // Ctrl + rueda»). This has to live here rather than in a CodeMirror
+    // handler: the listener above runs in the capture phase, and CodeMirror
+    // drops any event that already had preventDefault() called on it.
+    if (gv('wheelZoom') === false) return;
+    const el = e.target;
+    if (!el || !el.closest || !el.closest('.editor-host')) return;
+    const cur = +gv('fontSize') || 13.5;
+    const next = Math.min(40, Math.max(6, +(cur + (e.deltaY < 0 ? 0.5 : -0.5)).toFixed(1)));
+    if (next !== cur) setGeneral({ fontSize: next });
   }, { passive: false, capture: true });
 
   // Documents the OS hands us: a double-clicked .pltx (the bundle registers
@@ -170,6 +183,31 @@ if (viewerBoot) {
   onAppEvent('app:open-files', (paths) => {
     if (Array.isArray(paths) && paths.length) openFromOs(paths);
   });
+
+  /* ---- autoguardado + sesión (Configuración → General) ----
+     One slow timer does both jobs. It remembers which files are open (so
+     "restaurar la sesión" can reopen them next launch) and, when autosave is
+     on, saves the active document once its interval has elapsed — only if it
+     already has a path, so a save dialog can never pop up on its own. */
+  let lastAutosave = Date.now();
+  setInterval(() => {
+    try {
+      setSession(state.documents.filter((d) => !d.kind && d.path).map((d) => d.path));
+    } catch (_) { /* storage full / unavailable */ }
+    if (gv('autosave') !== true) { lastAutosave = Date.now(); return; }
+    const every = Math.max(1, Math.min(60, Math.round(+gv('autosaveMin') || 5))) * 60_000;
+    if (Date.now() - lastAutosave < every) return;
+    lastAutosave = Date.now();
+    const doc = state.documents[state.activeIndex];
+    if (doc && !doc.kind && doc.path && doc.modified) saveActive();
+  }, 5000);
+
+  /** Reopen the files of the last session, in order. */
+  async function restoreSession() {
+    for (const p of getSession()) {
+      try { await openPath(p); } catch (_) { /* moved or deleted — skip it */ }
+    }
+  }
 
   render(() => <App />, document.getElementById('app-root'));
 
@@ -188,7 +226,11 @@ if (viewerBoot) {
     // for — and closing it was the first thing to do before opening the real
     // project.
     invoke('take_pending_open')
-      .then((paths) => (Array.isArray(paths) && paths.length ? openFromOs(paths) : null))
+      .then((paths) => {
+        if (Array.isArray(paths) && paths.length) return openFromOs(paths);
+        // Nothing was double-clicked: honor "restaurar la sesión al abrir".
+        return gv('restoreSession') === true ? restoreSession() : null;
+      })
       .catch(() => {});
   }
 }

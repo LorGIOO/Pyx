@@ -17,7 +17,8 @@
   display: flex;
   flex-direction: column;
   background: var(--theme-surface);
-  border: 1px solid var(--theme-titlebar-border);
+  border: var(--ctl-stroke) solid var(--theme-titlebar-border);
+  border-radius: var(--ctl-radius);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
 }
@@ -37,6 +38,13 @@
   cursor: default;
   border-left: 2px solid transparent;
 }
+/* Option search — looks across every category, TeXstudio-style. */
+.cfg-search {
+  width: calc(100% - 16px);
+  margin: 2px 8px 8px;
+  height: var(--ctl-h);
+  font-size: var(--ctl-font);
+}
 .cfg-cat:hover { background: var(--theme-hover); }
 .cfg-cat.active {
   background: var(--theme-hover);
@@ -46,12 +54,16 @@
 }
 .cfg-theme-row { display: flex; gap: 8px; margin: 4px 0 6px; }
 .cfg-theme {
-  height: 30px; padding: 0 12px;
-  border: 1px solid var(--theme-border);
+  height: var(--ctl-h); padding: 0 12px;
+  border: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: var(--ctl-radius);
   color: #fff; font-size: 11px; font-weight: 600;
   text-shadow: 0 1px 2px rgba(0,0,0,0.6); cursor: default;
 }
-.cfg-theme.active { outline: 2px solid var(--theme-accent); outline-offset: 1px; }
+/* Selected swatch: same 2px ring VS Code puts on the active image
+   thumbnail (`.image-carousel-editor .thumbnail.active
+   {border-color:var(--vscode-focusBorder)}` over a 2px border). */
+.cfg-theme.active { outline: 2px solid var(--ctl-focus); outline-offset: 1px; }
 .cfg-titlebar {
   display: flex;
   align-items: center;
@@ -61,7 +73,8 @@
   /* Follows the active theme (white in light, dark in dark/blue) instead of a
      hardcoded white gradient, so the modal frame matches the rest of the UI. */
   background: var(--theme-titlebar-bg-start);
-  border-bottom: 1px solid var(--theme-titlebar-border);
+  border-bottom: var(--ctl-stroke) solid var(--theme-titlebar-border);
+  border-radius: var(--ctl-radius) var(--ctl-radius) 0 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--theme-titlebar-text);
@@ -84,102 +97,96 @@
   color: var(--theme-text);
 }
 .cfg-hint { font-size: 11px; color: var(--theme-text-secondary); margin: 4px 0 10px; }
+/* `.settings-group-title-label {font-weight:600}` +
+   `{color:var(--vscode-settings-headerForeground)}`. VS Code sets
+   18-26px there; this dialog is far denser, so 13px. */
 .cfg-section {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  color: var(--theme-accent);
-  margin: 10px 0 4px;
-  border-bottom: 1px solid var(--theme-border);
-  padding-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--theme-header-fg, var(--theme-text));
+  margin: 12px 0 4px;
+  border-bottom: var(--ctl-stroke) solid var(--theme-border);
+  padding-bottom: 3px;
 }
 .cfg-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 3px 2px;
-  font-size: 12px;
+  padding: 3px 4px;
+  font-size: var(--ctl-font);
+  border-radius: var(--ctl-radius-sm);
 }
 .cfg-row:hover { background: var(--theme-hover); }
 .cfg-label { flex: 1; color: var(--theme-text); }
-.cfg-row input[type="color"] {
-  width: 34px; height: 22px; padding: 0;
-  border: 1px solid var(--theme-border); background: var(--theme-surface);
-  cursor: default;
-}
+.cfg-row input[type="color"] { width: 34px; height: var(--ctl-h-sm); }
 .cfg-chk {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 12px; color: var(--theme-text-secondary); cursor: default;
   width: 36px;
 }
-.cfg-chk input { cursor: default; }
+/* Compact boxes for the syntax table, like VS Code's own dense
+   contexts (`.settings .setting .monaco-checkbox {height:14px;width:14px}`). */
+.cfg-chk input[type="checkbox"] { width: 14px; height: 14px; }
+.cfg-chk input[type="checkbox"]::after { -webkit-mask-size: 12px 12px; mask-size: 12px 12px; }
 .cfg-bg { opacity: 0.9; }
 .cfg-clear {
   width: 20px; height: 20px;
-  border: 1px solid var(--theme-border);
+  border: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: var(--ctl-radius-sm);
   background: transparent; color: var(--theme-text-secondary);
   font-size: 11px; cursor: default;
 }
 .cfg-clear:hover { background: var(--theme-hover); color: var(--theme-text); }
+/* `.settings-editor … .monaco-select-box {height:26px;padding:2px 6px}`.
+   The class is used both on <select> and on <input type="text">, so it
+   only carries the size; the look comes from controls.css. */
 .cfg-select {
-  height: 24px;
+  height: var(--ctl-h);
   min-width: 150px;
-  font-size: 12px;
-  padding: 0 6px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface);
-  color: var(--theme-text);
-  cursor: default;
+  font-size: var(--ctl-font);
 }
-.cfg-select:focus { outline: none; border-color: var(--theme-accent); }
+.cfg-select.cfg-wide { flex: 1; min-width: 0; }
+/* Fixed-width readout right of a slider, so the rows stay aligned. */
+.cfg-val {
+  width: 84px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--theme-text-secondary);
+}
+.cfg-row input[type="range"] { width: 170px; flex-shrink: 0; }
 
 .cfg-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1px solid var(--theme-border);
+  border-top: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: 0 0 var(--ctl-radius) var(--ctl-radius);
   background: var(--theme-panel-bg);
 }
-.cfg-footer button {
-  height: 26px; padding: 0 14px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface); color: var(--theme-text);
-  font-size: 12px; cursor: default;
-}
-.cfg-footer button:hover { background: var(--theme-hover); }
-.cfg-footer button.primary { background: var(--theme-accent); color: #fff; border-color: var(--theme-accent); }
-.cfg-footer button.primary:hover { filter: brightness(1.08); }
+/* Look and sizing come from controls.css (.monaco-text-button). */
+.cfg-footer button { padding: 4px 14px; }
+/* "Restablecer todo" armed: a second click actually wipes the settings. */
+.cfg-footer button.danger { border-color: #d16969; color: #d16969; font-weight: 600; }
 
 /* ---- table / figure wizards (reuse the dialog chrome) ---- */
 .wz-modal { width: 460px; height: auto; max-height: 80vh; }
 .wz-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; color: var(--theme-text); overflow: auto; }
 .wz-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .wz-label { width: 110px; flex-shrink: 0; color: var(--theme-text); }
+/* Sizing only — border, radius and focus come from controls.css. */
 .wz-row input[type="text"], .wz-row input[type="number"], .wz-row select {
   flex: 1;
   min-width: 0;
-  height: 24px;
-  padding: 0 6px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-ribbon-input-bg);
-  color: var(--theme-text);
-  font-size: 12px;
-  outline: none;
+  height: var(--ctl-h);
+  font-size: var(--ctl-font);
 }
 .wz-row input[type="number"] { flex: 0 0 70px; }
 .wz-row input[type="range"] { flex: 1; }
-.wz-row input:focus, .wz-row select:focus { border-color: var(--theme-accent); }
 .wz-val { width: 110px; font-size: 11px; color: var(--theme-text-secondary); }
 .wz-hint { font-size: 11px; color: var(--theme-text-secondary); }
-.wz-browse {
-  height: 24px; padding: 0 10px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-surface); color: var(--theme-text);
-  font-size: 12px; cursor: default;
-}
-.wz-browse:hover { background: var(--theme-hover); border-color: var(--theme-accent); }
+.wz-browse { padding: 4px 10px; }
 
 /* ---- keyboard shortcuts tab (TeXstudio-like table) ---- */
 .cfg-keys-head, .cfg-keys-row {
@@ -210,7 +217,8 @@
 }
 .cfg-kbd {
   padding: 3px 10px;
-  border: 1px solid var(--theme-border);
+  border: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: var(--ctl-radius-sm);
   background: var(--theme-panel-bg);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 12px;
@@ -220,22 +228,14 @@
   text-overflow: ellipsis;
 }
 .cfg-kbd.capturing {
-  border-color: var(--theme-accent, #3794ff);
-  color: var(--theme-accent, #3794ff);
+  border-color: var(--ctl-focus);
+  color: var(--ctl-focus);
   font-style: italic;
 }
 .cfg-kbd.conflict { border-color: #d16969; color: #d16969; }
-.cfg-btn {
-  padding: 3px 12px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-panel-bg);
-  color: var(--theme-text);
-  font-size: 12px;
-  cursor: default;
-  white-space: nowrap;
-}
-.cfg-btn:hover { background: var(--theme-hover); border-color: var(--theme-accent, #3794ff); }
-.cfg-btn.icon { width: 26px; padding: 3px 0; text-align: center; }
+/* `.monaco-text-button.small {line-height:14px;font-size:11px;padding:3px 6px}` */
+.cfg-btn { height: var(--ctl-h-sm); padding: 3px 10px; font-size: 11px; line-height: 14px; }
+.cfg-btn.icon { width: 26px; padding: 3px 0; }
 
 /* Searchable font picker (type to filter; each suggestion in its own face). */
 .cfg-fontpick { position: relative; flex: 0 0 240px; }
@@ -247,7 +247,8 @@
   max-height: 280px;
   overflow-y: auto;
   background: var(--theme-surface);
-  border: 1px solid var(--theme-border);
+  border: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: var(--ctl-radius);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
 }
 .cfg-font-item {
@@ -280,7 +281,8 @@
   padding: 18px 16px;
   text-align: left;
   background: var(--theme-panel-bg);
-  border: 1px solid var(--theme-border);
+  border: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: var(--ctl-radius);
   color: var(--theme-text);
   cursor: default;
 }

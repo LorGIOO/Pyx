@@ -141,8 +141,104 @@ Lo que escribes es lo que ves, siempre.
   no en ese instante, y un guardado empaquetaba uno mientras la apertura
   restauraba el otro.
 
+### Añadido
+
+- **El menú del clic derecho distingue las correcciones de las órdenes.** Al
+  pulsar sobre una palabra mal escrita, las sugerencias salían en la lista con
+  exactamente el mismo aspecto que «Cortar» o «Copiar», así que no había forma
+  de ver de un vistazo qué filas sustituían la palabra y cuáles actuaban sobre
+  ella. Ahora las encabeza un rótulo —«Sugerencias para «coheficiente»»— y se
+  escriben en la tipografía del editor, en negrita: son palabras, no
+  comandos. Además **cada entrada lleva su icono** en una columna fija, de
+  modo que todas las etiquetas arrancan a la misma altura, como en VS Code.
+  Vale para el menú del editor, el del árbol de archivos y los de la celda.
+
+- **Las etiquetas al pasar el ratón ya no son las de Windows.** El tooltip del
+  sistema tarda cerca de un segundo, usa la fuente del sistema, ignora el tema
+  y desentona con todo lo demás. Pyx dibuja el suyo, con los números del de VS
+  Code (500 ms de retardo, 13 px, borde de un píxel, radio de 5) y con el
+  atajo de teclado en teclas aparte. Se conserva la accesibilidad: donde se
+  quita el `title` queda un `aria-label`.
+
+- **La celda trae la barra de herramientas de VS Code**, con las mismas
+  acciones y en el mismo orden: ejecutar las celdas anteriores, ejecutar esta
+  y las siguientes, dividir la celda por el cursor, un menú «…» y eliminar.
+  El menú «…» añade cortar y copiar la celda, insertar una celda arriba o
+  abajo, contraerla, y borrar o copiar su salida. La salida tiene además su
+  propio «…» junto al número de ejecución, con **copiar la salida** y
+  **borrar la salida** —lo que se pide cuando lo que quieres es el resultado,
+  no el código—. Todo aparece solo en la celda en la que estás, como en VS
+  Code: una celda en reposo enseña su código y nada más.
+
+- **El corrector ortográfico deja de subrayar el vocabulario del documento.**
+  Medido sobre una muestra de 128 palabras españolas y 74 inglesas reales de
+  una memoria de cálculo, el corrector rechazaba 19 y 16: `flector`, `axil`,
+  `hiperestático`, `geotecnia`, `hidrograma`, `mayoración`, `rebar`,
+  `formwork`, `subgrade`… Ahora no rechaza ninguna, y las 34 erratas parecidas
+  que se le pusieron delante (`flecktor`, `hiperstatico`, `arriostramento`,
+  `formwok`) las sigue marcando, con su sugerencia correcta. Dos cambios lo
+  consiguen: `public/dict/en.dic` pasa a ser la **unión de las listas
+  estadounidense y británica** —antes un texto en inglés británico salía con
+  `behaviour`, `modelling`, `optimisation`, `centre` y `analysed` subrayadas,
+  todas correctas—, y cada idioma gana un suplemento técnico
+  (`public/dict/*.extra.txt`) con el vocabulario de ingeniería civil, cálculo
+  estructural, geotecnia, hidrología, topografía y materiales que ningún
+  diccionario general recoge. El español sigue siendo el RLA, que es el mejor
+  diccionario libre que existe para este idioma y el mismo que usa
+  LibreOffice. `tools/build-dicts.mjs` regenera los archivos y se niega a
+  fusionar el inglés si las dos variantes dejan de compartir tabla de afijos.
+
 ### Cambiado
 
+- **Los controles y los iconos siguen ahora el patrón de VS Code.** Los
+  desplegables, las casillas, los deslizadores, los campos y los botones se
+  han rehecho con las medidas de la propia hoja de estilos de VS Code, y los
+  iconos con el trazo de sus codicons: caja de 16×16, trazo de 1,2 px, sin
+  rellenos salvo cuando la forma ES un sólido. Dos detalles que se notaban:
+  la marca de la casilla se dibujaba a 16 px dentro de un área de 20 y se
+  salía por la esquina, con lo que parecía un carácter suelto en vez de una
+  casilla; y el estado de la celda usaba los caracteres `✓` y `✗`, que cada
+  fuente dibuja a su manera, en vez de un icono.
+
+- **Los colores del editor ya no son una aproximación: son los de TeXstudio y
+  los de VS Code.** El LaTeX reproduce el esquema de fábrica de TeXstudio,
+  tomado de los dos ficheros que el propio TeXstudio carga al arrancar
+  (`defaultFormats.qxf` y `defaultFormatsDark.qxf`) y contrastado con el
+  esquema que una instalación real escribe en su `texstudio.ini`. Eso incluye
+  tres cosas que casi nadie acierta de memoria: el formato llamado `numbers`
+  es el color del **contenido matemático**, no el de los dígitos —los números
+  en texto corriente no llevan color—; las llaves, los corchetes y los escapes
+  tipo `\%` tampoco tienen color propio (el escape usa el del comando); y
+  `\begin`/`\end` comparten formato con `\section`, mientras el nombre del
+  entorno y el título de la sección llevan cada uno el suyo. Se añaden
+  construcciones que antes no se distinguían: contenido y comandos
+  matemáticos, `verbatim` y `\verb`, cuerpos de `tikzpicture`, comentarios
+  `%TODO` y mágicos `% !TeX`, y el argumento de `\ref`, `\cite` y
+  `\usepackage`.
+- **El Python de las celdas se colorea como un `.py` en VS Code.** El
+  resaltador dejó de ser un tokenizador por caracteres y pasa a analizar la
+  celda con la gramática real de Python, que es lo único que permite
+  distinguir lo que VS Code distingue: `foo(x)` como función y `x` como
+  variable, `obj.attr` como propiedad y `obj.metodo()` como función, la clase
+  como tipo, `MAX_ITER` como constante, los escapes dentro de una cadena, el
+  prefijo `r`/`b`/`f` y el `0x` de un número con su propio color, el
+  especificador `:.2f` de un f-string, y el `in` de un `for` en el color del
+  `for` mientras el `in` de una comprobación de pertenencia va en el de los
+  operadores. Los valores salen de los ficheros de tema que VS Code instala,
+  no de la memoria de nadie.
+- **Las celdas Python se ven como las de VS Code.** Canalón de 44 píxeles a la
+  izquierda con el botón de ejecutar y el plegado fuera de la caja, una sola
+  barra continua marcando la celda activa, caja plana con borde de un píxel y
+  esquinas de 6 píxeles, barra de estado inferior con el resultado, el tiempo
+  y el lenguaje, y la salida sobre el lienzo sin marco, alineada con el código
+  para que se lean como una columna. Lo que sobra —limpiar salida, eliminar,
+  plegar— solo aparece en la celda en la que estás. La celda activa se marca
+  con **dos barras alineadas**, una por el código y otra por la salida,
+  separadas por los 3 píxeles que deja VS Code. Estaban desplazadas un píxel
+  entre sí por un motivo que cuesta ver: un hijo posicionado en absoluto se
+  coloca contra la *caja de relleno* de su ancestro, así que los tramos que
+  cuelgan de la caja con borde empezaban un píxel más a la derecha que el de
+  la salida, que no lo tiene.
 - **Ctrl+S guarda, compila y muestra el PDF**, igual que «Compilar y ver»:
   ejecuta las celdas que lo necesiten y LaTeX, y abre el visor si estaba
   cerrado. Antes lanzaba una compilación de fondo que no abría el visor.

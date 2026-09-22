@@ -13,25 +13,27 @@ import {
   lineNumbers,
   highlightActiveLine,
   highlightActiveLineGutter,
+  highlightWhitespace,
+  highlightTrailingWhitespace,
   drawSelection,
   dropCursor,
   keymap,
 } from '@codemirror/view';
 import {
   StreamLanguage,
-  syntaxHighlighting,
-  HighlightStyle,
   indentOnInput,
+  indentUnit,
   bracketMatching,
   codeFolding,
   foldGutter,
   foldKeymap,
 } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import {
+  defaultKeymap, history, historyKeymap, indentWithTab, insertNewline,
+} from '@codemirror/commands';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { closeBrackets, closeBracketsKeymap, autocompletion } from '@codemirror/autocomplete';
-import { tags as t } from '@lezer/highlight';
 
 import { state as appState } from '../core/state.js';
 import { docIdFacet } from './doc-id.js';
@@ -51,7 +53,7 @@ import { pathLinks } from './link-paths.js';
 import { latexFold } from './latex-fold.js';
 import { spellCheck, spellRefresh } from './spellcheck.js';
 import { setDocSnap, scheduleDerived } from '../solid/stores/structureStore.js';
-import { general } from '../solid/stores/settingsStore.js';
+import { gv } from '../solid/stores/settingsStore.js';
 
 // Marks transactions that were forwarded from a sibling pane (prevents loops).
 const syncAnnotation = Annotation.define();
@@ -63,11 +65,99 @@ const mkMinimap = () => showMinimap.compute([], () => ({
   displayText: 'blocks',
   showOverlay: 'always',
 }));
-const minimapExt = () => minimapCompartment.of(general.minimap === true ? mkMinimap() : []);
+const minimapExt = () => minimapCompartment.of(gv('minimap') === true ? mkMinimap() : []);
 
 /** Turn the minimap on/off LIVE in every pane and every stored doc state. */
 export function setMinimapEnabled(on) {
   const eff = minimapCompartment.reconfigure(on ? mkMinimap() : []);
+  for (const vw of paneViews.values()) {
+    try { vw.dispatch({ effects: eff }); } catch (_) {}
+  }
+  for (const [id, st] of docStates) {
+    try { docStates.set(id, st.update({ effects: eff }).state); } catch (_) {}
+  }
+}
+
+/* ---------- editor options (Configuración → Editor / Autocompletado) ----------
+ *
+ * Everything the user can switch on or off that is BEHAVIOUR rather than
+ * appearance lives in one compartment, so changing a checkbox reconfigures
+ * every open pane AND every stored document state at once — no reload, no lost
+ * cursor, no lost undo history. Appearance (font, spacing, rulers, cursor
+ * width) goes through CSS instead: see settingsStore.applyGeneral.
+ */
+const optsCompartment = new Compartment();
+
+/* Completion source honoring "distinguir mayúsculas y minúsculas".
+ *
+ * CodeMirror filters candidates case-insensitively and has no switch for it, so
+ * the strict mode is applied HERE: the options that do not share the typed
+ * prefix exactly are dropped, and `validFor` is removed so every extra
+ * keystroke re-queries instead of reusing the loose client-side filter.
+ * The leading backslash of a LaTeX command is ignored on both sides. */
+async function completionSource(context) {
+  const res = await calcCompletions(context);
+  if (!res || !res.options || gv('completionCaseSensitive') !== true) return res;
+  const typed = context.state.sliceDoc(res.from, context.pos).replace(/^\\/, '');
+  if (!typed) return res;
+  const options = res.options.filter(
+    (o) => String(o.label || '').replace(/^\\/, '').startsWith(typed),
+  );
+  return { ...res, options, validFor: undefined };
+}
+
+const clampInt = (v, def, lo, hi) => {
+  const n = Math.round(+v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+};
+
+/** The live extension set for every option in Configuración → Editor. */
+function editorOptions() {
+  const tabSize = clampInt(gv('tabSize'), 4, 1, 16);
+  const ext = [
+    EditorState.tabSize.of(tabSize),
+    // What Tab and auto-indent actually insert.
+    indentUnit.of(gv('indentWithSpaces') === false ? '\t' : ' '.repeat(tabSize)),
+  ];
+  if (gv('autoIndent') !== false) ext.push(indentOnInput());
+  if (gv('lineWrap') !== false) ext.push(EditorView.lineWrapping);
+  if (gv('indentGuidesOn') !== false) ext.push(indentGuides);
+  if (gv('activeLine') !== false) ext.push(highlightActiveLine(), highlightActiveLineGutter());
+  if (gv('matchBrackets') !== false) ext.push(bracketMatching());
+  if (gv('closeBrackets') !== false) ext.push(closeBrackets());
+  if (gv('selectionMatches') !== false) ext.push(highlightSelectionMatches());
+  if (gv('showWhitespace') === true) ext.push(highlightWhitespace());
+  if (gv('showTrailingWs') === true) ext.push(highlightTrailingWhitespace());
+  // Live "ghost" values shown after each \py{…} (Mathcad/MATLAB-style). It
+  // lives here so switching it off in Configuración drops the decorations at
+  // once: the plugin recomputes only on edits, never on a plain settings read.
+  if (gv('pyGhost') !== false) ext.push(pyGhost);
+  // "Zoom con Ctrl + rueda" is NOT an editor extension: main.jsx swallows every
+  // Ctrl+wheel in the capture phase (WebView2 would otherwise zoom the whole
+  // interface), and CodeMirror ignores any event already defaultPrevented. The
+  // zoom therefore lives next to that listener.
+  // TeXstudio's "Cursor Surrounding Lines": never let the caret touch the edge.
+  const margin = clampInt(gv('cursorMargin'), 0, 0, 30);
+  if (margin > 0) {
+    ext.push(EditorView.scrollMargins.of((view) => {
+      const h = view.defaultLineHeight * margin;
+      return { top: h, bottom: h };
+    }));
+  }
+  if (gv('completion') !== false) {
+    ext.push(autocompletion({
+      override: [completionSource],
+      activateOnTyping: gv('completionOnTyping') !== false,
+      selectOnOpen: gv('completionSelectFirst') !== false,
+      icons: gv('completionIcons') !== false,
+    }));
+  }
+  return ext;
+}
+
+/** Re-apply Configuración → Editor to every pane and every stored document. */
+export function applyEditorSettings() {
+  const eff = optsCompartment.reconfigure(editorOptions());
   for (const vw of paneViews.values()) {
     try { vw.dispatch({ effects: eff }); } catch (_) {}
   }
@@ -94,16 +184,6 @@ function publishDoc(doc) {
   scheduleDerived(doc);
 }
 
-// Syntax colors are CSS classes so they follow the theme variables.
-const calcHighlight = HighlightStyle.define([
-  { tag: t.comment, class: 'tok-comment' },
-  { tag: t.lineComment, class: 'tok-comment' },
-  { tag: [t.string, t.special(t.string)], class: 'tok-string' },
-  { tag: [t.number, t.integer, t.float], class: 'tok-number' },
-  { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword], class: 'tok-keyword' },
-  { tag: [t.tagName, t.atom, t.labelName, t.macroName], class: 'tok-tag' },
-  { tag: [t.bracket, t.squareBracket, t.brace, t.paren, t.punctuation], class: 'tok-bracket' },
-]);
 
 // Called on every document edit (wired by main.jsx to the live compiler —
 // injected to avoid a static import cycle: compiler imports this module).
@@ -167,22 +247,16 @@ export function createDocState(docId, content) {
       // Bookmark gutter sits LEFT of the line numbers (TeXstudio layout).
       bookmarks,
       lineNumbers(),
-      highlightActiveLineGutter(),
-      highlightActiveLine(),
       history(),
       drawSelection(),
       dropCursor(),
       EditorState.allowMultipleSelections.of(true),
-      indentOnInput(),
-      bracketMatching(),
-      closeBrackets(),
-      autocompletion({ override: [calcCompletions], activateOnTyping: true }),
-      highlightSelectionMatches(),
       search({ top: true, createPanel: pyxSearchPanel }),
       StreamLanguage.define(stex),
-      syntaxHighlighting(calcHighlight),
-      // Vertical indent guides (TeXstudio-style hierarchy lines).
-      indentGuides,
+      // Everything the user can switch in Configuración → Editor /
+      // Autocompletado: tabulación, indentación, ajuste de línea, guías,
+      // línea activa, paréntesis, espacios en blanco, zoom con la rueda…
+      optsCompartment.of(editorOptions()),
       // VSCode-style minimap (Configuración → Editor → Minimapa).
       minimapExt(),
       latexHighlight,
@@ -193,10 +267,7 @@ export function createDocState(docId, content) {
       foldGutter({ openText: '▾', closedText: '▸' }),
       // Word-style proofing: red spell underline + blue grammar underline.
       spellCheck,
-      EditorView.lineWrapping,
       cellsExtension,
-      // Live "ghost" values shown after each \py{…} (Mathcad/MATLAB-style).
-      pyGhost,
       // Live Python syntax squiggles in cells (VSCode-style, exact line/col).
       pyLint,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
@@ -208,6 +279,11 @@ export function createDocState(docId, content) {
         { key: 'Mod-a', run: selectCellOrAll },
         { key: 'Ctrl-t', run: toggleLineComment, preventDefault: true },
         { key: 'Enter', run: smartEnter },
+        // "Indentación automática" off → Enter starts the new line at column 1.
+        // Sits between smartEnter (\begin…\end, \item) and defaultKeymap's
+        // insertNewlineAndIndent, and reads the setting live, so it needs no
+        // reconfiguration of its own.
+        { key: 'Enter', run: (view) => (gv('autoIndent') === false ? insertNewline(view) : false) },
         // Jupyter-style cell reorder (whole cell moves; plain lines otherwise).
         { key: 'Alt-ArrowUp', run: moveCellOrLineUp, preventDefault: true },
         { key: 'Alt-ArrowDown', run: moveCellOrLineDown, preventDefault: true },

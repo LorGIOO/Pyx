@@ -12,8 +12,9 @@ import {
 import { doUndo, doRedo } from '../../editor/commands.js';
 import { setShowConfig } from '../stores/settingsStore.js';
 import { icons } from './ribbon/icons.js';
-
-const GEAR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+// Installs the drawn hover widget that replaces the native `title` tooltip,
+// app-wide. Imported here because the title bar is always mounted.
+import './Tooltip.jsx';
 
 // Brand symbology (Simbología.svg, blue accent). The J-stroke follows the
 // titlebar text color so it stays visible on light and dark themes; the bar
@@ -55,7 +56,7 @@ export default function TitleBar() {
           <Qa icon={icons.undo} title={t('Deshacer (Ctrl+Z)', 'Undo (Ctrl+Z)')} disabled={!hasDoc()} onClick={doUndo} />
           <Qa icon={icons.redo} title={t('Rehacer (Ctrl+Y)', 'Redo (Ctrl+Y)')} disabled={!hasDoc()} onClick={doRedo} />
           <div class="quick-access-separator"></div>
-          <Qa icon={GEAR} title={t('Configuración', 'Settings')} onClick={() => setShowConfig(true)} />
+          <Qa icon={icons.gear} title={t('Configuración', 'Settings')} onClick={() => setShowConfig(true)} />
         </div>
       </div>
 

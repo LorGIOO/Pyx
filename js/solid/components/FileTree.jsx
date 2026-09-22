@@ -8,6 +8,7 @@ import { openPath, openImageTab } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import { loadPdf } from '../../pdf/preview.js';
 import { showContextMenu } from './ContextMenu.jsx';
+import { icons } from './ribbon/icons.js';
 
 /* ---- file-type icons (VSCode-style, colored by language) ---- */
 const FI = {
@@ -133,22 +134,22 @@ export default function FileTree(props) {
   const nodeMenu = (e, item) => {
     const dir = item.is_dir ? item.path : dirOf(item.path);
     showContextMenu(e, [
-      { label: 'Abrir', onClick: () => (item.is_dir ? toggleDir(item.path) : openFile(item)) },
-      { label: 'Mostrar en el Explorador', onClick: () => revealInExplorer(item.path) },
+      { label: 'Abrir', icon: icons.open, onClick: () => (item.is_dir ? toggleDir(item.path) : openFile(item)) },
+      { label: 'Mostrar en el Explorador', icon: icons.folder, onClick: () => revealInExplorer(item.path) },
       { separator: true },
-      { label: 'Nuevo archivo…', onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: false }); } },
-      { label: 'Nueva carpeta…', onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: true }); } },
+      { label: 'Nuevo archivo…', icon: icons.newFile, onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: false }); } },
+      { label: 'Nueva carpeta…', icon: icons.newFolder, onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: true }); } },
       { separator: true },
-      { label: 'Renombrar', shortcut: 'F2', onClick: () => startRename(item.path) },
-      { label: 'Eliminar', shortcut: 'Supr', danger: true, onClick: () => doDelete(item) },
+      { label: 'Renombrar', icon: icons.saveAs, shortcut: 'F2', onClick: () => startRename(item.path) },
+      { label: 'Eliminar', icon: icons.trash, shortcut: 'Supr', danger: true, onClick: () => doDelete(item) },
     ]);
   };
   const bgMenu = (e) => {
     showContextMenu(e, [
-      { label: 'Nuevo archivo…', onClick: () => setCreating({ dir: props.root, isDir: false }) },
-      { label: 'Nueva carpeta…', onClick: () => setCreating({ dir: props.root, isDir: true }) },
+      { label: 'Nuevo archivo…', icon: icons.newFile, onClick: () => setCreating({ dir: props.root, isDir: false }) },
+      { label: 'Nueva carpeta…', icon: icons.newFolder, onClick: () => setCreating({ dir: props.root, isDir: true }) },
       { separator: true },
-      { label: 'Actualizar', onClick: () => refresh(props.root) },
+      { label: 'Actualizar', icon: icons.refresh, onClick: () => refresh(props.root) },
     ]);
   };
 

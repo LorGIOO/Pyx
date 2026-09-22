@@ -12,6 +12,7 @@ import { toc, crumbPath } from '../stores/structureStore.js';
 import { getView, broadcastSpellRefresh } from '../../editor/setup.js';
 import { spellInfoAt, addToUserDict } from '../../editor/spellcheck.js';
 import { showContextMenu } from './ContextMenu.jsx';
+import { icons } from './ribbon/icons.js';
 import { setLastArea } from '../stores/previewStore.js';
 import ImageViewerPane from './viewers/ImageViewerPane.jsx';
 import HtmlViewerPane from './viewers/HtmlViewerPane.jsx';
@@ -33,32 +34,43 @@ function editorMenu(e) {
         view.dispatch({ changes: { from: info.from, to: info.to, insert: word }, selection: { anchor: info.from + word.length } });
         view.focus();
       };
+      // The corrections are WORDS, not commands. They get their own caption
+      // and their own look (`suggestion`), because when they sat in the list
+      // styled like "Cortar" and "Copiar" there was no way to tell at a
+      // glance which rows would replace the word and which would act on it.
       spellItems = [
+        { header: `Sugerencias para «${info.word}»` },
         ...(info.suggestions.length
-          ? info.suggestions.map((s) => ({ label: s, bold: true, onClick: () => replace(s) }))
-          : [{ label: '(sin sugerencias)', disabled: true, onClick: () => {} }]),
+          ? info.suggestions.map((s) => ({
+            label: s, suggestion: true, icon: icons.replace, onClick: () => replace(s),
+          }))
+          : [{ label: 'Sin sugerencias', disabled: true, icon: icons.circleSlash, onClick: () => {} }]),
         { separator: true },
-        { label: 'Agregar al diccionario', onClick: () => { addToUserDict(info.word); broadcastSpellRefresh(); } },
+        {
+          label: 'Agregar al diccionario',
+          icon: icons.book,
+          onClick: () => { addToUserDict(info.word); broadcastSpellRefresh(); },
+        },
         { separator: true },
       ];
     }
   }
   const items = [
     ...spellItems,
-    { label: 'Cortar', shortcut: 'Ctrl+X', onClick: () => clip('cut') },
-    { label: 'Copiar', shortcut: 'Ctrl+C', onClick: () => clip('copy') },
-    { label: 'Pegar', shortcut: 'Ctrl+V', onClick: () => pasteClipboard() },
+    { label: 'Cortar', icon: icons.cut, shortcut: 'Ctrl+X', onClick: () => clip('cut') },
+    { label: 'Copiar', icon: icons.copy, shortcut: 'Ctrl+C', onClick: () => clip('copy') },
+    { label: 'Pegar', icon: icons.paste, shortcut: 'Ctrl+V', onClick: () => pasteClipboard() },
     { separator: true },
-    { label: 'Seleccionar todo', shortcut: 'Ctrl+A', onClick: () => selectAll() },
+    { label: 'Seleccionar todo', icon: icons.selectAll, shortcut: 'Ctrl+A', onClick: () => selectAll() },
     { separator: true },
-    { label: 'Deshacer', shortcut: 'Ctrl+Z', onClick: () => doUndo() },
-    { label: 'Rehacer', shortcut: 'Ctrl+Y', onClick: () => doRedo() },
+    { label: 'Deshacer', icon: icons.undo, shortcut: 'Ctrl+Z', onClick: () => doUndo() },
+    { label: 'Rehacer', icon: icons.redo, shortcut: 'Ctrl+Y', onClick: () => doRedo() },
     { separator: true },
-    { label: 'Buscar…', shortcut: 'Ctrl+F', onClick: () => openFind() },
+    { label: 'Buscar…', icon: icons.find, shortcut: 'Ctrl+F', onClick: () => openFind() },
   ];
   // Python cells are a Pyx (.pltx) capability — hidden for plain .tex.
   if (isPyxDoc(activeDoc())) {
-    items.push({ label: 'Nueva celda Python', shortcut: 'Ctrl+Alt+C', onClick: () => insertCell() });
+    items.push({ label: 'Nueva celda Python', icon: icons.cell, shortcut: 'Ctrl+Alt+C', onClick: () => insertCell() });
   }
   showContextMenu(e, items);
 }

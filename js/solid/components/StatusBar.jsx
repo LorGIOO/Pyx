@@ -2,6 +2,7 @@ import { Show } from 'solid-js';
 import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import { wordCount } from '../stores/structureStore.js';
+import { icons } from './ribbon/icons.js';
 
 const kernelLabel = () => ({
   idle: t('Kernel inactivo', 'Kernel idle'),
@@ -36,9 +37,13 @@ export default function StatusBar() {
       <Show when={state.compiling}>
         <div class="status-item"><span class="value">{t('Compilando…', 'Compiling…')}</span></div>
       </Show>
+      {/* codicon: pass */}
       <Show when={!state.compiling && state.lastCompileOk === true}>
         <div class="status-item" title={state.compileMs ? `${(state.compileMs / 1000).toFixed(1)} s` : ''}>
-          <span class="value" style={{ color: '#16a34a' }}>{t('✓ Compilado', '✓ Compiled')}</span>
+          <span class="value" style={{ color: '#16a34a' }}>
+            <span class="pyx-ico status-ico" innerHTML={icons.pass}></span>
+            {t('Compilado', 'Compiled')}
+          </span>
         </div>
       </Show>
       {/* A project this heavy is no longer rebuilt on every typing pause — say
@@ -51,13 +56,21 @@ export default function StatusBar() {
             'This project takes too long to rebuild on every pause. Compile on demand with Ctrl+Shift+B.',
           )}
         >
+          {/* codicon: debug-pause */}
           <span class="value" style={{ color: '#d97706' }}>
-            {t('⏸ Compilación automática en pausa', '⏸ Auto-compile paused')}
+            <span class="pyx-ico status-ico" innerHTML={icons.pause}></span>
+            {t('Compilación automática en pausa', 'Auto-compile paused')}
           </span>
         </div>
       </Show>
       <Show when={!state.compiling && state.lastCompileOk === false}>
-        <div class="status-item"><span class="value" style={{ color: '#dc2626' }}>{t('✗ Error de compilación', '✗ Compilation error')}</span></div>
+        {/* codicon: error */}
+        <div class="status-item">
+          <span class="value" style={{ color: '#dc2626' }}>
+            <span class="pyx-ico status-ico" innerHTML={icons.error}></span>
+            {t('Error de compilación', 'Compilation error')}
+          </span>
+        </div>
       </Show>
 
       <div class="status-item" title={t('Palabras del texto (sin comandos, comentarios ni celdas)', 'Words of prose (no commands, comments or cells)')}>

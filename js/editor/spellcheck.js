@@ -35,15 +35,35 @@ export function spellLang() {
 }
 let speller = null;          // the active language's speller, or null
 
+/** `dict/<code>.extra.txt` — a hand-maintained technical word list layered on
+ *  top of the Hunspell dictionary. No general dictionary carries `flector`,
+ *  `hiperestático`, `rebar` or `subgrade`, and an engineering document is full
+ *  of them: without this, a calculation report comes out with half a page
+ *  underlined and the checker stops being read at all. Optional — a language
+ *  without one just gets the plain dictionary. */
+function loadExtra(code) {
+  return fetch(`dict/${code}.extra.txt`)
+    .then((r) => (r.ok ? r.text() : ''))
+    .catch(() => '');
+}
+
 function loadDict(code) {
   if (spellers.has(code)) return Promise.resolve(spellers.get(code));
   if (!building.has(code)) {
     building.set(code, Promise.all([
       fetch(`dict/${code}.aff`).then((r) => (r.ok ? r.text() : Promise.reject(r.status))),
       fetch(`dict/${code}.dic`).then((r) => (r.ok ? r.text() : Promise.reject(r.status))),
+      loadExtra(code),
     ])
-      .then(([aff, dic]) => {
+      .then(([aff, dic, extra]) => {
         const s = Nspell(aff, dic);
+        const words = extra.split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith('#'));
+        // One at a time: a malformed line must not cost us the whole list.
+        for (const w of words) {
+          try { s.add(w); } catch (_) { /* skip that word */ }
+        }
         spellers.set(code, s);
         return s;
       })

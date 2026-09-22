@@ -1,11 +1,22 @@
 import { createSignal } from 'solid-js';
 
-export const [scale, setScale] = createSignal(1.25);
+// Viewer defaults come from Configuración → Visor PDF. Read straight from
+// localStorage (not from settingsStore) so this module stays free of imports:
+// preview.js sits in an import cycle with the editor and must load first.
+function saved(key, fallback) {
+  try {
+    const g = JSON.parse(localStorage.getItem('calc-general') || '{}');
+    return g[key] === undefined ? fallback : g[key];
+  } catch (_) { return fallback; }
+}
+
+export const [scale, setScale] = createSignal(+saved('pdfZoom', 1.25) || 1.25);
 export const [numPages, setNumPages] = createSignal(0);
 export const [currentPage, setCurrentPage] = createSignal(1);
-export const [fitMode, setFitMode] = createSignal('width'); // none | width | page | text
+// none | width | height | page | text
+export const [fitMode, setFitMode] = createSignal(saved('pdfFit', 'width'));
 export const [tool, setTool] = createSignal('select'); // select | pan | magnify
-export const [invert, setInvert] = createSignal(false); // dark "night mode" folio
+export const [invert, setInvert] = createSignal(saved('pdfInvert', false) === true); // night-mode folio
 export const [previewFile, setPreviewFile] = createSignal('');
 export const [hasPdf, setHasPdf] = createSignal(false);
 // Last PDF load failure, shown in the viewer instead of a silent blank pane.

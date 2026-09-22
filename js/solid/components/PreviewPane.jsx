@@ -14,37 +14,41 @@ import { undoLast, clearPage } from '../../pdf/annotate.js';
 import {
   openExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
 } from '../../core/platform.js';
+import { icons as ICO } from './ribbon/icons.js';
 
-const S = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
+// Viewer toolbar icons — same hand as the ribbon and the notebook cells:
+// a 16x16 box, 1.2px strokes, no fills unless the shape IS a solid. The
+// comment on each line names the codicon it is modelled on.
+const S = 'viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"';
 const ic = {
-  first: `<svg viewBox="0 0 20 20"><path ${S} d="M6 4v12M15 5l-6 5 6 5"/></svg>`,
-  prev: `<svg viewBox="0 0 20 20"><path ${S} d="M13 5l-6 5 6 5"/></svg>`,
-  next: `<svg viewBox="0 0 20 20"><path ${S} d="M7 5l6 5-6 5"/></svg>`,
-  last: `<svg viewBox="0 0 20 20"><path ${S} d="M14 4v12M5 5l6 5-6 5"/></svg>`,
-  zin: `<svg viewBox="0 0 20 20"><circle ${S} cx="9" cy="9" r="5"/><path ${S} d="M16 16l-3.5-3.5M9 6.8v4.4M6.8 9h4.4"/></svg>`,
-  zout: `<svg viewBox="0 0 20 20"><circle ${S} cx="9" cy="9" r="5"/><path ${S} d="M16 16l-3.5-3.5M6.8 9h4.4"/></svg>`,
-  fitW: `<svg viewBox="0 0 20 20"><path ${S} d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg>`,
-  fitH: `<svg viewBox="0 0 20 20"><path ${S} d="M10 3v14M7 6l3-3 3 3M7 14l3 3 3-3"/></svg>`,
-  sel: `<svg viewBox="0 0 20 20"><path ${S} d="M5 3l11 5-5 1.5L9 16z"/></svg>`,
-  pan: `<svg viewBox="0 0 20 20"><path ${S} d="M9 8V4.5a1.2 1.2 0 0 1 2.4 0V8m0-1a1.2 1.2 0 0 1 2.4 0v3m0-2a1.2 1.2 0 0 1 2.4 0v4a4 4 0 0 1-4 4h-2l-3-3-2.5-3a1.3 1.3 0 0 1 2-1.6L9 11"/></svg>`,
-  mag: `<svg viewBox="0 0 20 20"><circle ${S} cx="9" cy="9" r="5.5"/><path ${S} d="M17 17l-4-4"/></svg>`,
-  contrast: `<svg viewBox="0 0 20 20"><circle ${S} cx="10" cy="10" r="7"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>`,
-  max: `<svg viewBox="0 0 20 20"><path ${S} d="M4 8V4h4M16 8V4h-4M4 12v4h4M16 12v4h-4"/></svg>`,
-  float: `<svg viewBox="0 0 20 20"><path ${S} d="M9 4H4v12h12v-5M12 4h4v4M16 4l-7 7"/></svg>`,
-  save: `<svg viewBox="0 0 20 20"><path ${S} d="M10 3v9m0 0l-3.5-3.5M10 12l3.5-3.5M4 15v2h12v-2"/></svg>`,
-  detach: `<svg viewBox="0 0 20 20"><rect ${S} x="3" y="6" width="10" height="10"/><path ${S} d="M7 6V3.5h9.5V13H14"/></svg>`,
-  close: `<svg viewBox="0 0 20 20"><path ${S} d="M5 5l10 10M15 5L5 15"/></svg>`,
-  find: `<svg viewBox="0 0 20 20"><circle ${S} cx="8.5" cy="8.5" r="5"/><path ${S} d="M16 16l-3.7-3.7"/><path ${S} d="M6.5 8.5h4M8.5 6.5v4" opacity="0"/></svg>`,
-  draw: `<svg viewBox="0 0 20 20"><path ${S} d="M4 16l1-3.5L13 4.5l2.5 2.5L7.5 15z"/><path ${S} d="M11.5 6.5l2.5 2.5"/></svg>`,
-  pen: `<svg viewBox="0 0 20 20"><path ${S} d="M4 16l1-3.5L13 4.5l2.5 2.5L7.5 15z"/><path ${S} d="M11.5 6.5l2.5 2.5"/></svg>`,
-  marker: `<svg viewBox="0 0 20 20"><path ${S} d="M5 15l-1 2h4l-1-2M6 14l5.5-8.5 3 2L9 16z"/></svg>`,
-  rect: `<svg viewBox="0 0 20 20"><rect ${S} x="4" y="5" width="12" height="10"/></svg>`,
-  arrow: `<svg viewBox="0 0 20 20"><path ${S} d="M4 16L15 5M15 5h-5M15 5v5"/></svg>`,
-  line: `<svg viewBox="0 0 20 20"><path ${S} d="M4 16L16 4"/></svg>`,
-  noteText: `<svg viewBox="0 0 20 20"><path ${S} d="M5 4h10M10 4v12"/></svg>`,
-  eraser: `<svg viewBox="0 0 20 20"><path ${S} d="M7 16l-3-3 7-7 3 3-7 7zM10 16h6"/></svg>`,
-  undo: `<svg viewBox="0 0 20 20"><path ${S} d="M7 6L3 9l4 3M3 9h8a5 5 0 0 1 0 10H8"/></svg>`,
-  trashAll: `<svg viewBox="0 0 20 20"><path ${S} d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg>`,
+  first: `<svg ${S}><path d="M4 3.2v9.6M12 3.6 7.6 8l4.4 4.4"/></svg>`,                 // codicon: chevron-left + bar
+  prev: `<svg ${S}><path d="m10.2 3.6-4.4 4.4 4.4 4.4"/></svg>`,                          // codicon: chevron-left
+  next: `<svg ${S}><path d="m5.8 3.6 4.4 4.4-4.4 4.4"/></svg>`,                           // codicon: chevron-right
+  last: `<svg ${S}><path d="M12 3.2v9.6M4 3.6 8.4 8 4 12.4"/></svg>`,                     // codicon: chevron-right + bar
+  zin: `<svg ${S}><circle cx="6.8" cy="6.8" r="4.4"/><path d="m10.1 10.1 4.4 4.4M6.8 4.7v4.2M4.7 6.8h4.2"/></svg>`,  // codicon: zoom-in
+  zout: `<svg ${S}><circle cx="6.8" cy="6.8" r="4.4"/><path d="m10.1 10.1 4.4 4.4M4.7 6.8h4.2"/></svg>`,             // codicon: zoom-out
+  fitW: `<svg ${S}><path d="M2 8h12M5 5 2 8l3 3M11 5l3 3-3 3"/></svg>`,                   // codicon: arrow-both
+  fitH: `<svg ${S}><path d="M8 2v12M5 5l3-3 3 3M5 11l3 3 3-3"/></svg>`,                   // codicon: arrow-both (rotated)
+  sel: `<svg ${S}><path d="M3.6 2.4 12.8 6.6 8.7 8 7.3 12.1z"/></svg>`,                   // codicon: inspect
+  pan: `<svg ${S}><path d="M6.6 7.2V3.8a1.1 1.1 0 0 1 2.2 0v3.2m0-1.1a1.1 1.1 0 0 1 2.2 0v2.4m0-1.6a1.1 1.1 0 0 1 2.2 0v3.8a3.4 3.4 0 0 1-3.4 3.4H7.7l-2.5-2.5-2-2.4a1.2 1.2 0 0 1 1.8-1.5l1.6 1.7"/></svg>`,
+  mag: `<svg ${S}><circle cx="7" cy="7" r="4.5"/><path d="m10.3 10.3 4.2 4.2"/></svg>`,    // codicon: search
+  contrast: `<svg ${S}><circle cx="8" cy="8" r="5.6"/><path d="M8 2.4a5.6 5.6 0 0 1 0 11.2z" fill="currentColor" stroke="none"/></svg>`, // codicon: color-mode
+  max: `<svg ${S}><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>`, // codicon: screen-full
+  float: `<svg ${S}><path d="M7.4 2.5H2.5v11h11V8.6M10 2.5h3.5V6M13.5 2.5 7.8 8.2"/></svg>`, // codicon: link-external
+  save: `<svg ${S}><path d="M8 2.4v7.4M5 6.8 8 9.8l3-3M2.8 12v1.6h10.4V12"/></svg>`,      // codicon: desktop-download
+  detach: `<svg ${S}><rect x="1.5" y="5.5" width="8.6" height="8.6" rx="1"/><path d="M5.8 5.5V2.4a.9.9 0 0 1 .9-.9h7.9v8.6a.9.9 0 0 1-.9.9h-3.6"/></svg>`, // codicon: multiple-windows
+  close: `<svg ${S}><path d="m3.6 3.6 8.8 8.8M12.4 3.6l-8.8 8.8"/></svg>`,                // codicon: close
+  find: `<svg ${S}><circle cx="7" cy="7" r="4.5"/><path d="m10.3 10.3 4.2 4.2"/></svg>`,  // codicon: search
+  draw: `<svg ${S}><path d="m2.5 13.5.9-3 7.3-7.3 2.1 2.1-7.3 7.3z"/><path d="m9.4 4.6 2.1 2.1"/></svg>`, // codicon: edit
+  pen: `<svg ${S}><path d="m2.5 13.5.9-3 7.3-7.3 2.1 2.1-7.3 7.3z"/><path d="m9.4 4.6 2.1 2.1"/></svg>`,  // codicon: edit
+  marker: `<svg ${S}><path d="M4.2 12.3 3.4 14h3.4l-.8-1.7"/><path d="m5 11.4 4.6-7.2 2.6 1.7-4.6 7.2z"/></svg>`,
+  rect: `<svg ${S}><rect x="2.5" y="3.5" width="11" height="9" rx="1"/></svg>`,           // codicon: primitive-square
+  arrow: `<svg ${S}><path d="M3 13 12.6 3.4M12.6 3.4H8.3M12.6 3.4v4.3"/></svg>`,          // codicon: arrow-up-right
+  line: `<svg ${S}><path d="M3 13 13 3"/></svg>`,
+  noteText: `<svg ${S}><path d="M4 3h8M8 3v10"/></svg>`,                                  // codicon: symbol-text
+  eraser: `<svg ${S}><path d="m5.6 13.2-2.8-2.8 6-6 2.8 2.8-6 6zM7.8 13.2h5.6"/></svg>`,
+  undo: `<svg ${S}><path d="M2.5 6.4h7a3.8 3.8 0 0 1 0 7.6H6"/><path d="M5.6 3.3 2.5 6.4l3.1 3.1"/></svg>`, // codicon: discard
+  trashAll: `<svg ${S}><path d="M3 4h10M6 4V2.7h4V4M5 4l.7 9h4.6L11 4z"/></svg>`,         // codicon: trash
 };
 
 const ANNOT_TOOLS = [
@@ -141,9 +145,10 @@ function PdfSearchBar() {
           ? `Indexando… ${Math.round(searchProgress() * 100)}%`
           : total() ? `${pos()} de ${total()}` : 'Sin resultados'}
       </span>
-      <button title="Anterior (Shift+Enter)" onClick={() => step(-1)}>↑</button>
-      <button title="Siguiente (Enter)" onClick={() => step(1)}>↓</button>
-      <button title="Cerrar (Esc)" onClick={close}>✕</button>
+      {/* codicon: arrow-up / arrow-down / close */}
+      <button class="pyx-ico" title="Anterior (Shift+Enter)" innerHTML={ICO.arrowUp} onClick={() => step(-1)} />
+      <button class="pyx-ico" title="Siguiente (Enter)" innerHTML={ICO.arrowDown} onClick={() => step(1)} />
+      <button class="pyx-ico" title="Cerrar (Esc)" innerHTML={ic.close} onClick={close} />
     </div>
   );
 }

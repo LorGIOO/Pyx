@@ -64,36 +64,29 @@
 }
 
 /* Syntax colors driven by theme variables. */
-.editor-host .tok-keyword { color: var(--cm-keyword); }
-.editor-host .tok-comment { color: var(--cm-comment); font-style: italic; }
-.editor-host .tok-string { color: var(--cm-string); }
-.editor-host .tok-number { color: var(--cm-number); }
-.editor-host .tok-tag { color: var(--cm-tag); }
-.editor-host .tok-bracket { color: var(--cm-bracket); }
 
-/* LaTeX granular overlay (after tok-* so it wins on shared spans):
-   every construct gets its own color, TeXstudio-grade. */
-/* Defaults follow the TeXstudio "Formatos" inventory: keywords bold, env
-   names bold, links underlined, escape-next bold, ampersand bold… Every
-   property is user-overridable from Configuración. */
-.editor-host .cm-lx-cmd { color: var(--lx-cmd); font-weight: 700; }
-.editor-host .cm-lx-section { color: var(--lx-section); font-weight: 700; }
+/* LaTeX tokens — TeXstudio's factory scheme. Only the three formats TeXstudio
+   marks <bold> are bold (extra-keyword, align-ampersand, structure); nothing
+   here is italic, because nothing in TeXstudio's scheme is. */
+.editor-host .cm-lx-cmd { color: var(--lx-cmd); }
 .editor-host .cm-lx-envkw { color: var(--lx-envkw); font-weight: 700; }
-.editor-host .cm-lx-envname { color: var(--lx-envname); font-weight: 700; }
-.editor-host .cm-lx-preamble { color: var(--lx-preamble); font-weight: 700; }
-.editor-host .cm-lx-ref { color: var(--lx-ref); }
-.editor-host .cm-lx-url { color: var(--lx-url); text-decoration: underline; }
-.editor-host .cm-lx-textfmt { color: var(--lx-textfmt); }
+.editor-host .cm-lx-section { color: var(--lx-section); font-weight: 700; }
+.editor-host .cm-lx-envname { color: var(--lx-envname); }
+.editor-host .cm-lx-structure { color: var(--lx-structure); font-weight: 700; }
+.editor-host .cm-lx-mathdelim { color: var(--lx-mathdelim); }
+.editor-host .cm-lx-mathbody { color: var(--lx-mathbody); }
 .editor-host .cm-lx-mathcmd { color: var(--lx-mathcmd); }
-.editor-host .cm-lx-mathdelim { color: var(--lx-mathdelim); font-weight: 700; }
-.editor-host .cm-lx-math { background: var(--lx-math-bg); }
-.editor-host .cm-lx-opt { color: var(--lx-opt); }
-.editor-host .cm-lx-brace { color: var(--lx-brace); }
-.editor-host .cm-lx-number { color: var(--lx-number); }
-.editor-host .cm-lx-comment { color: var(--lx-comment); font-style: italic; }
-.editor-host .cm-lx-escape { color: var(--lx-escape); font-weight: 700; }
-.editor-host .cm-lx-py { color: var(--lx-py); font-weight: 700; }
 .editor-host .cm-lx-amp { color: var(--lx-amp); font-weight: 700; }
+.editor-host .cm-lx-ref { color: var(--lx-ref); }
+.editor-host .cm-lx-cite { color: var(--lx-cite); }
+.editor-host .cm-lx-package { color: var(--lx-package); }
+.editor-host .cm-lx-verbatim { color: var(--lx-verbatim); }
+.editor-host .cm-lx-comment { color: var(--lx-comment); }
+.editor-host .cm-lx-magic { color: var(--lx-magic); }
+.editor-host .cm-lx-todo { color: var(--lx-todo); background: var(--lx-todo-bg); font-weight: 700; }
+.editor-host .cm-lx-picture { color: var(--lx-picture); }
+.editor-host .cm-lx-picturekw { color: var(--lx-picturekw); }
+.editor-host .cm-lx-py { color: var(--lx-py); font-weight: 700; }
 
 /* ---- autocomplete dropdown: theme-aware, VSCode-style ---- */
 .cm-tooltip {

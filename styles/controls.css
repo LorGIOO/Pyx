@@ -1,0 +1,357 @@
+/* ============================================================
+   CONTROLS — dropdowns, checkboxes, sliders, text fields and
+   buttons, modelled on VS Code 1.138's own widgets.
+
+   Every measurement below is copied from VS Code's shipped
+   stylesheet (out/vs/workbench/workbench.desktop.main.css) or
+   from its design tokens; the source rule is quoted next to it
+   so nothing here is guesswork. Colors come from the theme
+   variables (see themes.css); where a matching variable does
+   not exist yet the new name is used with a fallback to the
+   closest existing one, so adding it later is a no-op here.
+
+   VS Code design tokens (registered in workbench.desktop.main.js):
+     cornerRadius.xSmall  2px    spacing.size20   2px
+     cornerRadius.small   4px    spacing.size40   4px
+     cornerRadius.medium  6px    spacing.size120 12px
+     cornerRadius.circle  9999px spacing.size160 16px
+     strokeThickness      1px    spacing.size280 28px
+   ============================================================ */
+
+:root {
+  /* Two radii for the whole UI (VS Code cornerRadius.small /
+     .xSmall). Anything round — slider thumb, dots — uses 50%. */
+  --ctl-radius: 4px;
+  --ctl-radius-sm: 2px;
+
+  /* Control heights. VS Code: `.monaco-select-box {height:22px}`
+     in toolbars, `height:26px` inside the settings editor. */
+  --ctl-h: 26px;
+  --ctl-h-sm: 22px;
+  --ctl-font: 12px;
+
+  /* One border everywhere: VS Code strokeThickness = 1px. */
+  --ctl-stroke: 1px;
+
+  /* input.background / dropdown.background  (#FFFFFF light, #313131 dark)
+     input.border     / dropdown.border      (#CECECE light, #3C3C3C dark)
+     input.foreground / dropdown.foreground  (#3B3B3B light, #CCCCCC dark) */
+  --ctl-bg: var(--theme-input-bg, var(--theme-ribbon-input-bg));
+  --ctl-fg: var(--theme-input-fg, var(--theme-ribbon-input-text));
+  --ctl-border: var(--theme-input-border, var(--theme-ribbon-input-border));
+
+  /* focusBorder (#005FB8 light, #0078D4 dark). */
+  --ctl-focus: var(--theme-focus-border, var(--theme-accent));
+
+  /* checkbox.background (#F8F8F8 light, #313131 dark)
+     checkbox.border     (#CECECE light, #3C3C3C dark)
+     checkbox.foreground = foreground (#3B3B3B light, #CCCCCC dark) */
+  --ctl-check-bg: var(--theme-checkbox-bg, var(--ctl-bg));
+  --ctl-check-border: var(--theme-checkbox-border, var(--ctl-border));
+  --ctl-check-fg: var(--theme-checkbox-fg, var(--theme-text));
+
+  /* button.background / .foreground / .hoverBackground and the
+     secondary trio (dark_modern / light_modern). */
+  --ctl-btn-bg: var(--theme-button-bg, var(--theme-accent));
+  --ctl-btn-fg: var(--theme-button-fg, #ffffff);
+  --ctl-btn-hover: var(--theme-button-hover-bg, var(--theme-accent-hover));
+  --ctl-btn2-bg: var(--theme-button2-bg, transparent);
+  --ctl-btn2-fg: var(--theme-button2-fg, var(--theme-text));
+  --ctl-btn2-hover: var(--theme-button2-hover-bg, var(--theme-hover));
+
+  /* The tick drawn inside a checked box: the codicon `check`
+     shape on a 16px grid, used as a mask so it takes the
+     checkbox's own color (VS Code paints it with the codicon
+     font in settings.checkboxForeground). */
+  --ctl-check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l3.1 3.1 5.9-6.6' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* ---------- dropdowns (<select>) ----------------------------
+   `.monaco-select-box {height:22px;padding:0 22px 0 6px;
+     font-size:inherit;text-overflow:ellipsis;white-space:nowrap}`
+   `.monaco-select-box {width:100%;cursor:pointer;
+     border-radius:var(--vscode-cornerRadius-small)}`
+   The native Windows arrow is dropped (appearance:none) and the
+   caret is drawn here, like `.monaco-workbench .select-container:after`
+   does in VS Code (a chevron 16px wide, `right:4px`, not clickable).
+   Two gradients make the triangle so it follows `currentColor`
+   (VS Code paints its chevron in dropdown.foreground). */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  height: var(--ctl-h-sm);
+  padding: 0 22px 0 6px;
+  font-family: inherit;
+  font-size: var(--ctl-font);
+  color: var(--ctl-fg);
+  background-color: var(--ctl-bg);
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 10px center, right 6px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  border: var(--ctl-stroke) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+  cursor: pointer;
+  outline: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The popup list is drawn by the OS: this is what makes it follow
+   the theme (VS Code: dropdown.listBackground #1F1F1F in dark). */
+select { color-scheme: light; }
+[data-theme="dark"] select,
+[data-theme="blue"] select { color-scheme: dark; }
+select option {
+  background-color: var(--theme-panel-bg);
+  color: var(--theme-text);
+}
+select:hover:not(:disabled) { border-color: var(--ctl-focus); }
+/* `.monaco-inputbox.synthetic-focus {outline:1px solid;
+    outline-offset:-1px;outline-color:var(--vscode-focusBorder)}` */
+select:focus {
+  border-color: var(--ctl-focus);
+  outline: var(--ctl-stroke) solid var(--ctl-focus);
+  outline-offset: -1px;
+}
+/* `.monaco-custom-toggle.disabled {opacity:.4;cursor:default}` */
+select:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background-image: none;
+}
+
+/* ---------- checkboxes --------------------------------------
+   `.settings-editor … .setting-item-bool .setting-value-checkbox
+     {height:18px;width:18px;border:1px solid transparent;
+      border-radius:3px;margin-right:9px;margin-left:0;padding:0}`
+   `… {background-color:var(--vscode-settings-checkboxBackground)!important;
+       color:var(--vscode-settings-checkboxForeground)!important;
+       border-color:var(--vscode-settings-checkboxBorder)!important}`
+   The tick is the codicon `check` glyph drawn at 16px
+   (`.monaco-custom-toggle.monaco-checkbox {background-size:16px}`);
+   here it is an SVG mask so it takes the checkbox's own color.
+   The box does NOT turn blue when checked — in VS Code a ticked
+   box keeps checkbox.background and only shows the glyph.
+   Radius is 4px instead of VS Code's 3px so the whole UI sticks
+   to two radii; at 18px the difference is not visible. */
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: middle;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: var(--ctl-stroke) solid var(--ctl-check-border);
+  border-radius: var(--ctl-radius);
+  background-color: var(--ctl-check-bg);
+  color: var(--ctl-check-fg);
+  cursor: pointer;
+}
+input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  /* Centred INSIDE the box, not over its border: with `inset:-1px` and a
+     16px mask the tick filled a 20px area and spilled past the top-right
+     corner, which is what made it read as a stray text glyph rather than a
+     checkbox. 13px on an 18px box is VS Code's proportion. */
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: var(--ctl-check-icon) center / 13px 13px no-repeat;
+  mask: var(--ctl-check-icon) center / 13px 13px no-repeat;
+  opacity: 0;
+}
+input[type="checkbox"]:checked::after { opacity: 1; }
+/* `.monaco-custom-toggle:hover
+     {background-color:var(--vscode-inputOption-hoverBackground)}` */
+input[type="checkbox"]:hover:not(:disabled) {
+  background-image: linear-gradient(var(--theme-hover), var(--theme-hover));
+}
+/* `.monaco-switch:focus-visible {outline:var(--vscode-strokeThickness)
+     solid var(--vscode-focusBorder);outline-offset:var(--vscode-spacing-size20)}` */
+input[type="checkbox"]:focus-visible {
+  outline: var(--ctl-stroke) solid var(--ctl-focus);
+  outline-offset: 2px;
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------- sliders (<input type="range">) -------------------
+   VS Code has no range input in the settings editor; its sliding
+   control is the switch, and these are its measurements:
+   `.monaco-switch {width:var(--vscode-spacing-size280)  [28px];
+      height:var(--vscode-spacing-size160)  [16px];
+      border:var(--vscode-strokeThickness) solid transparent;
+      border-radius:var(--vscode-cornerRadius-circle);
+      background:color-mix(in srgb,var(--vscode-descriptionForeground) 36%,transparent)}`
+   `.monaco-switch-thumb {width:var(--vscode-spacing-size120)  [12px];
+      height:…;border-radius:var(--vscode-cornerRadius-circle);
+      background:var(--vscode-button-foreground)}`
+   `.monaco-switch.checked {background:var(--vscode-button-background)}`
+   So: 16px tall control, faint track (descriptionForeground 36%),
+   12px round thumb, filled part in button.background. Focus ring
+   from `.annotation-opacity-slider:focus-visible
+     {outline:1px solid var(--vscode-focusBorder);outline-offset:2px}`. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  border: none;
+  background: rgba(127, 127, 127, 0.36);
+  background: color-mix(in srgb, var(--theme-text-secondary) 36%, transparent);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px; /* centre the 12px thumb on the 4px track */
+  border: none;
+  border-radius: 9999px;
+  background: var(--ctl-btn-bg);
+}
+input[type="range"]:hover:not(:disabled)::-webkit-slider-thumb {
+  background: var(--ctl-btn-hover);
+}
+input[type="range"]:focus-visible {
+  outline: var(--ctl-stroke) solid var(--ctl-focus);
+  outline-offset: 2px;
+}
+input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------- text and number fields ---------------------------
+   `.monaco-inputbox {border-radius:4px;font-size:inherit}`
+   `.monaco-inputbox>.ibwrapper>.input {padding:4px 6px}`
+   Wrapped in :where() so every existing per-area rule (the file
+   tree rename box, the terminal prompt, the PDF search field…)
+   still wins without needing !important. */
+:where(input[type="text"], input[type="number"], input[type="search"],
+       input[type="password"], input[type="email"], input:not([type]), textarea) {
+  height: var(--ctl-h-sm);
+  padding: 0 6px;
+  font-family: inherit;
+  font-size: var(--ctl-font);
+  color: var(--ctl-fg);
+  background-color: var(--ctl-bg);
+  border: var(--ctl-stroke) solid var(--ctl-border);
+  border-radius: var(--ctl-radius);
+  outline: none;
+}
+:where(textarea) {
+  height: auto;
+  padding: 4px 6px;
+  resize: none;
+}
+:where(input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+       textarea):focus {
+  border-color: var(--ctl-focus);
+  outline: var(--ctl-stroke) solid var(--ctl-focus);
+  outline-offset: -1px;
+}
+:where(input, textarea):disabled { opacity: 0.4; cursor: default; }
+/* VS Code's number setting is a plain input box with no spinner. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; }
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
+input::selection, textarea::selection { background: var(--theme-editor-selection); }
+input::placeholder, textarea::placeholder { color: var(--theme-text-secondary); opacity: 1; }
+
+/* ---------- color swatch fields ------------------------------
+   Not a VS Code widget; given the same border and the small
+   radius so it sits with the rest. */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
+  background: transparent;
+  border: var(--ctl-stroke) solid var(--ctl-border);
+  border-radius: var(--ctl-radius-sm);
+  cursor: pointer;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 1px; }
+
+/* ---------- buttons -----------------------------------------
+   `.monaco-text-button {box-sizing:border-box;display:flex;
+      padding:4px 8px;border-radius:4px;text-align:center;
+      cursor:pointer;justify-content:center;align-items:center;
+      border:1px solid var(--vscode-button-border,transparent);
+      line-height:16px;font-size:12px}`      -> 26px tall
+   `.monaco-text-button.small {line-height:14px;font-size:11px;
+      padding:3px 6px}`                      -> 22px tall
+   `.monaco-button.default-colors {color:var(--vscode-button-foreground);
+      background-color:var(--vscode-button-background)}`
+   `.monaco-text-button:focus {outline-offset:2px!important}` */
+.ctl-btn,
+.cfg-footer button,
+.cfg-btn,
+.wz-browse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: var(--ctl-h);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: var(--ctl-font);
+  line-height: 16px;
+  color: var(--ctl-btn2-fg);
+  background-color: var(--ctl-btn2-bg);
+  border: var(--ctl-stroke) solid var(--theme-border);
+  border-radius: var(--ctl-radius);
+  cursor: default;
+  white-space: nowrap;
+}
+.ctl-btn:hover:not(:disabled),
+.cfg-footer button:hover:not(:disabled),
+.cfg-btn:hover:not(:disabled),
+.wz-browse:hover:not(:disabled) { background-color: var(--ctl-btn2-hover); }
+.ctl-btn.primary,
+.cfg-footer button.primary {
+  color: var(--ctl-btn-fg);
+  background-color: var(--ctl-btn-bg);
+  border-color: var(--ctl-btn-bg);
+}
+.ctl-btn.primary:hover:not(:disabled),
+.cfg-footer button.primary:hover:not(:disabled) {
+  background-color: var(--ctl-btn-hover);
+  border-color: var(--ctl-btn-hover);
+}
+.ctl-btn.small { height: var(--ctl-h-sm); padding: 3px 6px; font-size: 11px; line-height: 14px; }
+.ctl-btn:focus-visible,
+.cfg-footer button:focus-visible,
+.cfg-btn:focus-visible,
+.wz-browse:focus-visible {
+  outline: var(--ctl-stroke) solid var(--ctl-focus);
+  outline-offset: 2px;
+}
+/* `.monaco-button.disabled {opacity:.4!important;cursor:default}` */
+.ctl-btn:disabled,
+.cfg-footer button:disabled,
+.cfg-btn:disabled,
+.wz-browse:disabled { opacity: 0.4; cursor: default; }

@@ -1,0 +1,138 @@
+/* Pyx hover widget (see js/solid/components/Tooltip.jsx).
+   Replaces the native Windows `title` tooltip with the one VSCode draws.
+
+   Every number and colour below is taken from VSCode 1.138 installed on this
+   machine (…/Microsoft VS Code/7debcd0e2a/resources/app):
+     · `.workbench-hover` — font-size 13px, line-height 19px, border 1px,
+       border-radius 5px, box-shadow var(--vscode-shadow-lg)
+     · `.monaco-hover .hover-contents` — padding 4px 8px
+     · `.monaco-hover.fade-in` — animation fadein .1s linear
+     · `--vscode-shadow-lg` — 0 0 12px rgba(0,0,0,.14)
+     · `--vscode-hover-maxWidth` — 500px
+     · `.monaco-keybinding > .monaco-keybinding-key` — radius 3px, 1px border,
+       font-size 11px, padding 3px 5px, margin 0 2px, min-width 12px
+     · `.monaco-workbench.windows` — font-family Segoe WPC, Segoe UI, sans-serif
+
+   Colours resolved from extensions/theme-defaults/themes/*.json:
+     editorHoverWidget.background  ← editorWidget.background
+         Dark Modern  #202020   ·  Light Modern  #F8F8F8
+     editorHoverWidget.foreground  ← editorWidget.foreground ← foreground
+         Dark Modern  #CCCCCC   ·  Light Modern  #3B3B3B
+     editorHoverWidget.border      ← editorWidget.border
+         = transparent(editorWidget.foreground, 0.2)
+     keybindingLabel.background / .foreground / .border / .bottomBorder
+         dark  rgba(128,128,128,.17) #CCCCCC rgba(51,51,51,.6) rgba(68,68,68,.6)
+         light rgba(221,221,221,.4)  #555555 rgba(204,204,204,.4) rgba(187,187,187,.4)
+
+   These tokens are declared here so the widget is self-contained; they belong
+   in themes.css next to the rest (see the report). */
+
+:root,
+[data-theme="light"] {
+  --pyx-tip-bg: #f8f8f8;
+  --pyx-tip-fg: #3b3b3b;
+  --pyx-tip-border: rgba(59, 59, 59, 0.2);
+  --pyx-tip-shadow: 0 0 12px rgba(0, 0, 0, 0.14);
+  --pyx-tip-key-bg: rgba(221, 221, 221, 0.4);
+  --pyx-tip-key-fg: #555555;
+  --pyx-tip-key-border: rgba(204, 204, 204, 0.4);
+  --pyx-tip-key-bottom: rgba(187, 187, 187, 0.4);
+}
+
+[data-theme="dark"] {
+  --pyx-tip-bg: #202020;
+  --pyx-tip-fg: #cccccc;
+  --pyx-tip-border: rgba(204, 204, 204, 0.2);
+  --pyx-tip-shadow: 0 0 12px rgba(0, 0, 0, 0.36);
+  --pyx-tip-key-bg: rgba(128, 128, 128, 0.17);
+  --pyx-tip-key-fg: #cccccc;
+  --pyx-tip-key-border: rgba(51, 51, 51, 0.6);
+  --pyx-tip-key-bottom: rgba(68, 68, 68, 0.6);
+}
+
+/* Pyx's own "blue" theme has no VSCode counterpart: same recipe, its palette. */
+[data-theme="blue"] {
+  --pyx-tip-bg: #1b263b;
+  --pyx-tip-fg: #e0e1dd;
+  --pyx-tip-border: rgba(224, 225, 221, 0.2);
+  --pyx-tip-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+  --pyx-tip-key-bg: rgba(152, 193, 217, 0.14);
+  --pyx-tip-key-fg: #e0e1dd;
+  --pyx-tip-key-border: rgba(44, 74, 107, 0.8);
+  --pyx-tip-key-bottom: rgba(44, 74, 107, 1);
+}
+
+.pyx-tip {
+  display: none;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 10000;
+  box-sizing: border-box;
+  max-width: 500px;
+  font-family: "Segoe WPC", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--pyx-tip-fg);
+  background: var(--pyx-tip-bg);
+  border: 1px solid var(--pyx-tip-border);
+  border-radius: 5px;
+  box-shadow: var(--pyx-tip-shadow);
+  overflow: hidden;
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pyx-tip.visible { display: block; }
+.pyx-tip.fade-in { animation: pyx-tip-fade 0.1s linear; }
+
+@keyframes pyx-tip-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pyx-tip.fade-in { animation: none; }
+}
+
+.pyx-tip-contents {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.pyx-tip-text {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  min-width: 0;
+}
+
+.pyx-tip-keys {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 10px;
+}
+
+.pyx-tip-keys[hidden] { display: none; }
+
+.pyx-tip-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  margin: 0 2px;
+  padding: 3px 5px;
+  font-family: inherit;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--pyx-tip-key-border);
+  border-bottom-color: var(--pyx-tip-key-bottom);
+  background: var(--pyx-tip-key-bg);
+  color: var(--pyx-tip-key-fg);
+}
+
+.pyx-tip-key:first-child { margin-left: 0; }
+.pyx-tip-key:last-child { margin-right: 0; }

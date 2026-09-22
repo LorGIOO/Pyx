@@ -33,10 +33,8 @@ button {
   cursor: default;
 }
 
-/* Squared, Windows-Forms-like controls — no rounded corners anywhere by default. */
-input, select, textarea, button {
-  border-radius: 0;
-}
+/* Form controls (dropdowns, checkboxes, sliders, fields, buttons)
+   are styled in controls.css, after the theme variables. */
 
 ::-webkit-scrollbar {
   width: 12px;

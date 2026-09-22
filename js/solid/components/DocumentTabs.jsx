@@ -3,6 +3,7 @@ import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import { switchTo, closeDocument } from '../stores/docStore.js';
 import { openNewDoc } from './NewDocDialog.jsx';
+import { icons } from './ribbon/icons.js';
 
 const DOC_MIME = 'application/x-calc-doc';
 
@@ -24,22 +25,22 @@ export default function DocumentTabs() {
             }}
           >
             <span class="doc-tab-name">{doc.fileName}</span>
+            {/* codicon: close */}
             <button
-              class="doc-tab-close"
+              class="doc-tab-close pyx-ico"
               title={t('Cerrar', 'Close')}
+              innerHTML={icons.close}
               onClick={(e) => {
                 e.stopPropagation();
                 closeDocument(i());
               }}
-            >
-              ×
-            </button>
+            />
           </div>
         )}
       </For>
-      <button class="doc-tab-add" title={t('Nuevo documento (Ctrl+N)', 'New document (Ctrl+N)')} onClick={openNewDoc}>
-        +
-      </button>
+      {/* codicon: add */}
+      <button class="doc-tab-add pyx-ico" title={t('Nuevo documento (Ctrl+N)', 'New document (Ctrl+N)')}
+        innerHTML={icons.add} onClick={openNewDoc} />
     </div>
   );
 }

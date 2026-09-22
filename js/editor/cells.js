@@ -26,8 +26,7 @@
 
 import { StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType, ViewPlugin } from '@codemirror/view';
-import { StringStream } from '@codemirror/language';
-import { python } from '@codemirror/legacy-modes/mode/python';
+import { classifyPythonCached } from './py-highlight.js';
 import { state as appState } from '../core/state.js';
 import { dirOf } from '../core/paths.js';
 import { randomId } from '../core/hash.js';
@@ -40,6 +39,8 @@ import { broadcastCellRefresh } from './setup.js';
 import { getOutput, setOutput, deleteOutput, clearDoc, gcDoc } from './cell-outputs.js';
 import { createRichFrame, sanitizeFragment, needsIsolation } from './rich-frame.js';
 import { renderMath } from './math-render.js';
+// The shared icon set, for the cell's context menus (`MI` = menu icons).
+import { icons as MI } from '../solid/components/ribbon/icons.js';
 
 // Python cells work in any text document (.pltx, .tex or unsaved): you can drop
 // cells into a .tex too — on save it is offered as .pltx (handled in docStore).
@@ -220,6 +221,123 @@ function deleteCellByKey(view, key) {
   view.focus();
 }
 
+/* ---------- the actions VSCode puts on a notebook cell ----------
+   Same set, same meaning, so muscle memory transfers: run everything above,
+   run this one and everything below, split at the caret, and a "…" menu for
+   the rest. They all go through the kernel lock, because a half-run sequence
+   leaves the namespace describing a document that never existed. */
+
+/** Run cells[from…to) in order, stopping at the first failure. */
+async function runRange(view, from, to) {
+  const docId = docIdOf(view.state);
+  const cwd = await activeCwd();
+  let render = false;
+  await withKernelLock(async () => {
+    const cells = parseCells(view.state);
+    for (let i = from; i < Math.min(to, cells.length); i++) {
+      const res = await execCell(docId, cells[i], cwd);
+      if (res && res.ok === false) break; // a failed cell poisons what follows
+      if (res && res.render) render = true;
+    }
+  });
+  if (render) scheduleHandcalcsCompile();
+}
+
+function indexOfKey(view, key) {
+  return ensureCellIds(view).findIndex((c) => cellKey(c) === key);
+}
+
+/** Everything ABOVE this cell — what you run to rebuild the state it needs. */
+function runCellsAbove(view, key) {
+  const i = indexOfKey(view, key);
+  if (i > 0) runRange(view, 0, i);
+}
+
+/** This cell and everything BELOW it. */
+function runCellsBelow(view, key) {
+  const i = indexOfKey(view, key);
+  if (i >= 0) runRange(view, i, Infinity);
+}
+
+/**
+ * Split the cell at the caret: the lines above stay, the rest becomes a new
+ * cell right below. The result of the original cell stays with the original
+ * (its id does not move), which is what VSCode does too.
+ */
+function splitCellByKey(view, key) {
+  const cell = findByKey(view, key);
+  if (!cell) return;
+  const head = view.state.selection.main.head;
+  const ln = view.state.doc.lineAt(head).number;
+  // Only meaningful strictly inside the code, with a line on each side.
+  if (ln <= cell.headerLine + 1 || ln > cell.endLine - 1) return;
+  const at = view.state.doc.line(ln).from;
+  const insert = `${CELL_CLOSE}\n${CELL_OPEN} id=${randomId()}\n`;
+  view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + insert.length } });
+  view.focus();
+}
+
+/** Insert an empty cell immediately above or below this one. */
+function insertCellNear(view, key, where) {
+  const cell = findByKey(view, key);
+  if (!cell) return;
+  const doc = view.state.doc;
+  const at = where === 'above'
+    ? doc.line(cell.headerLine).from
+    : (cell.endLine < doc.lines ? doc.line(cell.endLine + 1).from : doc.line(cell.endLine).to);
+  const open = `${CELL_OPEN} id=${randomId()}`;
+  const snippet = `${open}\n\n${CELL_CLOSE}\n`;
+  const pre = where === 'above' || at === doc.length ? '' : '';
+  view.dispatch({
+    changes: { from: at, insert: pre + snippet },
+    selection: { anchor: at + pre.length + open.length + 1 },
+  });
+  view.focus();
+}
+
+/** The cell's code, as text — for "copiar celda". */
+function cellText(view, key) {
+  const cell = findByKey(view, key);
+  return cell ? cell.code : '';
+}
+
+/** Did this cell actually produce anything? */
+function hasOutput(out) {
+  if (!out) return false;
+  return !!(out.stdout || out.stderr || out.error || out.count
+    || (out.result != null && out.result !== '')
+    || (out.displays && out.displays.length) || (out.images && out.images.length));
+}
+
+/** Everything the output shows, as plain text — for "copiar la salida". */
+function outputText(out) {
+  if (!out) return '';
+  const parts = [];
+  if (out.stdout) parts.push(out.stdout);
+  if (out.stderr) parts.push(out.stderr);
+  if (out.error) {
+    const e = out.error;
+    parts.push(`${e.type || 'Error'}: ${e.msg || ''}`.trim());
+  }
+  if (out.result != null && out.result !== '') parts.push(String(out.result));
+  return parts.join('\n').replace(/\n+$/, '');
+}
+
+function copyText(text) {
+  if (!text) return;
+  try {
+    navigator.clipboard.writeText(text);
+  } catch (_) {
+    // Clipboard API unavailable (older WebView2 / no focus): fall back.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (__) {}
+    ta.remove();
+  }
+}
+
 export function runCellAtCursor(view) {
   if (!pyxActive()) return false;
   const ln = view.state.doc.lineAt(view.state.selection.main.head).number;
@@ -347,15 +465,27 @@ export function insertCellTemplate(view) {
   view.focus();
 }
 
-/* ---------- icons (VSCode codicon-like) ---------- */
+/* ---------- icons ----------
+   Drawn to match the codicons VSCode uses on a notebook cell: a 16×16 box,
+   1.2px strokes, no fills except the play/stop glyphs. The point is that they
+   read as part of the same family as the rest of the editor rather than as
+   web iconography. */
 const I = {
   compile: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>',
-  trash: '<svg viewBox="0 0 16 16"><path d="M3 4h10M6 4V2.7h4V4M5 4l.7 9h4.6L11 4z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
-  chevronDown: '<svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
-  chevronRight: '<svg viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
-  expand: '<svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M14 6V2.5h-3.5M2.5 10v3.5H6M14 10v3.5h-3.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
-  stop: '<svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.2" fill="currentColor"/></svg>',
-  clearOut: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 11.5l7-7" stroke="currentColor" stroke-width="1.3"/></svg>',
+  trash: '<svg viewBox="0 0 16 16"><path d="M3 4h10M6 4V2.7h4V4M5 4l.7 9h4.6L11 4z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
+  chevronDown: '<svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+  chevronRight: '<svg viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+  expand: '<svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M14 6V2.5h-3.5M2.5 10v3.5H6M14 10v3.5h-3.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+  stop: '<svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/></svg>',
+  clearOut: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 11.5l7-7" stroke="currentColor" stroke-width="1.2"/></svg>',
+  // codicon "run-above": the bar is what you run, the triangle is where from.
+  runAbove: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 6.5v7l6-3.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+  // codicon "run-below"
+  runBelow: '<svg viewBox="0 0 16 16"><path d="M2.5 12.5h11" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 2.5v7l6-3.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+  // codicon "split-vertical": one box becomes two.
+  split: '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
+  // codicon "ellipsis"
+  more: '<svg viewBox="0 0 16 16"><circle cx="4" cy="8" r="1.1" fill="currentColor"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="8" r="1.1" fill="currentColor"/></svg>',
 };
 
 function iconBtn(cls, svg, title, onClick) {
@@ -364,8 +494,17 @@ function iconBtn(cls, svg, title, onClick) {
   b.innerHTML = svg;
   b.title = title;
   b.onmousedown = (e) => e.preventDefault();
-  b.onclick = (e) => { e.stopPropagation(); onClick(); };
+  // The event travels through: a "…" button needs it to place its menu.
+  b.onclick = (e) => { e.stopPropagation(); onClick(e); };
   return b;
+}
+
+/** The app-wide VSCode-style menu, loaded on demand (this module must not
+ *  pull the Solid component tree in statically — the compiler imports it). */
+function cellMenu(e, items) {
+  import('../solid/components/ContextMenu.jsx')
+    .then((m) => m.showContextMenu(e, items))
+    .catch(() => {});
 }
 
 // Small "open in its own tab" button shown on figures and rich output.
@@ -379,7 +518,10 @@ function expandBtn(title, onClick) {
   return b;
 }
 
-/* ---------- toolbar widget (replaces the %#python line, hiding it) ---------- */
+/* ---------- cell head (replaces the %#python line, hiding it) ----------
+   This is the TOP of the cell box plus the run gutter beside it. The gutter
+   lives outside the box (negative offsets), exactly like VSCode's: the play
+   button at the top of it, the focus bar down its left edge. */
 class CellToolbar extends WidgetType {
   constructor(cell, output, collapsed, active, stale) {
     super();
@@ -397,19 +539,31 @@ class CellToolbar extends WidgetType {
   toDOM(view) {
     const out = this.output || {};
     const bar = document.createElement('div');
-    bar.className = 'cell-bar' + (this.collapsed ? ' collapsed' : '') + (this.active ? ' active' : '');
+    bar.className = 'cell-head' + (this.collapsed ? ' collapsed' : '') + (this.active ? ' active' : '');
     bar.contentEditable = 'false';
 
-    const left = document.createElement('div');
-    left.className = 'cell-bar-left';
-    left.appendChild(iconBtn('collapse', this.collapsed ? I.chevronRight : I.chevronDown,
-      this.collapsed ? 'Expandir' : 'Contraer',
-      () => view.dispatch({ effects: toggleCollapse.of(this.key) })));
+    // The focus bar and the run button sit in the gutter, left of the box.
+    const focus = document.createElement('span');
+    focus.className = 'cell-focus';
+    bar.appendChild(focus);
 
-    const count = document.createElement('span');
-    count.className = 'cell-count';
-    count.textContent = out.running ? '[*]' : out.count ? `[${out.count}]` : '[ ]';
-    left.appendChild(count);
+    // Play while idle, stop while running — the button swaps in place.
+    const run = out.running
+      ? iconBtn('run stop', I.stop, 'Interrumpir la ejecución', () => interruptKernel())
+      : iconBtn('run', I.compile, 'Ejecutar la celda (Mayús+Intro)', () => runCellByKey(view, this.key));
+    run.classList.add('cell-gutter-btn');
+    bar.appendChild(run);
+
+    // The fold chevron sits in the gutter next to the run button, outside the
+    // box — where VSCode puts it.
+    const fold = iconBtn('collapse', this.collapsed ? I.chevronRight : I.chevronDown,
+      this.collapsed ? 'Expandir' : 'Contraer',
+      () => view.dispatch({ effects: toggleCollapse.of(this.key) }));
+    fold.classList.add('cell-gutter-fold');
+    bar.appendChild(fold);
+
+    const left = document.createElement('div');
+    left.className = 'cell-head-left';
 
     if (this.collapsed) {
       const preview = document.createElement('span');
@@ -418,37 +572,43 @@ class CellToolbar extends WidgetType {
       const n = this.cell.code.split('\n').length;
       preview.textContent = first ? `${first}  ⋯ (${n} líneas)` : `(${n} líneas)`;
       left.appendChild(preview);
-    } else {
+    } else if (this.stale) {
+      // The code changed after this result was produced. In a calculation
+      // report that distinction is the whole point — never let an outdated
+      // number pass for a current one.
       const status = document.createElement('span');
-      status.className = 'cell-status';
-      if (out.running) { status.classList.add('running'); status.textContent = 'Ejecutando…'; }
-      else if (this.stale) {
-        // The code changed after this result was produced. In a calculation
-        // report that distinction is the whole point — never let an outdated
-        // number pass for a current one.
-        status.classList.add('stale');
-        status.textContent = '⟳ resultado desactualizado';
-        status.title = 'La celda ha cambiado desde la última ejecución. Vuelve a ejecutarla.';
-      } else if (out.ok === true) { status.classList.add('ok'); status.textContent = '✓'; }
-      else if (out.ok === false) { status.classList.add('err'); status.textContent = '✗ error'; }
+      status.className = 'cell-status stale';
+      status.textContent = '⟳ resultado desactualizado';
+      status.title = 'La celda ha cambiado desde la última ejecución. Vuelve a ejecutarla.';
       left.appendChild(status);
     }
     bar.appendChild(left);
 
+    // The cell toolbar, in VSCode's order and with VSCode's meanings. It stays
+    // hidden until the cell is the active one — a cell at rest shows code.
     const right = document.createElement('div');
-    right.className = 'cell-bar-right';
-    // Jupyter-style: the cell's play button RUNS this cell; WHILE running it
-    // turns into a STOP (■) button that interrupts the kernel.
-    if (out.running) {
-      right.appendChild(iconBtn('run stop', I.stop, 'Interrumpir la ejecución', () => interruptKernel()));
-    } else {
-      right.appendChild(iconBtn('run', I.compile, 'Ejecutar la celda (Mayús+Intro)', () => runCellByKey(view, this.key)));
-    }
-    // Jupyter's per-cell "clear output": drops THIS cell's output only.
-    if (out.count || out.stdout || out.stderr || out.error || (out.displays && out.displays.length) || (out.images && out.images.length)) {
-      right.appendChild(iconBtn('clearout', I.clearOut, 'Limpiar la salida de esta celda',
-        () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); }));
-    }
+    right.className = 'cell-actions';
+    right.appendChild(iconBtn('above', I.runAbove, 'Ejecutar las celdas anteriores',
+      () => runCellsAbove(view, this.key)));
+    right.appendChild(iconBtn('below', I.runBelow, 'Ejecutar esta celda y las siguientes',
+      () => runCellsBelow(view, this.key)));
+    right.appendChild(iconBtn('split', I.split, 'Dividir la celda por el cursor',
+      () => splitCellByKey(view, this.key)));
+    right.appendChild(iconBtn('more', I.more, 'Más acciones…', (e) => cellMenu(e, [
+      { label: 'Cortar celda', icon: MI.cut, shortcut: 'X', onClick: () => { copyText(cellText(view, this.key)); deleteCellByKey(view, this.key); } },
+      { label: 'Copiar celda', icon: MI.copy, shortcut: 'C', onClick: () => copyText(cellText(view, this.key)) },
+      { separator: true },
+      { label: 'Insertar celda arriba', icon: MI.arrowUp, onClick: () => insertCellNear(view, this.key, 'above') },
+      { label: 'Insertar celda abajo', icon: MI.arrowDown, onClick: () => insertCellNear(view, this.key, 'below') },
+      { separator: true },
+      { label: 'Dividir la celda por el cursor', icon: MI.splitCell, onClick: () => splitCellByKey(view, this.key) },
+      { label: this.collapsed ? 'Expandir la celda' : 'Contraer la celda', icon: this.collapsed ? MI.expandAll : MI.collapseAll, onClick: () => view.dispatch({ effects: toggleCollapse.of(this.key) }) },
+      { separator: true },
+      { label: 'Borrar la salida de esta celda', icon: MI.clear, disabled: !hasOutput(out), onClick: () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); } },
+      { label: 'Copiar la salida de esta celda', icon: MI.copy, disabled: !hasOutput(out), onClick: () => copyText(outputText(out)) },
+      { separator: true },
+      { label: 'Eliminar celda', icon: MI.trash, danger: true, onClick: () => deleteCellByKey(view, this.key) },
+    ])));
     right.appendChild(iconBtn('danger', I.trash, 'Eliminar celda', () => deleteCellByKey(view, this.key)));
     bar.appendChild(right);
 
@@ -613,36 +773,87 @@ class CellOutput extends WidgetType {
   // type funnels through here — an output that can't collapse is a bug.
   fillCollapsedStrip(view, wrap, out) {
     wrap.classList.add('out-collapsed');
+    const row = document.createElement('div');
+    row.className = 'cell-out-row';
     const gutter = document.createElement('div');
     gutter.className = 'cell-out-gutter';
     gutter.appendChild(iconBtn('collapse', I.chevronRight, 'Expandir salida',
       () => view.dispatch({ effects: toggleOutCollapse.of(this.key) })));
-    wrap.appendChild(gutter);
+    row.appendChild(gutter);
     const body = document.createElement('div');
     body.className = 'cell-out-body slim';
     body.textContent = `··· salida oculta${out.ms != null ? ` (${fmtMs(out.ms)})` : ''}`;
     body.onmousedown = (e) => e.preventDefault();
     body.onclick = () => view.dispatch({ effects: toggleOutCollapse.of(this.key) });
-    wrap.appendChild(body);
+    row.appendChild(body);
+    wrap.appendChild(row);
   }
+  // The gutter under the run button: VSCode shows the execution order at the
+  // BOTTOM of the gutter, beside the last line of the cell.
   makeGutter(view, out) {
     const gutter = document.createElement('div');
     gutter.className = 'cell-out-gutter';
-    gutter.appendChild(iconBtn('collapse', I.chevronDown, 'Minimizar salida',
-      () => view.dispatch({ effects: toggleOutCollapse.of(this.key) })));
     const cnt = document.createElement('div');
     cnt.className = 'out-count';
-    cnt.textContent = out.count ? `[${out.count}]` : '';
+    cnt.textContent = out.running ? '[*]' : out.count ? `[${out.count}]` : '[ ]';
+    cnt.title = out.count ? `Ejecución nº ${out.count}` : 'Sin ejecutar';
     gutter.appendChild(cnt);
-    if (out.ms != null) {
-      const t = document.createElement('div');
-      t.className = 'cell-time';
-      t.title = 'Tiempo de ejecución de la celda';
-      t.textContent = fmtMs(out.ms);
-      gutter.appendChild(t);
-    }
+    // VSCode puts a "…" beside the output with the actions that belong to the
+    // RESULT rather than to the cell.
+    const more = iconBtn('outmore', I.more, 'Acciones de la salida…', (e) => cellMenu(e, [
+      { label: 'Copiar la salida de esta celda', icon: MI.copy, onClick: () => copyText(outputText(out)) },
+      { label: 'Borrar la salida de esta celda', icon: MI.clear, onClick: () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); } },
+      { separator: true },
+      {
+        label: this.outCollapsed ? 'Expandir la salida' : 'Minimizar la salida',
+        icon: this.outCollapsed ? MI.expandAll : MI.collapseAll,
+        onClick: () => view.dispatch({ effects: toggleOutCollapse.of(this.key) }),
+      },
+    ]));
+    gutter.appendChild(more);
     return gutter;
   }
+
+  /** The 22px status bar that closes the code box: state, time, language. */
+  makeStatusBar(view, out) {
+    const bar = document.createElement('div');
+    bar.className = 'cell-statusbar';
+
+    // The state is an ICON, not a text glyph: ✓ and ✗ pulled in whatever the
+    // system font felt like drawing, at a weight and baseline that matched
+    // nothing else on screen.
+    const state = document.createElement('span');
+    state.className = 'cell-st';
+    const setState = (cls, icon, label) => {
+      state.classList.add(cls);
+      state.innerHTML = icon;
+      if (label) state.appendChild(document.createTextNode(' ' + label));
+    };
+    if (out.running) setState('running', MI.refresh, 'Ejecutando…');
+    else if (this.stale) setState('stale', MI.refresh, 'desactualizado');
+    else if (out.ok === true) setState('ok', MI.pass, '');
+    else if (out.ok === false) setState('err', MI.error, 'error');
+    bar.appendChild(state);
+
+    if (out.ms != null) {
+      const t = document.createElement('span');
+      t.className = 'cell-st time';
+      t.title = 'Tiempo de ejecución de la celda';
+      t.textContent = fmtMs(out.ms);
+      bar.appendChild(t);
+    }
+
+    const spacer = document.createElement('span');
+    spacer.className = 'cell-st-spacer';
+    bar.appendChild(spacer);
+
+    const lang = document.createElement('span');
+    lang.className = 'cell-st lang';
+    lang.textContent = 'Python';
+    bar.appendChild(lang);
+    return bar;
+  }
+
   toDOM(view) {
     const out = this.output || {};
     const wrap = document.createElement('div');
@@ -660,8 +871,12 @@ class CellOutput extends WidgetType {
       }
       const b = document.createElement('div'); b.className = 'cell-out-body';
       if (Array.isArray(out.displays)) for (const d of out.displays) renderDisplay(d, b, view);
-      wrap.appendChild(this.makeGutter(view, out));
-      wrap.appendChild(b);
+      wrap.appendChild(this.makeStatusBar(view, out));
+      const row = document.createElement('div');
+      row.className = 'cell-out-row';
+      row.appendChild(this.makeGutter(view, out));
+      row.appendChild(b);
+      wrap.appendChild(row);
       return wrap;
     }
 
@@ -672,6 +887,9 @@ class CellOutput extends WidgetType {
     const has = !this.hidden && hasContent;
     wrap.className = 'cell-out' + (has ? '' : ' empty') + (this.active ? ' active' : '')
       + (this.stale ? ' stale' : '');
+    // The status bar closes the code box whether or not the cell printed
+    // anything — like VSCode's, it is part of the cell, not of the output.
+    wrap.appendChild(this.makeStatusBar(view, out));
     if (!has) return wrap;
 
     // Output minimized (independent of the code collapse): slim clickable strip.
@@ -680,7 +898,9 @@ class CellOutput extends WidgetType {
       return wrap;
     }
 
-    wrap.appendChild(this.makeGutter(view, out));
+    const row = document.createElement('div');
+    row.className = 'cell-out-row';
+    row.appendChild(this.makeGutter(view, out));
 
     const body = document.createElement('div');
     body.className = 'cell-out-body';
@@ -718,53 +938,21 @@ class CellOutput extends WidgetType {
       body.appendChild(note);
     }
 
-    wrap.appendChild(body);
+    row.appendChild(body);
+    wrap.appendChild(row);
     return wrap;
   }
   ignoreEvent() { return true; }
 }
 
 /* ---------- Python syntax highlighting inside cells ----------
-   Categorize tokens exactly like VSCode's Dark+/Light+ (control keywords vs
-   storage vs builtins vs types vs constants vs self), driving the --py-* vars. */
-const CONTROL = new Set(['import', 'from', 'as', 'for', 'while', 'if', 'elif', 'else', 'try',
-  'except', 'finally', 'with', 'return', 'yield', 'raise', 'break', 'continue', 'pass', 'in',
-  'is', 'not', 'and', 'or', 'assert', 'del', 'async', 'await', 'match', 'case']);
-const STORAGE = new Set(['def', 'class', 'lambda', 'global', 'nonlocal']);
-const CONSTS = new Set(['True', 'False', 'None', 'NotImplemented', 'Ellipsis', '__debug__']);
-const SELF = new Set(['self', 'cls']);
-const PYTYPES = new Set(['int', 'float', 'str', 'list', 'dict', 'set', 'tuple', 'bool', 'bytes',
-  'bytearray', 'complex', 'frozenset', 'object', 'type', 'memoryview']);
-
-function pyClass(style, text) {
-  if (!style) return null;
-  const s = style.split(/[ .-]/)[0];
-  switch (s) {
-    case 'keyword':
-      if (CONTROL.has(text)) return 'cm-py-control';
-      if (STORAGE.has(text)) return 'cm-py-storage';
-      if (CONSTS.has(text)) return 'cm-py-atom';
-      return 'cm-py-keyword';
-    case 'builtin':
-      return PYTYPES.has(text) ? 'cm-py-type' : 'cm-py-builtin';
-    case 'def': return 'cm-py-func';
-    case 'variable':
-      return SELF.has(text) ? 'cm-py-self' : 'cm-py-variable';
-    case 'property': return 'cm-py-property';
-    case 'string': return 'cm-py-string';
-    case 'number': return 'cm-py-number';
-    case 'comment': return 'cm-py-comment';
-    case 'operator': return 'cm-py-operator';
-    case 'meta': return 'cm-py-decorator';
-    case 'atom': return CONSTS.has(text) ? 'cm-py-atom' : 'cm-py-variable';
-    default: return null;
-  }
-}
-
-// Only tokenize the cells that intersect the viewport: in a heavy document
-// with many cells this turns per-keystroke work from O(all cells) into
-// O(visible cells). A cell is tokenized whole (Python state starts fresh at
-// its first line), so partial visibility still highlights correctly.
+   The token palette itself lives in py-highlight.js, which parses the cell
+   with the real Python grammar so calls, properties, types, parameters and
+   constants can be told apart the way VSCode tells them apart. Here we only
+   decide WHAT to tokenize: the cells that intersect the viewport. In a heavy
+   document that turns per-keystroke work from O(all cells) into O(visible),
+   and a cell is always tokenized whole, so partial visibility still colors
+   correctly. */
 function buildPythonDeco(view) {
   try {
     return buildPythonDecoUnsafe(view);
@@ -781,22 +969,12 @@ function buildPythonDecoUnsafe(view) {
     const cellTo = state.doc.line(cell.endLine).to;
     const visible = view.visibleRanges.some((r) => r.to >= cellFrom && r.from <= cellTo);
     if (!visible) continue;
-    let ps = python.startState ? python.startState(4) : {};
-    for (let ln = cell.headerLine + 1; ln <= cell.endLine - 1; ln++) {
-      const line = state.doc.line(ln);
-      if (line.length === 0) { python.blankLine && python.blankLine(ps, 4); continue; }
-      const stream = new StringStream(line.text, 4, 4);
-      let guard = 0;
-      while (!stream.eol() && guard++ < 5000) {
-        stream.start = stream.pos;
-        const style = python.token(stream, ps);
-        const from = line.from + stream.start, to = line.from + stream.pos;
-        if (stream.pos === stream.start) { stream.next(); continue; }
-        if (style && to > from) {
-          const cls = pyClass(style, line.text.slice(stream.start, stream.pos));
-          if (cls) ranges.push(Decoration.mark({ class: cls }).range(from, to));
-        }
-      }
+    if (cell.endLine - 1 < cell.headerLine + 1) continue;
+    const from = state.doc.line(cell.headerLine + 1).from;
+    const to = state.doc.line(cell.endLine - 1).to;
+    const code = state.doc.sliceString(from, to);
+    for (const m of classifyPythonCached(code)) {
+      ranges.push(Decoration.mark({ class: m.cls }).range(from + m.from, from + m.to));
     }
   }
   return Decoration.set(ranges, true);

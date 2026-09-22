@@ -8,11 +8,18 @@ import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
 
+// Side-strip icons, same hand as the ribbon (16x16, 1.2px strokes). The
+// codicon each one is modelled on is named in the comment.
+const S = 'viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"';
 const I = {
-  structure: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="3" width="6" height="4"/><rect x="3" y="17" width="6" height="4"/><rect x="15" y="17" width="6" height="4"/><path d="M12 7v5M6 17v-3h12v3"/></svg>',
-  toc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
-  symbols: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 5h11l-5 7 5 7H6"/></svg>',
-  files: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  // codicon: list-tree — the file and the documents it pulls in
+  structure: `<svg ${S}><path d="M2 3.2h12"/><path d="M3.6 4.8v6.4"/><path d="M3.6 7.4h2.4M6.4 7.4H14M3.6 11.2h2.4M6.4 11.2H14"/></svg>`,
+  // codicon: list-unordered
+  toc: `<svg ${S}><path d="M5.4 3.4h9M5.4 8h9M5.4 12.6h9"/><path d="M2.5 3.4h.01M2.5 8h.01M2.5 12.6h.01" stroke-width="2"/></svg>`,
+  // codicon: symbol-operator
+  symbols: `<svg ${S}><path d="M11.6 3.6V2.5H4.5L8.2 8l-3.7 5.5h7.1v-1.1"/></svg>`,
+  // codicon: files
+  files: `<svg ${S}><path d="M5.5 1.5h4L12.5 4.5v8a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M9.5 1.5v3h3"/><path d="M2.5 4.2v9.3a1 1 0 0 0 1 1H10"/></svg>`,
 };
 const TABS = [
   { id: 'structure', label: 'Estructura', icon: I.structure },
@@ -91,7 +98,10 @@ export default function SidePanel() {
 
             {/* Estructura: this file and the documents it pulls in */}
             <Show when={tab() === 'structure'}>
-              <div class="struct-root">📘 {activeDoc()?.fileName || 'sin documento'}</div>
+              <div class="struct-root">
+                <span class="struct-root-ico" innerHTML={I.files}></span>
+                {activeDoc()?.fileName || tr('sin documento', 'no document')}
+              </div>
               <Show when={includes().length}
                 fallback={<div class="side-empty">No incluye otros archivos (\input, \include, \subfile).</div>}>
                 <For each={includes()}>

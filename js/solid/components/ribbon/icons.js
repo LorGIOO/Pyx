@@ -145,4 +145,6 @@ export const icons = {
   splitCell: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.2"/><path d="M2.5 8h11"/>'),
   ellipsis: svg('<path d="M4 8h.01M8 8h.01M12 8h.01" stroke-width="2"/>'),
   replace: svg('<path d="M2.5 4.5h6.2M2.5 8h4.4M2.5 11.5h6.2"/><path d="M11.3 3.2v6.6M9.1 7.6l2.2 2.2 2.2-2.2"/>'),
+  /* codicon: warning */
+  warn: svg('<path d="M7.1 2.4 1.6 12a1 1 0 0 0 .9 1.5h11a1 1 0 0 0 .9-1.5L8.9 2.4a1 1 0 0 0-1.8 0z"/><path d="M8 6v3.2M8 11.3h.01" stroke-width="1.5"/>'),
 };

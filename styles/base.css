@@ -36,6 +36,10 @@ button {
 /* Form controls (dropdowns, checkboxes, sliders, fields, buttons)
    are styled in controls.css, after the theme variables. */
 
+/* Scrollbars: a rounded pill floating on a transparent track, vertical and
+   horizontal alike. The 3px transparent border clipped to the padding box is
+   what gives the thumb its margin without a second element, and the radius
+   goes on the PADDING box, so it stays a pill at any length. */
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
@@ -43,13 +47,57 @@ button {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
   background: var(--theme-border);
   border: 3px solid transparent;
+  border-radius: 999px;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--theme-text-secondary);
   border: 3px solid transparent;
+  border-radius: 999px;
   background-clip: padding-box;
 }
+/* There is deliberately NO `scrollbar-width` / `scrollbar-color` here.
+   In modern Chromium — which is every engine Pyx actually ships on, WebView2
+   on Windows and WKWebView on macOS — the standard properties WIN over the
+   whole `::-webkit-scrollbar-*` block: a `* { scrollbar-width: thin }` silently
+   replaced the pill above with the engine's own 10px bar, square corners and
+   all, and `auto` does not bring it back either (it just gives you the 15px
+   one). The rounded scrollbars only exist while these two lines stay absent.
+   `scrollbar-width: none` on a specific element is still fine, and is used in
+   layout.css to hide the PDF toolbar's strip scrollbar. */
+
+/* Inline-SVG icon, app-wide. The icons are authored as a bare 16x16 viewBox
+   with no width/height, so without this an <svg> dropped into a button falls
+   back to the replaced-element default and renders enormous. */
+.pyx-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  /* No `color` here on purpose: the icons stroke with `currentColor`, so the
+     tint has to come from whatever the icon sits in — the green of "Compilado",
+     the red of "Error de compilación", the button's own hover colour. */
+}
+.pyx-ico svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* Icon-only buttons.
+   A <button> carries the user agent's own `padding: 1px 6px`, and no rule in
+   this app ever overrode it — so an 18px close button had 6px of content box
+   left and its 14px glyph was squeezed to 14x6; the viewer's 26px buttons drew
+   their 18px icons at 12x18. The icons did not look "web-like" by accident,
+   they were being crushed. Zero padding, and the glyph refuses to shrink.
+   A later stylesheet can still give a specific button its own padding: this
+   file is imported first. */
+button:has(> svg) { padding: 0; }
+button > svg,
+.pyx-ico > svg { flex: 0 0 auto; }

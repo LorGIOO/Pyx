@@ -57,9 +57,19 @@
   height: var(--ctl-h); padding: 0 12px;
   border: var(--ctl-stroke) solid var(--theme-border);
   border-radius: var(--ctl-radius);
-  color: #fff; font-size: 11px; font-weight: 600;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.6); cursor: default;
+  font-size: 11px; font-weight: 600;
+  cursor: default;
 }
+/* The name sits on its own small plate, tinted for the chip it is on. A bare
+   shadowed label cannot survive a gradient that runs from #ffffff to #007acc
+   under it — on "Claro" the white text simply disappeared into the white half. */
+.cfg-theme-name {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.cfg-theme.ink-dark .cfg-theme-name { color: #1f1f1f; background: rgba(255, 255, 255, 0.82); }
+.cfg-theme.ink-light .cfg-theme-name { color: #ffffff; background: rgba(0, 0, 0, 0.42); }
 /* Selected swatch: same 2px ring VS Code puts on the active image
    thumbnail (`.image-carousel-editor .thumbnail.active
    {border-color:var(--vscode-focusBorder)}` over a 2px border). */
@@ -117,6 +127,9 @@
   border-radius: var(--ctl-radius-sm);
 }
 .cfg-row:hover { background: var(--theme-hover); }
+/* An option whose parent switch is off: still visible, plainly inert. */
+.cfg-row.disabled .cfg-label,
+.cfg-row.disabled .cfg-val { opacity: 0.45; }
 .cfg-label { flex: 1; color: var(--theme-text); }
 .cfg-row input[type="color"] { width: 34px; height: var(--ctl-h-sm); }
 .cfg-chk {
@@ -129,6 +142,21 @@
 .cfg-chk input[type="checkbox"] { width: 14px; height: 14px; }
 .cfg-chk input[type="checkbox"]::after { -webkit-mask-size: 12px 12px; mask-size: 12px 12px; }
 .cfg-bg { opacity: 0.9; }
+/* "No background" chip: the colour input still shows its #000000 fallback, so
+   a slash is drawn over it — the same convention as a crossed-out swatch in a
+   drawing program. The line is drawn in two colours so it reads on black. */
+.cfg-bg-wrap { position: relative; display: inline-flex; }
+.cfg-bg-wrap.empty::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to top right, transparent calc(50% - 2.2px), rgba(255,255,255,0.85) calc(50% - 2.2px),
+      rgba(255,255,255,0.85) calc(50% + 2.2px), transparent calc(50% + 2.2px)),
+    linear-gradient(to top right, transparent calc(50% - 3.2px), #c42b1c calc(50% - 3.2px),
+      #c42b1c calc(50% + 3.2px), transparent calc(50% + 3.2px));
+}
 .cfg-clear {
   width: 20px; height: 20px;
   border: var(--ctl-stroke) solid var(--theme-border);
@@ -136,7 +164,11 @@
   background: transparent; color: var(--theme-text-secondary);
   font-size: 11px; cursor: default;
 }
-.cfg-clear:hover { background: var(--theme-hover); color: var(--theme-text); }
+.cfg-clear svg { width: 13px; height: 13px; }
+.cfg-clear:hover:not(:disabled) { background: var(--theme-hover); color: var(--theme-text); }
+/* Nothing to remove when there is no background: saying so is better than a
+   live-looking button that does nothing. */
+.cfg-clear:disabled { opacity: 0.35; }
 /* `.settings-editor … .monaco-select-box {height:26px;padding:2px 6px}`.
    The class is used both on <select> and on <input type="text">, so it
    only carries the size; the look comes from controls.css. */

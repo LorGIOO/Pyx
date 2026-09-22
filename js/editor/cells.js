@@ -549,7 +549,7 @@ class CellToolbar extends WidgetType {
 
     // Play while idle, stop while running — the button swaps in place.
     const run = out.running
-      ? iconBtn('run stop', I.stop, 'Interrumpir la ejecución', () => interruptKernel())
+      ? iconBtn('run stop', I.stop, 'Interrumpir la ejecución — púlsalo otra vez si la celda no responde', () => interruptKernel())
       : iconBtn('run', I.compile, 'Ejecutar la celda (Mayús+Intro)', () => runCellByKey(view, this.key));
     run.classList.add('cell-gutter-btn');
     bar.appendChild(run);

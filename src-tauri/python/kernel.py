@@ -61,6 +61,10 @@ warnings.filterwarnings("ignore", message=".*cannot be shown.*")
 
 # Rich outputs (display(), HTML, images, video…) collected during one cell run.
 DISPLAYS = []
+# pyplot figure numbers already emitted as a display during THIS cell, so the
+# end-of-cell sweep does not show the same plot a second time. Cleared with
+# DISPLAYS at the start of every execution.
+_EMITTED_FIGS = set()
 
 # --- protocol integrity -------------------------------------------------
 # The JSON frames are the ONLY thing that may ever reach the real stdout.
@@ -187,12 +191,32 @@ def _install_import_hook():
 NS = {}
 
 
+def _fig_number(obj):
+    """The pyplot figure number of `obj`, or None if it isn't a figure.
+
+    Duck-typed on purpose: matplotlib must not be imported to answer this, and
+    a session that never plots must not pay for loading it. A pyplot-managed
+    Figure is the only common object carrying both `savefig` and an integer
+    `number`."""
+    num = getattr(obj, "number", None)
+    if isinstance(num, bool) or not isinstance(num, int):
+        return None
+    return num if callable(getattr(obj, "savefig", None)) else None
+
+
 def _mime_route(obj):
     """Route an object to its richest representation, Jupyter-style.
 
     Returns {"kind": "html"|"svg"|"image"|"markdown", "data": ...} or None.
     Order matters: html (plotly, pandas, widgets) > svg > png (PIL, anything
     with _repr_png_) > markdown."""
+    # A figure shown HERE must not also be swept up by the end-of-cell capture.
+    # A cell ending in `fig`, or calling `display(fig)`, emitted the plot twice:
+    # once as its result and once again because the figure was still open when
+    # `_capture_images` ran.
+    num = _fig_number(obj)
+    if num is not None:
+        _EMITTED_FIGS.add(num)
     rh = getattr(obj, "_repr_html_", None)
     if callable(rh):
         try:
@@ -792,13 +816,26 @@ def _latex_display(latex):
 
 
 def _capture_images():
-    """Return open matplotlib figures as base64 PNGs, then close them."""
+    """Return open matplotlib figures as base64 PNGs, then close them.
+
+    A figure already shown as the cell's result, or handed to `display()`, is
+    skipped: it is the SAME figure, and emitting it here too printed the plot
+    twice for the most ordinary way there is of ending a plotting cell —
+
+        fig, ax = plt.subplots()
+        ax.plot(x, y)
+        fig
+
+    It is still closed with the rest: leaving it open would hand it to the
+    next cell's sweep instead."""
     images = []
     if sys.modules.get("matplotlib") is None:
         return images
     try:
         import matplotlib.pyplot as plt
         for num in plt.get_fignums():
+            if num in _EMITTED_FIGS:
+                continue
             buf = io.BytesIO()
             plt.figure(num).savefig(buf, format="png", dpi=110, bbox_inches="tight")
             images.append(base64.b64encode(buf.getvalue()).decode("ascii"))
@@ -1035,6 +1072,7 @@ def handle(req):
 
     # Normal cell execution.
     DISPLAYS.clear()
+    _EMITTED_FIGS.clear()
     out, err = _CellIO(), _CellIO()
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err

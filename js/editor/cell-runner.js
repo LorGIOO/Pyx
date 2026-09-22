@@ -16,10 +16,17 @@ let started = false;
 // the single cell would then run right after the reset and BEFORE the imports,
 // failing with NameErrors (plt, np…). Every sequence must hold this lock.
 let kernelChain = Promise.resolve();
+// How many sequences are running or waiting. `restartKernel` needs to know:
+// queueing politely behind a sequence is exactly the wrong thing to do when
+// the sequence is the runaway cell you are trying to escape from.
+let pending = 0;
+export function kernelSequenceActive() { return pending > 0; }
 export function withKernelLock(fn) {
+  pending++;
   const run = kernelChain.then(fn, fn);
   // Keep the chain alive even if fn throws.
   kernelChain = run.then(() => {}, () => {});
+  run.then(() => { pending--; }, () => { pending--; });
   return run;
 }
 
@@ -83,25 +90,48 @@ export async function setKernelPython(path) {
 
    Pressing stop again within a few seconds escalates to the hard kill, for the
    cases a soft interrupt cannot reach (a C extension spinning without ever
-   checking signals). */
+   checking signals).
+
+   That escalation used to be invisible: the button said "Interrumpir" before
+   and after, so someone whose soft interrupt had not taken had no reason to
+   press it a second time rather than conclude the button was broken. Two
+   seconds after a soft interrupt that has not landed, `state.kernelForceHint`
+   goes true and the button says so. */
 let interrupting = false;
 let lastInterruptAt = 0;
+let hintTimer = 0;
+
+function clearForceHint() {
+  if (hintTimer) { clearTimeout(hintTimer); hintTimer = 0; }
+  state.kernelForceHint = false;
+}
 
 export async function interruptKernel() {
   if (!isTauri()) return;
   const now = Date.now();
-  const hard = now - lastInterruptAt < 4000;
+  // Once the hint is up, the next press escalates however long the user took
+  // to read it — the 4 s window alone gave them two seconds to notice, decide
+  // and click.
+  const hard = state.kernelForceHint === true || now - lastInterruptAt < 4000;
   lastInterruptAt = now;
   interrupting = true;
+  clearForceHint();
   try { await kernelInterrupt(hard); } catch (_) { /* best effort */ }
   if (hard) {
     // The process is gone: the next request respawns an empty kernel.
+    started = false;
     nsInvalidate();
     state.kernelStatus = 'ready';
   } else {
     // The cell will come back with a KeyboardInterrupt; the namespace kept
     // whatever the cell had already assigned, so it is no longer describable.
     nsInvalidate();
+    // Still running two seconds on? The signal did not reach the cell. Offer
+    // the escalation instead of leaving the user guessing.
+    hintTimer = setTimeout(() => {
+      hintTimer = 0;
+      if (state.kernelStatus === 'busy') state.kernelForceHint = true;
+    }, 2000);
   }
 }
 
@@ -144,6 +174,7 @@ export async function runCellCode(code, { cwd, reset } = {}) {
     };
   } finally {
     interrupting = false;
+    clearForceHint();
     if (state.kernelStatus === 'busy') state.kernelStatus = 'ready';
   }
 }
@@ -176,9 +207,24 @@ export async function evalExpressions(exprs, { cwd, silent } = {}) {
 
 export async function restartKernel() {
   if (!isTauri()) return;
-  // Through the lock: a manual restart must never land in the MIDDLE of a
-  // running sequence (compile / run-all), which would wipe the namespace
-  // between the imports and the cells that use them.
+  // A restart is mostly used for ONE thing: getting out of a cell that is not
+  // going to finish. Going through the lock alone made it unable to do that —
+  // it queued behind the very sequence it was meant to end, so `while True:`
+  // left the button inert for as long as the loop ran.
+  //
+  // So: if anything holds or is waiting on the lock, kill the process FIRST.
+  // The in-flight request then fails at once (interrupt_hard closes the
+  // kernel's stdin), its sequence unwinds, the lock frees, and the reset below
+  // runs immediately afterwards — still through the lock, so a restart still
+  // cannot land between a compile's imports and the cells that use them.
+  clearForceHint();
+  if (kernelSequenceActive()) {
+    interrupting = true;
+    lastInterruptAt = Date.now();
+    try { await kernelInterrupt(true); } catch (_) { /* best effort */ }
+    started = false;
+    nsInvalidate();
+  }
   return withKernelLock(async () => {
     state.kernelStatus = 'starting';
     try {

@@ -3,11 +3,80 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar]
+## [1.4.0] — 2026-09-22
 
 Lo que escribes es lo que ves, siempre.
 
 ### Corregido
+
+- **Las celdas ya no muestran la misma figura dos veces.** La forma más normal
+  que hay de terminar una celda que dibuja —`fig, ax = plt.subplots()` … `fig`—
+  pintaba la gráfica dos veces: una como resultado de la celda y otra porque la
+  figura seguía abierta cuando el kernel barría las figuras al terminar. Lo
+  mismo con `display(fig)`. Ahora una figura que ya se ha mostrado no se vuelve
+  a recoger, y una celda que dibuja sin escribir nada al final se sigue
+  capturando igual que antes.
+- **«Reiniciar el kernel» ya puede parar la celda que no termina.** Se ponía en
+  la cola detrás de la secuencia en curso, así que con un `while True:` delante
+  el botón no hacía absolutamente nada: esperaba a que acabase justo aquello
+  que se le pedía terminar. Ahora, si hay algo ejecutándose, mata el proceso
+  primero y reinicia después.
+- **El botón de parada dice lo que va a hacer.** La interrupción suave no
+  siempre llega a la celda (una extensión en C que nunca comprueba las
+  señales), y pulsar otra vez escalaba a matar el proceso sin que nada lo
+  contara. A los dos segundos sin efecto, el botón pasa a decir **«Forzar
+  parada»** y avisa de que se pierden las variables.
+- **El visor avisa cuando el PDF no es del documento abierto.** Al cambiar a
+  otro proyecto que todavía no se ha compilado, se quedaba en pantalla el PDF
+  del anterior sin nada que lo indicara: se leía el texto de un informe junto a
+  los números de otro. Ahora aparece una franja que lo dice y nombra el PDF.
+  Un capítulo y su raíz comparten PDF, y ese caso sigue sin avisar de nada.
+- **Una ruta de proyecto demasiado larga ya no falla con «os error 267».**
+  Windows no deja arrancar un programa en una carpeta de más de 260 caracteres
+  —y el prefijo `\\?\` no lo arregla, solo vale para rutas de archivo—, así
+  que ahora el mensaje dice exactamente eso, cuánto mide la carpeta y que hay
+  que mover el proyecto.
+- **El corrector dejó de subrayar «graphics» en cada figura.** La lista de
+  órdenes cuyo argumento no es texto probaba `\include` antes que
+  `\includegraphics`, así que de `\includegraphics{figuras/viga.png}` solo se
+  ocultaba la primera mitad. Además, una orden que no está en la lista ya no
+  puede confundirse con otra más corta: `\reflectbox{Texto}` ya no se lee como
+  `\ref` + «lectbox».
+- **Los iconos ya no salían aplastados.** Un `<button>` trae el relleno del
+  propio navegador (`1px 6px`) y ningún estilo lo quitaba, así que la equis de
+  cerrar pestaña se dibujaba a 14×6 y los iconos de la barra del visor a 12×18.
+  No parecían «de web» por casualidad: estaban estrujados.
+- **El icono de la sección «Estructura» ocupaba el panel entero.** No tenía
+  ninguna regla de tamaño, así que se dibujaba al tamaño por defecto de un SVG
+  sin medidas.
+- **El icono de estado de la barra inferior se dibujaba a 54×54** en una barra
+  de 24 px, por el mismo motivo.
+- **Las barras de desplazamiento volvieron a ser redondeadas.** Un
+  `* { scrollbar-width: thin }` anulaba en silencio todo el bloque
+  `::-webkit-scrollbar` —en Chromium la propiedad estándar gana— y devolvía la
+  barra cuadrada de 10 px del motor.
+- **La barra del visor PDF ya no esconde botones.** Con el panel lateral
+  abierto en una ventana de 1000 px, los cinco últimos botones quedaban fuera
+  del borde derecho y no había manera de llegar a ellos. Ahora los controles se
+  desplazan como una tira y el botón de cerrar se queda fijo.
+- **Las flechas de página se apagan al principio y al final del documento**, en
+  vez de parecer activas y no hacer nada.
+- **Una salida muy larga ya no empuja el documento varias pantallas abajo**:
+  pasadas unas 30 líneas se desplaza dentro de su propio recuadro, como en los
+  cuadernos de VS Code. Las figuras y las tablas se siguen mostrando enteras.
+- **El menú del clic derecho se cierra con Escape** y se coloca midiendo su
+  altura real, no una estimada: cerca del borde inferior de la pantalla se le
+  quedaban filas fuera.
+- **«Restablecer» vuelve también al tema claro.** El tema no vive en los
+  ajustes generales, así que era lo único que se quedaba como estaba.
+- **El deslizador del intervalo de autoguardado se apaga cuando el
+  autoguardado está desactivado.**
+- **«Sin fondo» se distingue de «fondo negro»** en la tabla de colores: el
+  selector no tiene forma de representar la ausencia de color y enseñaba un
+  cuadro negro en los dos casos.
+- **El nombre del tema «Claro» se lee.** Era texto blanco sobre un degradado
+  que empieza en blanco.
+
 
 - **Proyectos fuera de la carpeta de usuario no compilaban.** Un proyecto en
   otra unidad (`E:\…`), un USB o una carpeta de red: la interfaz solo podía
@@ -189,6 +258,14 @@ Lo que escribes es lo que ves, siempre.
   fusionar el inglés si las dos variantes dejan de compartir tabla de afijos.
 
 ### Cambiado
+
+- **La barra de acciones de la celda es ahora el panel flotante de VS Code.**
+  Estaba dentro de la celda, lo que convertía la parte de arriba en una franja
+  de 24 px vacía; ahora es un recuadro pequeño centrado sobre la línea del
+  borde superior, a la derecha, y la celda empieza directamente con el código.
+- **El borde de la celda es una línea de 1 px por los cuatro lados.** El
+  sombreado interior que llevaba la cabecera se veía como un trazo grueso
+  arriba y fino en el resto.
 
 - **Los controles y los iconos siguen ahora el patrón de VS Code.** Los
   desplegables, las casillas, los deslizadores, los campos y los botones se
@@ -516,6 +593,7 @@ ha cambiado, y que abrir un informe no dependa de tener Python instalado.
 - Instaladores para Windows, macOS y Linux.
 - Soporte de interfaz en inglés.
 
+[1.4.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.4.0
 [1.3.1]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.1
 [1.3.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.0
 [1.2.1]: https://github.com/LorGIOO/Pyx/releases/tag/v1.2.1

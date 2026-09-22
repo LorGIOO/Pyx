@@ -7,7 +7,7 @@ import {
   KEY_ACTIONS, comboOf, setCombo, resetCombo, resetAllCombos, comboFromEvent, conflictsOf,
   actionLabel, groupLabel,
 } from '../stores/keysStore.js';
-import { THEMES, setTheme } from '../stores/themeStore.js';
+import { THEMES, setTheme, DEFAULT_THEME } from '../stores/themeStore.js';
 import { listFonts } from '../../core/platform.js';
 import {
   broadcastSpellRefresh, setMinimapEnabled, applyEditorSettings,
@@ -19,6 +19,7 @@ import { setInvert } from '../stores/previewStore.js';
 import { state, activeDoc } from '../../core/state.js';
 // i18n `t` is imported as `tr` here: this file already uses `t` for token rows.
 import { t as tr, lang, setLang } from '../../core/i18n.js';
+import { icons } from './ribbon/icons.js';
 
 const CATEGORIES = () => [
   { id: 'general', label: 'General' },
@@ -84,6 +85,9 @@ const FIELDS = () => [
   {
     cat: 'general', sec: ['Sesión', 'Session'], key: 'autosaveMin', type: 'range',
     label: 'Intervalo de autoguardado', en: 'Autosave interval',
+    // Dead while autosave is off: the slider moved and the number changed, but
+    // nothing was ever going to use it.
+    when: () => gv('autosave') === true,
     min: 1, max: 30, step: 1, unit: (v) => `${v} min`,
     hint: ['Solo se guardan los documentos que ya tienen archivo en el disco: el autoguardado nunca abre el diálogo «Guardar como».',
       'Only documents that already have a file on disk are saved: autosave never opens a "Save as" dialog.'],
@@ -462,23 +466,27 @@ export default function ConfigDialog() {
 
   const Field = (props) => {
     const f = props.f;
+    // An option that depends on another one (`when`) is shown greyed and inert
+    // while its condition is false, the way VSCode greys a setting its parent
+    // switch has turned off — never hidden, so you can still see it is there.
+    const off = () => (f.when ? !f.when() : false);
     return (
       <>
-        <div class="cfg-row">
+        <div class={`cfg-row${off() ? ' disabled' : ''}`}>
           <span class="cfg-label">{fLabel(f)}</span>
           <Show when={f.type === 'check'}>
-            <input type="checkbox" checked={!!fValue(f)}
+            <input type="checkbox" checked={!!fValue(f)} disabled={off()}
               onChange={(e) => fSet(f, e.target.checked)} />
           </Show>
           <Show when={f.type === 'select'}>
-            <select class="cfg-select" value={fValue(f)} onChange={(e) => fSet(f, e.target.value)}>
+            <select class="cfg-select" value={fValue(f)} disabled={off()} onChange={(e) => fSet(f, e.target.value)}>
               <For each={typeof f.opts === 'function' ? f.opts() : f.opts}>
                 {(o) => <option value={o[0]}>{o[1]}</option>}
               </For>
             </select>
           </Show>
           <Show when={f.type === 'range'}>
-            <input type="range" min={f.min} max={f.max} step={f.step} value={fValue(f)}
+            <input type="range" min={f.min} max={f.max} step={f.step} value={fValue(f)} disabled={off()}
               onInput={(e) => fSet(f, parseFloat(e.target.value))} />
             <span class="cfg-val">{f.unit ? f.unit(fValue(f)) : fValue(f)}</span>
           </Show>
@@ -488,11 +496,11 @@ export default function ConfigDialog() {
               <For each={THEMES}>
                 {(th) => (
                   <button
-                    class={`cfg-theme${state.theme === th.id ? ' active' : ''}`}
+                    class={`cfg-theme ink-${th.ink}${state.theme === th.id ? ' active' : ''}`}
                     onClick={() => setTheme(th.id)}
                     style={{ background: `linear-gradient(135deg, ${th.swatches[0]} 0 50%, ${th.swatches[1]} 50% 100%)` }}
                     title={th.label}
-                  >{th.label}</button>
+                  ><span class="cfg-theme-name">{th.label}</span></button>
                 )}
               </For>
             </div>
@@ -515,12 +523,17 @@ export default function ConfigDialog() {
     if (c === 'syntax') { resetAll(); resetGeneralSection('syntax'); return; }
     if (c === 'keys') { resetAllCombos(); return; }
     resetGeneralSection(c);
+    // The theme is NOT in the general store — it lives in `state.theme` and in
+    // localStorage — so resetting the page it is on left the chips exactly as
+    // they were while everything around them went back to default.
+    if (c === 'general') setTheme(DEFAULT_THEME);
     afterBulkReset();
   };
   const resetEverything = () => {
     resetGeneralAll();
     resetAll();
     resetAllCombos();
+    setTheme(DEFAULT_THEME);
     afterBulkReset();
   };
   // Re-push the values that live outside the CSS layer.
@@ -550,9 +563,22 @@ export default function ConfigDialog() {
         <span class="cfg-label">{tr(t.label, t.en || t.label)}</span>
         <input type="color" title={tr('Color de letra', 'Text color')} value={colorVal(t)}
           onInput={(e) => setToken(t.key, { color: e.target.value })} />
-        <input type="color" title={tr('Color de fondo', 'Background color')} class="cfg-bg" value={s().bg || '#000000'}
-          onInput={(e) => setToken(t.key, { bg: e.target.value })} />
-        <button class="cfg-clear" title={tr('Quitar fondo', 'Remove background')} onClick={() => setToken(t.key, { bg: null })}>⌀</button>
+        {/* "No background" is the normal state for almost every token, but an
+            <input type="color"> has no way to say so: with `bg` unset it fell
+            back to #000000 and drew a solid black chip, indistinguishable from
+            a token whose background really IS black. The wrapper puts a slash
+            over the chip while it is unset, and the title says which it is. */}
+        <span class={`cfg-bg-wrap${s().bg ? '' : ' empty'}`}>
+          <input type="color" class="cfg-bg" value={s().bg || '#000000'}
+            title={s().bg
+              ? tr(`Color de fondo: ${s().bg}`, `Background color: ${s().bg}`)
+              : tr('Sin fondo — pulsa para poner uno', 'No background — click to set one')}
+            onInput={(e) => setToken(t.key, { bg: e.target.value })} />
+        </span>
+        <button class="cfg-clear pyx-ico" disabled={!s().bg}
+          title={tr('Quitar fondo', 'Remove background')}
+          innerHTML={icons.circleSlash}
+          onClick={() => setToken(t.key, { bg: null })}></button>
         <Chk k="bold" title={tr('Negrita', 'Bold')}>N</Chk>
         <Chk k="italic" title={tr('Cursiva', 'Italic')}><i>C</i></Chk>
         <Chk k="underline" title={tr('Subrayado', 'Underline')}><u>S</u></Chk>

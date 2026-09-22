@@ -63,12 +63,21 @@ export default function CalcTab() {
         <RibbonButton icon={icons.run} label={t('Celda actual', 'Current cell')} disabled={!hasDoc() || busy()}
           title={`${t('Ejecutar la celda actual', 'Run the current cell')}${kb('calc.runCell')}`} onClick={runCurrentCell} />
         {/* While the kernel is busy this turns into "Interrupt" (Jupyter-style). */}
+        {/* When the soft interrupt has not taken, say what the next press will
+            actually DO — the button used to keep saying "Interrumpir" while
+            nothing happened, and the escalation to a forced kill was a secret. */}
         <RibbonButton
           icon={busy() ? icons.stop : icons.runAll}
-          label={busy() ? t('Interrumpir', 'Interrupt') : t('Todas las celdas', 'All cells')}
+          label={!busy() ? t('Todas las celdas', 'All cells')
+            : state.kernelForceHint ? t('Forzar parada', 'Force stop')
+              : t('Interrumpir', 'Interrupt')}
           active={busy()}
           disabled={!hasDoc()}
-          title={busy() ? t('Interrumpir la ejecución del kernel', 'Interrupt kernel execution') : `${t('Ejecutar todas las celdas', 'Run all cells')}${kb('calc.runAll')}`}
+          title={!busy() ? `${t('Ejecutar todas las celdas', 'Run all cells')}${kb('calc.runAll')}`
+            : state.kernelForceHint
+              ? t('La celda no responde a la interrupción. Pulsa para terminar el proceso: se pierden las variables.',
+                'The cell is not responding to the interrupt. Press to kill the process: variables are lost.')
+              : t('Interrumpir la ejecución del kernel', 'Interrupt kernel execution')}
           onClick={() => (busy() ? interruptKernel() : runAll())} />
       </RibbonGroup>
 

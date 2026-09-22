@@ -16,6 +16,10 @@
 :root {
   --cell-gutter: 44px;
   --cell-radius: 6px;
+  /* Roughly VSCode's `notebook.output.textLineLimit` (30 lines) at this
+     font-size and line-height: past it a text output scrolls in place instead
+     of pushing the rest of the document off the screen. */
+  --cell-out-max: 460px;
 }
 
 /* Marker lines (%#python / %#end) host the head/output widgets inline;
@@ -31,18 +35,32 @@
   position: relative;
   display: flex;
   align-items: center;
-  height: 24px;
-  margin: 6px 0 0 var(--cell-gutter);
+  /* Just the box's top padding, like VSCode's — NOT a strip of its own. It
+     held the toolbar once, which gave every cell a 24px empty band across the
+     top; the toolbar now floats over the border and the head went back to
+     being what it is. It grows again only when it has something to say. */
+  height: 9px;
+  /* 14px, not 6: the floating toolbar hangs half its height ABOVE this border,
+     and the gap is what it hangs into. With 6px it covered the descenders of
+     the line of prose before the cell. */
+  margin: 14px 0 0 var(--cell-gutter);
   padding: 0 4px;
   background: var(--theme-cell-bg);
   border: 1px solid var(--theme-cell-border);
   border-bottom: none;
   border-top-left-radius: var(--cell-radius);
   border-top-right-radius: var(--cell-radius);
-  box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.08);
+  /* No inset shadow here. It used to be a soft glow inside a 24px band, which
+     was invisible; on a 9px head the same glow covers the whole strip and the
+     top of the cell reads as a thick grey line while the other three sides are
+     hairlines. The box is one 1px border all the way round, nothing else. */
   font-size: 11px;
   user-select: none;
 }
+/* The two states that DO need a line of their own: the one-line preview of a
+   collapsed cell, and the "result out of date" badge. */
+.cell-head.collapsed,
+.cell-head:has(.cell-status) { height: 24px; }
 .cell-head.collapsed {
   border-bottom: 1px solid var(--theme-cell-border);
   border-radius: var(--cell-radius);
@@ -96,10 +114,12 @@
 
 /* Run / stop and the fold chevron live in the gutter, outside the box, the
    way VSCode arranges them: chevron first, then the play button. */
+/* Both hang BELOW the head now that the head is only 9px of padding: they line
+   up with the cell's FIRST LINE OF CODE, which is where VSCode puts them. */
 .cell-head .cell-gutter-fold {
   position: absolute;
   left: calc(-1 * var(--cell-gutter) + 10px);
-  top: 2px;
+  top: 8px;
   width: 14px;
   height: 20px;
 }
@@ -107,10 +127,13 @@
 .cell-head .cell-gutter-btn {
   position: absolute;
   left: calc(-1 * var(--cell-gutter) + 22px);
-  top: 0;
+  top: 6px;
   width: 22px;
   height: 24px;
 }
+/* A collapsed cell has a 24px head again, and its one line IS the head. */
+.cell-head.collapsed .cell-gutter-fold { top: 2px; }
+.cell-head.collapsed .cell-gutter-btn { top: 0; }
 
 .cell-head-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
 /* The fold chevron is chrome too: at rest the head is just the box's top
@@ -119,22 +142,40 @@
 .cell-head:hover .cell-gutter-fold,
 .cell-head.active .cell-gutter-fold,
 .cell-head.collapsed .cell-gutter-fold { visibility: visible; }
-/* VSCode's per-cell toolbar: a small floating group at the top right, with a
-   hairline separator border (notebook.cellToolbarSeparator = #8080805A) and
-   the cell's own background behind it. */
+/* VSCode's per-cell toolbar.
+   It is NOT a band of its own: it is a small floating panel that STRADDLES the
+   cell's top border, pinned to the right, exactly as in a VSCode notebook.
+   Sitting it inside the head turned the head into a visible strip; centred on
+   the border line it reads as chrome laid over the cell, and the head goes
+   back to being only the top of the code box.
+   Hairline border (notebook.cellToolbarSeparator = #8080805A) over the cell's
+   own background, so it stays legible above whatever it overlaps. */
 .cell-actions {
+  position: absolute;
+  /* `top: 0` is the padding box, i.e. just inside the 1px border; -1px puts
+     the panel's centre on the border LINE itself. */
+  top: -1px;
+  right: 6px;
+  transform: translateY(-50%);
+  z-index: 4;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 2px;
+  gap: 1px;
+  padding: 1px;
   border: 1px solid rgba(128, 128, 128, 0.35);
-  border-radius: 4px;
+  border-radius: 5px;
   background: var(--theme-cell-bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   /* Hover-only chrome: a cell at rest shows code, a count and a timer. */
   visibility: hidden;
 }
 .cell-head:hover .cell-actions,
 .cell-head.active .cell-actions { visibility: visible; }
+/* Slightly tighter than the gutter buttons: VSCode's toolbar icons are 16px
+   inside a 22px slot, and the panel has to stay shorter than the gap above
+   the cell or it would cover the line of prose before it. */
+.cell-actions .cell-ico { width: 21px; height: 20px; border-radius: 3px; }
+.cell-actions .cell-ico svg { width: 15px; height: 15px; }
 
 .cell-ico {
   display: inline-flex;
@@ -247,10 +288,24 @@
   font-size: 12px; line-height: 1.5;
   color: var(--theme-cell-output-text);
   white-space: pre-wrap; word-break: break-word;
-  /* Grow to fit ALL output — no inner scrollbar. Long outputs are minimized
-     with the output collapse button, not scrolled. */
+  /* A text output scrolls in place once it passes ~30 lines, the way VSCode's
+     notebooks do. It used to grow without limit, and a loop that printed a few
+     thousand lines pushed the rest of the LaTeX document several screens down:
+     the collapse button fixes that only if you already know the output is
+     there, and by then you have lost your place. */
+  max-height: var(--cell-out-max);
+  overflow-y: auto;
+}
+/* …but only TEXT scrolls. A figure, a DataFrame or an interactive frame is
+   sized to its content and must never get an inner scrollbar, so any body
+   holding one opts out. (`:has()` is unsupported on very old engines; there
+   the output simply keeps growing, which is the old behaviour.) */
+.cell-out-body:has(.out-fig, .out-rich-holder, .out-iframe, img, table, canvas, svg) {
+  max-height: none;
   overflow: visible;
 }
+/* The collapsed strip is one line by definition. */
+.cell-out-body.slim { max-height: none; overflow: visible; }
 
 /* Output minimized to a slim strip. */
 .cell-out.out-collapsed .cell-out-body.slim {

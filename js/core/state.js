@@ -30,6 +30,13 @@ export const state = createMutable({
   // Toolchain / runtime
   env: { python: null, latex: null, engines: [] },
   kernelStatus: 'idle', // idle | starting | ready | busy | error
+  // True when a soft interrupt has not taken hold: the stop button then offers
+  // the forced kill instead of repeating a word that plainly did nothing.
+  kernelForceHint: false,
+  // True when the PDF on screen was built from a DIFFERENT document than the
+  // one being edited. The viewer says so rather than going blank: an old PDF
+  // is still worth looking at, as long as you know whose it is.
+  pdfForeign: false,
   compiling: false,
   compileQueued: false, // a compile was asked for mid-compile and runs right after
   liveCompile: true, // TeXstudio-style: background compile shortly after typing stops

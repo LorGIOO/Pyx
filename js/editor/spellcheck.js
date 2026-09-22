@@ -14,6 +14,7 @@ import { parseCells } from './cells.js';
 import { general, setGeneral } from '../solid/stores/settingsStore.js';
 import { lang } from '../core/i18n.js';
 import Nspell from 'nspell';
+import { WORD, isAcronym, maskLine } from './spell-mask.js';
 
 // Dispatched to force a re-scan (dictionary finished loading, or a setting
 // changed). Carries no data.
@@ -133,44 +134,9 @@ export function spellSuggest(word) {
   try { return speller.suggest(word).slice(0, 8); } catch (_) { return []; }
 }
 
-/* ---------------- masking out non-prose ---------------- */
-// Word = a run of letters (incl. accents); checked only when it has ≥2 letters,
-// isn't ALL-CAPS (acronym) and has no digits.
-const WORD = /\p{L}[\p{L}\p{M}]*/gu;
-const isAcronym = (w) => w === w.toUpperCase() && w.length <= 6;
-
-// Commands whose {argument} is NOT prose (identifiers, keys, paths, code).
-const NOPROSE = new RegExp(
-  '\\\\(?:' +
-  'ref|eqref|pageref|autoref|nameref|cref|Cref|label|cite[a-zA-Z]*|' +
-  'input|include|includegraphics|includepdf|usepackage|documentclass|' +
-  'bibliography|bibliographystyle|addbibresource|url|href|hyperref|' +
-  'begin|end|py|pyfile|color|textcolor|definecolor|pagestyle|thispagestyle|' +
-  'newcommand|renewcommand|providecommand|def|let|graphicspath|geometry|' +
-  'setlength|setcounter|usetikzlibrary|lstinputlisting|verb|lstset' +
-  ')\\*?\\s*(?:\\[[^\\]]*\\])?\\s*(?:\\{[^{}]*\\})?',
-  'g'
-);
-
-// Replace a slice with spaces so character offsets stay aligned with the line.
-function blank(s, re) {
-  return s.replace(re, (m) => ' '.repeat(m.length));
-}
-// Mask one line's non-prose so the leftover is pure text at the same offsets.
-function maskLine(text) {
-  let t = text;
-  // Comment: from an unescaped % to end of line.
-  const cm = t.replace(/\\%/g, '  ').indexOf('%');
-  if (cm >= 0) t = t.slice(0, cm) + ' '.repeat(t.length - cm);
-  t = blank(t, /\\\([^)]*?\\\)/g);         // inline math \(…\)
-  t = blank(t, /\\verb\*?(.).*?\1/g);      // inline verbatim \verb|…|
-  t = blank(t, /\$[^$]*\$/g);              // inline math $…$
-  t = blank(t, NOPROSE);                   // \ref{…}, \cite{…}, \py{…}, …
-  t = blank(t, /\\[a-zA-Z@]+\*?/g);        // remaining command NAMES
-  t = blank(t, /\[[^\[\]]*\]/g);           // optional args / options: [on] [off] [draft] [key=val]
-  t = blank(t, /\\[^a-zA-Z]/g);            // \%, \&, \\, \_ …
-  return t;
-}
+/* ---------------- masking out non-prose ----------------
+   The rules themselves live in `spell-mask.js`: pure string work, no editor,
+   so they can be tested directly. */
 
 /* ---------------- multi-line skip ranges (memoized per doc) ----------------
    Regions the checker must ignore: Python cells, math environments and display

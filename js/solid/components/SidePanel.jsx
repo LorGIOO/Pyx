@@ -99,8 +99,12 @@ export default function SidePanel() {
             {/* Estructura: this file and the documents it pulls in */}
             <Show when={tab() === 'structure'}>
               <div class="struct-root">
-                <span class="struct-root-ico" innerHTML={I.files}></span>
-                {activeDoc()?.fileName || tr('sin documento', 'no document')}
+                {/* `pyx-ico` is what gives an inline SVG a size: without it the
+                    icon had no rule of its own and filled the whole panel. */}
+                <span class="struct-root-ico pyx-ico" innerHTML={I.files}></span>
+                <span class="struct-root-name">
+                  {activeDoc()?.fileName || tr('sin documento', 'no document')}
+                </span>
               </div>
               <Show when={includes().length}
                 fallback={<div class="side-empty">No incluye otros archivos (\input, \include, \subfile).</div>}>

@@ -17,6 +17,42 @@ pub(crate) fn quiet(cmd: &mut std::process::Command) -> &mut std::process::Comma
     cmd
 }
 
+/// Why a child process could not be STARTED, in words the user can act on.
+///
+/// The case that matters is Windows error 267, which reached the log as
+/// "os error 267" and told nobody anything. It means the working directory
+/// handed to CreateProcess is longer than MAX_PATH (260 characters), and it is
+/// not a limitation Pyx can work around: the `\\?\` prefix lifts the length
+/// limit for FILE paths, not for the directory a process is started in, and
+/// neither the long-path registry switch nor the application manifest changes
+/// that. The engine simply cannot be run from a folder that deep, so the only
+/// real answer is to say so and name the folder.
+pub(crate) fn spawn_error(what: &str, dir: Option<&std::path::Path>, e: &std::io::Error) -> String {
+    #[cfg(windows)]
+    {
+        if e.raw_os_error() == Some(267) {
+            if let Some(dir) = dir {
+                let n = dir.as_os_str().len();
+                return format!(
+                    "No se pudo ejecutar {what}: la carpeta de trabajo tiene {n} caracteres y \
+                     Windows no permite arrancar un programa en una carpeta de más de 260, \
+                     aunque las rutas largas estén activadas.\n\n\
+                     Mueve el proyecto a una ruta más corta (por ejemplo C:\\Proyectos\\…) \
+                     y vuelve a compilar.\n\n\
+                     Carpeta: {}",
+                    dir.display()
+                );
+            }
+            return format!(
+                "No se pudo ejecutar {what}: la carpeta de trabajo supera el límite de 260 \
+                 caracteres de Windows. Mueve el proyecto a una ruta más corta."
+            );
+        }
+    }
+    let _ = dir;
+    format!("No se pudo ejecutar {what}: {e}")
+}
+
 // HEAVY commands are `async` + `spawn_blocking`: synchronous Tauri commands
 // run ON THE MAIN THREAD, so a 2-second xelatex pass or a long Python cell
 // used to freeze the whole UI (typing blocked until the compile finished).
@@ -601,9 +637,10 @@ fn run_command(app: tauri::AppHandle, command: String, cwd: Option<String>) -> R
         .stderr(Stdio::piped());
     quiet(&mut cmd);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("No se pudo ejecutar «{program}»: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        let d = cwd.as_ref().filter(|s| !s.is_empty()).map(std::path::Path::new);
+        spawn_error(&format!("«{program}»"), d, &e)
+    })?;
 
     if let Some(out) = child.stdout.take() {
         let a = app.clone();
@@ -772,5 +809,29 @@ mod tests {
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("a%zzb"), "a%zzb");
         assert_eq!(percent_decode(""), "");
+    }
+
+    /// QAFUN-5 · a working directory past MAX_PATH used to reach the log as
+    /// "os error 267" and explain nothing. The message has to name the cause,
+    /// the limit and the folder, and it must not swallow ordinary failures.
+    #[cfg(windows)]
+    #[test]
+    fn spawn_error_explains_a_too_long_working_directory() {
+        use std::io::{Error, ErrorKind};
+        use std::path::Path;
+
+        let dir = Path::new(r"C:\a\very\deep\folder");
+        let long = Error::from_raw_os_error(267);
+        let msg = super::spawn_error("xelatex", Some(dir), &long);
+        assert!(msg.contains("260"), "{msg}");
+        assert!(msg.contains("xelatex"), "{msg}");
+        assert!(msg.contains(r"C:\a\very\deep\folder"), "{msg}");
+        assert!(!msg.contains("267"), "the raw code must not be the message: {msg}");
+
+        // Anything else keeps the engine's own words.
+        let other = Error::new(ErrorKind::NotFound, "no such file");
+        let msg = super::spawn_error("xelatex", Some(dir), &other);
+        assert!(msg.contains("no such file"), "{msg}");
+        assert!(!msg.contains("260"), "{msg}");
     }
 }

@@ -115,9 +115,23 @@ const samePath = (a, b) => !!a && !!b
  * a compile, which the first time also means running every cell. On a long
  * report "opening" took as long as a full build. Word opens instantly because
  * it shows what was saved; so does this. The next compile replaces it. */
+/* Does the PDF on screen belong to the document being edited?
+ *
+ * Every early return below used to leave the PREVIOUS project's PDF on screen
+ * with nothing saying so: open a second report next to the first and you are
+ * reading one document's text beside the other document's numbers. Saying it
+ * out loud is the whole fix — the viewer is not cleared, because an old PDF is
+ * still useful to look at as long as you know whose it is. */
+function markPdfForeign(on) {
+  // A viewer with nothing in it already says so on its own.
+  state.pdfForeign = on && !!getPdfPath();
+}
+
 export async function showSavedPdf() {
   const doc = activeDoc();
-  if (!doc || doc.kind || !doc.path) return;
+  if (!doc || doc.kind) return;
+  // No file on disk yet: no project, so no PDF of its own can exist.
+  if (!doc.path) { markPdfForeign(true); return; }
   try {
     const content = getDocContent(doc.id);
     const root = await resolveRootPath(doc, content);
@@ -126,7 +140,9 @@ export async function showSavedPdf() {
     // to leave its PDF on screen, because this returned for any compile.
     if (state.compiling && samePath(compilingRoot, root)) return;
     const pdf = joinPath(await buildDirFor(root), `${stemOf(root)}.pdf`);
-    if (samePath(pdf, getPdfPath())) return;
+    // Already on screen — and this is also the case of a chapter and its root,
+    // which share one PDF: nothing to load and nothing to warn about.
+    if (samePath(pdf, getPdfPath())) { markPdfForeign(false); return; }
     // Only a PDF at least as new as the document is ITS PDF. An older one was
     // built from some other version of the file — edited outside Pyx, copied
     // over from another machine — and showing it would present text and
@@ -154,13 +170,20 @@ export async function showSavedPdf() {
       level = found.filter((c) => texts.has(c)).map((c) => [c, texts.get(c)]);
     }
     const [out, ...srcs] = await fileStamps([pdf, root, ...children]);
-    if (!out || out.mtime < 0 || srcs.some((s) => s && s.mtime > out.mtime)) return;
+    // No PDF, or one older than the sources: this document has nothing current
+    // to show, so whatever is up belongs to something else.
+    if (!out || out.mtime < 0 || srcs.some((s) => s && s.mtime > out.mtime)) { markPdfForeign(true); return; }
     // A compile of this project started meanwhile: its PDF will be newer.
     if (state.compiling && samePath(compilingRoot, root)) return;
     lastPdfPath = pdf;
     state.lastPdfPath = pdf;
+    markPdfForeign(false);
     await loadPdf(pdf);
-  } catch (_) { /* no saved PDF: the first compile will make one */ }
+  } catch (_) {
+    // No saved PDF: the first compile will make one. Until then, say that what
+    // is on screen is not this document's.
+    markPdfForeign(true);
+  }
 }
 
 /* Handcalcs output, cached by the fingerprint of the cell body that produced
@@ -1061,6 +1084,8 @@ export async function compileActive(showViewer = true) {
         const nowRoot = await resolveRootPath(now, getDocContent(now.id)).catch(() => null);
         if (nowRoot && !samePath(nowRoot, rootPath)) return res;
       }
+      // This PDF IS the active document's: whatever warning was up is stale.
+      markPdfForeign(false);
       if (auxOpen()) {
         // The detached window is the active viewer: refresh THAT one (the
         // in-app pane is closed; it reloads via reloadLastPdf when the

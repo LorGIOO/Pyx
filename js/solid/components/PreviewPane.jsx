@@ -186,6 +186,8 @@ export default function PreviewPane() {
       messageDialog(`No se pudo abrir la ventana del visor: ${String((e && e.message) || e)}`));
   };
   const onPageInput = (e) => { const n = parseInt(e.target.value, 10); if (n) goToPage(Math.max(1, Math.min(numPages(), n))); };
+  const canPrev = () => hasPdf() && currentPage() > 1;
+  const canNext = () => hasPdf() && currentPage() < numPages();
 
   const Btn = (p) => (
     <button class={`pv-btn${p.active ? ' active' : ''}`} title={p.title} disabled={p.disabled}
@@ -195,14 +197,24 @@ export default function PreviewPane() {
   return (
     <>
       <div class="preview-toolbar">
-        <Btn icon={ic.first} title="Primera página" onClick={goFirst} />
-        <Btn icon={ic.prev} title="Página anterior" onClick={goPrev} />
+        {/* The controls scroll as one strip. The whole bar used to be a single
+            flex row, so with the side panel open in a 1000px window the last
+            five buttons — exportar, ventana auxiliar, abrir fuera, contraste —
+            were squeezed past the right edge and simply could not be reached.
+            Only `pv-file` and the close button stay pinned outside the strip:
+            a close button that scrolls away is worse than no scrolling. */}
+        <div class="pv-scroll">
+        {/* Greyed out at the ends of the document, like every PDF viewer: the
+            four arrows used to look live on page 1 of 1 and simply did nothing
+            when clicked. */}
+        <Btn icon={ic.first} title="Primera página" disabled={!canPrev()} onClick={goFirst} />
+        <Btn icon={ic.prev} title="Página anterior" disabled={!canPrev()} onClick={goPrev} />
         <div class="pv-page">
-          <input type="text" value={currentPage()} onChange={onPageInput} />
+          <input type="text" value={currentPage()} onChange={onPageInput} disabled={!hasPdf()} />
           <span>/ {numPages() || 0}</span>
         </div>
-        <Btn icon={ic.next} title="Página siguiente" onClick={goNext} />
-        <Btn icon={ic.last} title="Última página" onClick={goLast} />
+        <Btn icon={ic.next} title="Página siguiente" disabled={!canNext()} onClick={goNext} />
+        <Btn icon={ic.last} title="Última página" disabled={!canNext()} onClick={goLast} />
 
         <div class="pv-sep"></div>
 
@@ -233,6 +245,7 @@ export default function PreviewPane() {
         <Btn icon={ic.detach} title="Sacar el visor de Pyx a una ventana auxiliar" disabled={!hasPdf()} onClick={detachViewer} />
         <Btn icon={ic.save} title="Guardar una copia del PDF…" disabled={!hasPdf()} onClick={exportPdf} />
         <Btn icon={ic.float} title="Abrir el PDF en la aplicación externa" disabled={!hasPdf()} onClick={floatWindow} />
+        </div>
 
         <span class="pv-spacer"></span>
         <Show when={previewFile()}><span class="pv-file">{previewFile()}</span></Show>
@@ -248,6 +261,20 @@ export default function PreviewPane() {
 
       <Show when={annotBarOpen()}>
         <AnnotBar />
+      </Show>
+
+      {/* The PDF belongs to another document. Not an error and not a reason to
+          clear the viewer — but it has to be said, because reading one report's
+          text beside another report's numbers is the kind of mistake that is
+          only noticed much later. */}
+      <Show when={state.pdfForeign && hasPdf() && !IS_AUX_VIEWER}>
+        <div class="pv-foreign">
+          <span class="pyx-ico" innerHTML={ICO.warn}></span>
+          <span>
+            Este PDF es de <b>{previewFile()}</b>, no del documento abierto.
+            Compila (<b>Ctrl+Mayús+B</b>) para ver el suyo.
+          </span>
+        </div>
       </Show>
 
       <Show when={!hasPdf()}>

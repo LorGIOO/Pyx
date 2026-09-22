@@ -434,7 +434,7 @@ pub fn compile(
         let output = cmd
             .arg(&file)
             .output()
-            .map_err(|e| format!("No se pudo ejecutar {engine}: {e}"))?;
+            .map_err(|e| crate::spawn_error(engine, Some(dir), &e))?;
 
         log.push_str(&format!("===== Pasada {} ({}) =====\n", i + 1, engine));
         let pass_out = String::from_utf8_lossy(&output.stdout).to_string();

@@ -62,6 +62,9 @@
   cursor: default;
   flex-shrink: 0;
 }
+/* 14px, not the 16px default: the close box is 18px, and a 16px glyph in it
+   leaves no air and reads as a filled square on hover. */
+.doc-tab-close svg { width: 14px; height: 14px; }
 .doc-tab-close:hover { background: #e81123; color: #fff; }
 
 .doc-tab-add {

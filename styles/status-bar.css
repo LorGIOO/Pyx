@@ -21,7 +21,16 @@
   white-space: nowrap;
 }
 .status-item .label { color: var(--theme-status-text); }
-.status-item .value { color: var(--theme-status-text-value); font-weight: 500; }
+.status-item .value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--theme-status-text-value);
+  font-weight: 500;
+}
+/* One notch under the 16px default: VSCode's status-bar codicons are smaller
+   than its editor ones, and 16px in a 24px bar reads as an oversized badge. */
+.status-ico svg { width: 13px; height: 13px; }
 .status-spacer { flex: 1; }
 .status-dot {
   width: 8px;

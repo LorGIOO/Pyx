@@ -165,7 +165,18 @@
 .toc-title { overflow: hidden; text-overflow: ellipsis; }
 
 /* Estructura */
-.struct-root { padding: 6px 10px; font-weight: 600; border-bottom: 1px solid var(--theme-border); }
+.struct-root {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--theme-border);
+}
+/* 14px, matching the rest of the side panel's text-height icons. */
+.struct-root-ico svg { width: 14px; height: 14px; }
+.struct-root-ico { color: var(--theme-text-secondary); }
+.struct-root-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .struct-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 10px 4px 20px; cursor: default; }
 .struct-row:hover { background: var(--theme-hover); color: var(--theme-accent); }
 .struct-cmd { font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; color: var(--theme-text-secondary); }
@@ -240,8 +251,16 @@
   padding: 4px;
   background: var(--theme-surface);
   border: 1px solid var(--theme-border);
-  border-radius: 4px;
+  /* VSCode's menus use cornerRadius.small on the panel and clip their rows to
+     it, so a hovered first/last row does not square off the corner. */
+  border-radius: 5px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  /* A menu taller than the window (eight suggestions plus every edit command,
+     in a short window) scrolls rather than running off the bottom. `hidden` on
+     the other axis is what keeps the rows clipped to the rounded corners. */
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .ctx-item {
   display: flex; align-items: center; gap: 8px;
@@ -357,6 +376,25 @@
 .pv-btn:hover { background: var(--theme-hover); border-color: var(--theme-ribbon-btn-hover-border); }
 .pv-btn.active { background: var(--theme-ribbon-btn-active-bg); border-color: var(--theme-ribbon-btn-active-border); color: var(--theme-accent); }
 .pv-btn:disabled { opacity: 0.4; }
+/* The controls strip. It scrolls sideways instead of squashing, because the
+   bar holds seventeen buttons and the preview pane is often only ~280px wide:
+   a shrunken 26px button is still a button, but one pushed past the right edge
+   is gone. The scrollbar itself is hidden — a 12px bar inside a 32px toolbar
+   would eat a third of it — and Chromium maps a plain vertical wheel onto the
+   only axis an element can scroll, so the mouse still reaches everything. */
+.pv-scroll {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.pv-scroll::-webkit-scrollbar { height: 0; width: 0; }
+/* Nothing inside the strip may shrink: shrinking is what hid the buttons. */
+.pv-scroll > * { flex-shrink: 0; }
 .pv-sep { width: 1px; height: 18px; background: var(--theme-border); margin: 0 4px; }
 .pv-zoom {
   min-width: 46px; height: 24px;
@@ -366,15 +404,19 @@
   font-size: 11px; cursor: default;
 }
 .pv-zoom:hover { background: var(--theme-hover); }
-.pv-page { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--theme-text-secondary); }
+.pv-page { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--theme-text-secondary); white-space: nowrap; }
 .pv-page input {
   width: 36px; height: 22px; text-align: center;
   border: 1px solid var(--theme-border);
   background: var(--theme-surface); color: var(--theme-text);
   font-size: 11px;
 }
-.pv-spacer { flex: 1; }
-.pv-file { font-size: 11px; color: var(--theme-text-secondary); margin-right: 6px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-page input:disabled { opacity: 0.4; }
+/* Only takes up slack when the strip has already fitted; it is the first thing
+   to give way, before the filename and long before the close button. */
+.pv-spacer { flex: 0 1 auto; min-width: 0; width: 8px; }
+.pv-file { flex: 0 1 auto; min-width: 0; font-size: 11px; color: var(--theme-text-secondary); margin-right: 6px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-toolbar > .pv-btn { flex-shrink: 0; }
 
 /* Scroll area + pages.
 
@@ -598,6 +640,26 @@
   text-align: center;
   padding: 24px;
 }
+
+/* "This PDF is another document's." An information strip, not an error banner:
+   VSCode's own notification colours, one line, and it never covers the pages. */
+.pv-foreign {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--theme-text);
+  /* Plain first, blended second: an engine without `color-mix` keeps the flat
+     amber wash instead of dropping the background altogether. */
+  background: rgba(217, 119, 6, 0.18);
+  background: color-mix(in srgb, #d97706 18%, var(--theme-panel-bg));
+  border-bottom: 1px solid var(--theme-panel-border);
+}
+.pv-foreign .pyx-ico { color: #d97706; }
+.pv-foreign b { font-weight: 600; }
 
 /* Compile log overlay (toggled from the Build tab). */
 .log-panel {

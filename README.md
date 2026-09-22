@@ -8,7 +8,7 @@
 
 Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-![versión](https://img.shields.io/badge/versión-1.3.1-007ACC?style=flat-square)
+![versión](https://img.shields.io/badge/versión-1.4.0-007ACC?style=flat-square)
 ![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
 ![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
@@ -85,8 +85,8 @@ Descarga el instalador de tu sistema desde la [**última release**](https://gith
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | `Pyx_1.3.1_x64-setup.exe` |
-| **macOS** (Intel y Apple Silicon) | `Pyx_1.3.1_universal.dmg` |
+| **Windows** (x64) | `Pyx_1.4.0_x64-setup.exe` |
+| **macOS** (Intel y Apple Silicon) | `Pyx_1.4.0_universal.dmg` |
 | **Linux** | `.deb` (Debian/Ubuntu) · `.rpm` (Fedora) · `.AppImage` (cualquier distro) |
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.

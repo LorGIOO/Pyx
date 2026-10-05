@@ -41,7 +41,7 @@ export const state = createMutable({
   compileQueued: false, // a compile was asked for mid-compile and runs right after
   liveCompile: true, // TeXstudio-style: background compile shortly after typing stops
   lastLog: '',
-  lastCompileOk: null, // null | true | false
+  lastCompileOk: null, // null | true | 'warn' (PDF built, LaTeX reported errors) | false (no PDF)
   compileMs: 0,        // how long the last compile took (drives the live backoff)
   liveSuspended: false, // project too heavy to rebuild on every typing pause
   lastPdfPath: null,    // PDF written by the last successful compile

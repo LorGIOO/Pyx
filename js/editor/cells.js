@@ -34,11 +34,15 @@ import { docIdOf } from './doc-id.js';
 import {
   CELL_OPEN, CELL_CLOSE, cellKey, parseCells, cellAtLine,
 } from './cell-parse.js';
-import { runCellCode, withKernelLock, interruptKernel, nsRecord, nsPrefix, nsInvalidate } from './cell-runner.js';
+import {
+  runCellCode, withKernelLock, interruptKernel, nsRecord, nsPrefix, nsInvalidate, recordRender,
+  takeRestartReason,
+} from './cell-runner.js';
 import { broadcastCellRefresh } from './setup.js';
 import { getOutput, setOutput, deleteOutput, clearDoc, gcDoc } from './cell-outputs.js';
 import { createRichFrame, sanitizeFragment, needsIsolation } from './rich-frame.js';
 import { renderMath } from './math-render.js';
+import { ansiFragment, ansiRuns } from './ansi.js';
 // The shared icon set, for the cell's context menus (`MI` = menu icons).
 import { icons as MI } from '../solid/components/ribbon/icons.js';
 
@@ -169,6 +173,8 @@ async function execCell(docId, cell, cwd) {
   const ms = performance.now() - t0;
   const count = res.ok ? ++execCounter : prev.count || null;
   setOutput(docId, key, { ...res, running: false, count, ms, codeHash: cell.codeHash });
+  // What this cell puts in the document, for a compile that later skips it.
+  recordRender(cell.codeHash, cell.code, res);
   if (res.ok) nsRecord(cell.codeHash, cwd);
   else nsInvalidate();
   broadcastCellRefresh();
@@ -313,8 +319,10 @@ function hasOutput(out) {
 function outputText(out) {
   if (!out) return '';
   const parts = [];
-  if (out.stdout) parts.push(out.stdout);
-  if (out.stderr) parts.push(out.stderr);
+  // What the output SHOWS: colour codes gone, progress lines (CR) settled.
+  const plain = (t) => ansiRuns(t).map((r) => r.text).join('');
+  if (out.stdout) parts.push(plain(out.stdout));
+  if (out.stderr) parts.push(plain(out.stderr));
   if (out.error) {
     const e = out.error;
     parts.push(`${e.type || 'Error'}: ${e.msg || ''}`.trim());
@@ -384,6 +392,7 @@ export function runCellAndAdvance(view) {
 export async function execCellFor(view, docId, cell, cwd) {
   if (view && docId != null) return execCell(docId, cell, cwd);
   const res = await runCellCode(cell.code, { cwd });
+  recordRender(cell.codeHash, cell.code, res);
   if (res.ok) nsRecord(cell.codeHash, cwd);
   else nsInvalidate();
   return res;
@@ -408,7 +417,10 @@ async function runAllCellsHeld(view, { force = false, cwd } = {}) {
   if (!cells.length) return;
   const dir = cwd !== undefined ? cwd : await activeCwd();
   const start = force ? 0 : nsPrefix(cells.map((c) => c.codeHash), dir);
-  if (start === 0) await runCellCode('', { cwd: dir, reset: true });
+  if (start === 0) {
+    await runCellCode('', { cwd: dir, reset: true });
+    takeRestartReason(); // reported by compiles only
+  }
   for (let i = start; i < cells.length; i++) {
     const res = await execCell(docId, cells[i], dir);
     if (res && res.ok === false) break; // a failed cell poisons everything below
@@ -631,8 +643,18 @@ function fmtMs(ms) {
 //   * html   → sanitized inline when it is static; a SANDBOXED frame when it
 //              needs to run scripts (plotly, bokeh, widgets)
 function renderDisplay(d, body, view) {
+  // SVG goes in as an IMAGE, as JupyterLab does: inlined into the app's DOM
+  // its <style> (matplotlib writes `*{stroke-linejoin: round}`) restyled the
+  // whole editor, and an image cannot run anything either.
+  if (d.kind === 'svg' && typeof d.data === 'string') {
+    let b64 = '';
+    try { b64 = btoa(unescape(encodeURIComponent(d.data))); } catch (_) { b64 = ''; }
+    if (b64) d = { kind: 'image', data: b64, mime: 'image/svg+xml' };
+  }
   if (d.kind === 'image') {
-    const src = 'data:image/png;base64,' + d.data;
+    // PNG, JPEG, GIF or SVG: the kernel says which (older outputs: PNG).
+    const mime = /^image\/(png|jpeg|gif|svg\+xml|webp)$/.test(d.mime || '') ? d.mime : 'image/png';
+    const src = `data:${mime};base64,` + d.data;
     const fig = document.createElement('div');
     fig.className = 'out-fig';
     fig.appendChild(expandBtn('Abrir en otra pestaña', () => openImageTab(src)));
@@ -904,7 +926,23 @@ class CellOutput extends WidgetType {
 
     const body = document.createElement('div');
     body.className = 'cell-out-body';
-    if (out.stdout) body.appendChild(document.createTextNode(out.stdout));
+    // Printed text and rich displays IN THE ORDER the cell produced them:
+    // print('A'); display(df); print('B') shows A, the table, B — as Jupyter
+    // does. The kernel stamps each display with its position in stdout (`at`);
+    // one without a stamp (older outputs, handcalcs) goes after the text.
+    // Terminal colours and `\r` progress lines are rendered, not dumped raw.
+    const stdout = out.stdout || '';
+    const displays = Array.isArray(out.displays) ? out.displays : [];
+    let pos = 0;
+    const flushText = (to) => {
+      if (to > pos) body.appendChild(ansiFragment(stdout.slice(pos, to)));
+      pos = Math.max(pos, to);
+    };
+    for (const d of displays) {
+      flushText(typeof d.at === 'number' ? Math.min(Math.max(d.at, 0), stdout.length) : stdout.length);
+      renderDisplay(d, body, view);
+    }
+    flushText(stdout.length);
     // VSCode-style error header: type + EXACT document line, click to jump.
     if (out.error && out.error.line != null && this.headerLine) {
       const docLine = this.headerLine + out.error.line;
@@ -921,12 +959,10 @@ class CellOutput extends WidgetType {
     if (out.error && ((out.error.frames && out.error.frames.length) || out.error.syntax || !out.error.line)) {
       renderTraceback(out.error, this.headerLine || 0, body, view);
     }
-    if (out.stderr) { const e = document.createElement('span'); e.className = 'out-err'; e.textContent = out.stderr; body.appendChild(e); }
+    if (out.stderr) { const e = document.createElement('span'); e.className = 'out-err'; e.appendChild(ansiFragment(out.stderr)); body.appendChild(e); }
     if (out.result != null && out.result !== '') {
       const r = document.createElement('span'); r.className = 'out-result'; r.textContent = out.result; body.appendChild(r);
     }
-    // Rich MIME displays (display(), pandas, plotly, Markdown, audio, vídeo…).
-    if (Array.isArray(out.displays)) for (const d of out.displays) renderDisplay(d, body, view);
     // Auto-captured matplotlib figures.
     if (Array.isArray(out.images)) for (const b64 of out.images) renderDisplay({ kind: 'image', data: b64 }, body, view);
     // A restored result whose figures were left out of the container to keep

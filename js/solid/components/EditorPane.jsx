@@ -165,7 +165,8 @@ async function copyText(str) {
 
 export default function EditorPane() {
   const statusLabel = () =>
-    state.lastCompileOk === false ? t(' · con errores', ' · with errors')
+    state.lastCompileOk === false ? t(' · sin PDF', ' · no PDF')
+    : state.lastCompileOk === 'warn' ? t(' · PDF generado con errores', ' · PDF built with errors')
     : state.lastCompileOk === true ? t(' · correcto', ' · succeeded')
     : '';
   const [logView, setLogView] = createSignal('problems'); // 'problems' | 'raw'

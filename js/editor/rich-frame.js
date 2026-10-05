@@ -159,7 +159,9 @@ export function createRichFrame(html, onResize, extraCss = '', autoSize = true) 
    can execute or phone home first. Anything with a script goes to the
    sandboxed frame above instead. */
 
-const FORBIDDEN = new Set(['SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'BASE', 'FORM']);
+// STYLE too: markup that reaches this inline path should carry none (see
+// needsIsolation), and one that slipped through must not restyle the app.
+const FORBIDDEN = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'BASE', 'FORM']);
 
 /** Parse `html` in an inert document and return a sanitized DocumentFragment. */
 export function sanitizeFragment(html) {
@@ -167,7 +169,9 @@ export function sanitizeFragment(html) {
     '<!doctype html><body>' + html, 'text/html');
   const walk = (node) => {
     for (const el of [...node.children]) {
-      if (FORBIDDEN.has(el.tagName)) { el.remove(); continue; }
+      // Upper-cased: HTML elements report SCRIPT, but SVG-namespace ones keep
+      // their lower-case `script` / `style` — and slipped past the check.
+      if (FORBIDDEN.has(String(el.tagName).toUpperCase())) { el.remove(); continue; }
       for (const attr of [...el.attributes]) {
         const name = attr.name.toLowerCase();
         const value = attr.value || '';
@@ -199,5 +203,8 @@ export function sanitizeFragment(html) {
  *  restyle or hide the whole editor. In the frame it styles only itself, which
  *  is what the author meant anyway. */
 export function needsIsolation(html) {
-  return /<script[\s>]|<style[\s>]/i.test(html);
+  // `<script/src=…>` is a script too; an <iframe> (folium maps,
+  // IPython.display.IFrame) is kept working inside the sandboxed frame
+  // instead of being stripped to nothing.
+  return /<(script|style|iframe)[\s>/]/i.test(String(html || ''));
 }

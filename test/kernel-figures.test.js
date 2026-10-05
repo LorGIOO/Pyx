@@ -21,7 +21,7 @@ const python = ['python', 'python3', 'py'].find((exe) => {
 
 const HEAD = "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n";
 
-describe.skipIf(!python)('QAFUN-6 · a figure is never shown twice', () => {
+describe.skipIf(!python)('QAFUN-6 · a figure is never shown twice', { timeout: 60000 }, () => {
   let proc;
   let buf = '';
   const waiting = new Map(); // id -> resolve

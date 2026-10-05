@@ -328,8 +328,13 @@ fn spawn() -> Result<KernelProc, String> {
         let buf = stderr_tail.clone();
         std::thread::spawn(move || {
             let mut rd = BufReader::new(err);
-            let mut line = String::new();
-            while matches!(rd.read_line(&mut line), Ok(n) if n > 0) {
+            // Bytes, not `read_line`: one line that is not UTF-8 (a child
+            // process writing in the console's code page) used to END this
+            // loop — and an undrained pipe then blocked the interpreter.
+            let mut raw: Vec<u8> = Vec::new();
+            while matches!(rd.read_until(b'\n', &mut raw), Ok(n) if n > 0) {
+                let line = String::from_utf8_lossy(&raw).into_owned();
+                raw.clear();
                 if let Ok(mut b) = buf.lock() {
                     b.push_str(&line);
                     if b.len() > 16384 {
@@ -340,7 +345,6 @@ fn spawn() -> Result<KernelProc, String> {
                         b.replace_range(..cut, "");
                     }
                 }
-                line.clear();
             }
         });
     }
@@ -349,13 +353,16 @@ fn spawn() -> Result<KernelProc, String> {
     // EOF means Python died on startup — surface its stderr as the cause.
     let mut got_ready = false;
     for _ in 0..50 {
-        let mut line = String::new();
+        // A banner printed before the kernel takes over its descriptors
+        // (a sitecustomize, a noisy site hook) may not be UTF-8: skip it.
+        let mut raw: Vec<u8> = Vec::new();
         let n = reader
-            .read_line(&mut line)
+            .read_until(b'\n', &mut raw)
             .map_err(|e| format!("El kernel no respondió: {e}"))?;
         if n == 0 {
             break;
         }
+        let line = String::from_utf8_lossy(&raw);
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
             if v.get("type").and_then(|t| t.as_str()) == Some("ready") {
                 got_ready = true;
@@ -404,11 +411,15 @@ impl KernelProc {
 
         let want_id = req.get("id").cloned();
         loop {
-            let mut buf = String::new();
+            // Bytes, then lossy text: a frame is always valid UTF-8 (the kernel
+            // guarantees it), but a stray invalid byte on this pipe must be a
+            // skipped line, not an error that kills the kernel and the session.
+            let mut raw: Vec<u8> = Vec::new();
             let n = self
                 .reader
-                .read_line(&mut buf)
+                .read_until(b'\n', &mut raw)
                 .map_err(|e| format!("Error leyendo del kernel: {e}"))?;
+            let buf = String::from_utf8_lossy(&raw);
             if n == 0 {
                 let tail = self
                     .stderr_tail

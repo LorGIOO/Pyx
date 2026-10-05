@@ -11,7 +11,11 @@ import { relativeTo } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
 import { docIdOf } from '../editor/doc-id.js';
-import { runCellCode, evalExpressions, withKernelLock, nsPrefix } from '../editor/cell-runner.js';
+import {
+  runCellCode, evalExpressions, withKernelLock, nsPrefix,
+  HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
+} from '../editor/cell-runner.js';
+import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
 import { setBuildMaps } from './build-maps.js';
 import {
@@ -186,19 +190,6 @@ export async function showSavedPdf() {
   }
 }
 
-/* Handcalcs output, cached by the fingerprint of the cell body that produced
-   it. A cell the kernel legitimately skips (see the namespace ledger in
-   cell-runner) still has to contribute its typeset block to the build, and its
-   code is by definition unchanged — so the cached LaTeX is exactly right. */
-const renderCache = new Map(); // codeHash -> latex | null
-const RENDER_CACHE_MAX = 500;
-function cacheRender(hash, latex) {
-  if (renderCache.size >= RENDER_CACHE_MAX) {
-    renderCache.delete(renderCache.keys().next().value);
-  }
-  renderCache.set(hash, latex || null);
-}
-
 /* What we last wrote to each .build.tex: the text's fingerprint, and the file's
    {mtime, size} right after writing it. On a big project most chapters are
    identical between compiles, so re-writing them all every time was pure disk
@@ -213,10 +204,8 @@ function cacheRender(hash, latex) {
 const lastBuildWritten = new Map(); // buildPath -> { fp, mtime, size }
 
 // A cell may inject LaTeX into the document ONLY when it declares one of the
-// handcalcs cell magics on its own line. Anything else (stdout, results,
-// figures) stays in the editor: the user asks, Python answers — the PDF only
-// changes when the user says so.
-const HANDCALCS_MAGIC = /^\s*%%(render|tex)\b/m;
+// handcalcs cell magics on its own line (HANDCALCS_MAGIC, cell-runner.js).
+// Anything else stays in the editor: the PDF only changes when the user says so.
 
 /* ---- master/root documents (TeXstudio-style) ----
    Compiling a CHILD file (a chapter \input'ed by a main) compiles its ROOT:
@@ -478,10 +467,33 @@ function analyzeFile(path, content) {
   };
 }
 
+/* Warm the kernel up for the document on screen: import the libraries its
+   cells use — across the whole \input tree, since a root often has no cells of
+   its own and its chapters do — while the user is still reading, so the first
+   compile does not spend most of its time importing scipy and matplotlib.
+   Read-only (the tree is gathered with `save: false`: opening a tab must never
+   write a file), and harmless if the tree cannot be read. */
+export async function prewarmActive() {
+  const doc = activeDoc();
+  if (!doc || doc.kind || !doc.path) return;
+  try {
+    const content = getDocContent(doc.id);
+    const rootPath = await resolveRootPath(doc, content).catch(() => doc.path);
+    const open = state.documents.find((d) => !d.kind && samePath(d.path, rootPath));
+    const rootContent = open
+      ? getDocContent(open.id)
+      : await readSourceFile(rootPath).catch(() => '');
+    const files = await gatherTree(rootPath, rootContent, dirOf(rootPath), { save: false });
+    const names = [];
+    for (const f of files.values()) for (const c of f.cells || []) names.push(...importsOf(c.code));
+    if (names.length) await prewarmModules(names, dirOf(rootPath));
+  } catch (_) { /* warm-up is an optimisation: never an error */ }
+}
+
 // path -> { content, raws: Map(rawArg -> childPath), renders, ...analysis }.
 // Saves any modified open child to disk on the way (compiling = saving what it
-// uses).
-async function gatherTree(rootPath, rootContent, rootDir) {
+// uses) — unless `save` is false (the warm-up only looks).
+async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) {
   const files = new Map();
   const walk = async (path, content, depth) => {
     const f = {
@@ -527,7 +539,7 @@ async function gatherTree(rootPath, rootContent, rootDir) {
       if (!open) { fromDisk.push(child); continue; }
       const c = getDocContent(open.id);
       live.set(child, c);
-      if (open.modified && !isPltx(child)) {
+      if (save && open.modified && !isPltx(child)) {
         // .pltx children are ZIP containers (packed on Save) — never overwrite
         // with raw text; the child's .build.tex is what actually compiles.
         await writeTextFile(child, c);
@@ -572,7 +584,22 @@ async function gatherTree(rootPath, rootContent, rootDir) {
  * `true` = someone asked to see the viewer. */
 let queued = null;
 
-export async function compileActive(showViewer = true) {
+/* The last compile that actually ran the engine: its status and its log. A
+   compile that finds nothing to do reports THAT, instead of a bare "no
+   changes" that wiped the Problems list and turned the status bar green over
+   a document that still has errors. */
+let lastReal = { ok: null, log: '' };
+
+/**
+ * @param {boolean} showViewer  someone asked to SEE the result (open the viewer)
+ * @param {{force?: boolean}} [opts]  force = run the engine even when nothing
+ *   the PDF depends on changed. An explicit "Compilar" forces — it is the user
+ *   asking for ground truth, and it also picks up an image or .sty edited
+ *   outside Pyx. A save, and the follow-up of a request that arrived while a
+ *   compile was running, do not: when the build is already exactly what is on
+ *   screen, running LaTeX again only made the user wait twice for the same PDF.
+ */
+export async function compileActive(showViewer = true, { force = showViewer } = {}) {
   if (state.compiling) {
     queued = !!(queued || showViewer);
     state.compileQueued = true;
@@ -638,6 +665,7 @@ export async function compileActive(showViewer = true) {
     const cwd = dirOf(rootPath);
     const stem = stemOf(rootPath);
     let problems = '';
+    let pythonNote = ''; // why the Python process was replaced, if it was
     const cellProblem = (label, stderr, docLine) => {
       const last = (stderr || '').split('\n').filter((l) => l.trim()).pop();
       const at = docLine ? ` · línea ${docLine}` : '';
@@ -715,21 +743,27 @@ export async function compileActive(showViewer = true) {
       // Returns where it started: 0 = everything ran, from a clean namespace.
       const runTree = async (force) => {
         problems = '';
-        const start = force ? 0 : nsPrefix(hashes, cwd);
-        if (start === 0) await runCellCode('', { cwd, reset: true });
+        let start = force ? 0 : nsPrefix(hashes, cwd);
+        // A handcalcs cell the ledger lets us skip must have its typeset block
+        // on hand, or the PDF would silently lose the calculation. Every run
+        // fills the cache, so this only fires after an eviction — and then a
+        // full re-run is the right answer.
+        if (runOrder.slice(0, start).some((e) => HANDCALCS_MAGIC.test(e.cell.code)
+          && !renderKnown(e.cell.codeHash))) start = 0;
+        if (start === 0) {
+          await runCellCode('', { cwd, reset: true });
+          const why = takeRestartReason();
+          if (why) pythonNote = `proceso nuevo: el documento modificaba ${why.join(', ')}`;
+        }
         for (let i = start; i < runOrder.length; i++) {
           phase.ran++;
           const { path, cell, nth } = runOrder[i];
           const od = state.documents.find((d) => d.path === path && !d.kind);
           const view = od ? getViewOfDoc(od.id) : null;
           const res = await execCellFor(view, view ? docIdOf(view.state) : null, cell, cwd);
-          // HARD RULE: only a cell that EXPLICITLY declares a handcalcs magic
-          // (%%render / %%tex) may put anything into the PDF. The kernel
-          // honors this, but the document is the user's deliverable — gate it
-          // here too, so no kernel regression can ever leak a cell's output
-          // into the typeset document.
-          cacheRender(cell.codeHash,
-            res && res.render && HANDCALCS_MAGIC.test(cell.code) ? res.render : null);
+          // execCellFor recorded the cell's typeset block (recordRender, where
+          // the HARD RULE lives: only a cell that EXPLICITLY declares
+          // %%render / %%tex may put anything into the PDF).
           if (res && res.ok === false) {
             // Absolute document line of the failure (VSCode-style precision).
             const el = res.error && res.error.line != null ? cell.headerLn + res.error.line : null;
@@ -750,7 +784,7 @@ export async function compileActive(showViewer = true) {
         // their code is unchanged, so the cached render is exactly current.
         for (const f of files.values()) f.renders = {};
         for (const { file, cell } of runOrder) {
-          const latex = renderCache.get(cell.codeHash);
+          const latex = cachedRender(cell.codeHash);
           if (latex) file.renders[cellKey(cell)] = latex;
         }
         return start;
@@ -1039,11 +1073,14 @@ export async function compileActive(showViewer = true) {
     //  - the viewer is showing THIS document's PDF — after switching to another
     //    project, "nothing changed" is not a reason to keep someone else's.
     const expectedPdf = joinPath(outDir, `${stem}.pdf`);
-    if (!showViewer && !wroteAny && phase.ran === 0
+    if (!force && !wroteAny && phase.ran === 0
       && samePath(lastPdfPath, expectedPdf) && await pathExists(lastPdfPath)) {
       state.lastLog = (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '')
-        + 'Sin cambios que afecten al PDF: no se ha recompilado.';
-      state.lastCompileOk = !problems;
+        + (lastReal.log || 'Sin cambios que afecten al PDF: no se ha recompilado.');
+      state.lastCompileOk = problems ? false : (lastReal.ok ?? true);
+      if (showViewer && !auxOpen() && !samePath(getPdfPath(), expectedPdf)) {
+        try { await loadPdf(expectedPdf); markPdfForeign(false); } catch (_) { /* the next compile shows it */ }
+      }
       return null;
     }
 
@@ -1068,8 +1105,14 @@ export async function compileActive(showViewer = true) {
       + `(${phase.ran} ejecutada${phase.ran === 1 ? '' : 's'} de ${phase.total})\n`
       + `Motor LaTeX   : ${Math.round(phase.tex)} ms `
       + `(${engine}, ${ranPasses} pasada${ranPasses === 1 ? '' : 's'})\n`
-      + `Total         : ${Math.round(performance.now() - t0)} ms`;
-    state.lastCompileOk = res.ok;
+      + `Total         : ${Math.round(performance.now() - t0)} ms`
+      + (pythonNote ? `\nPython        : ${pythonNote}` : '');
+    // Three outcomes, not two. A PDF that LaTeX produced while recovering from
+    // errors is not a failed compile — the document IS there, with its
+    // problems listed — and painting it with the same red as "no PDF at all"
+    // is what sent people pressing compile again and again.
+    state.lastCompileOk = res.ok ? true : (res.pdf_path ? 'warn' : false);
+    lastReal = { ok: state.lastCompileOk, log: state.lastLog };
 
     // TeXstudio-style: pdf_path is only set when THIS run wrote a PDF, so show
     // it even if TeX recovered from errors — they stay listed in the log panel.
@@ -1101,6 +1144,7 @@ export async function compileActive(showViewer = true) {
           state.lastLog = `===== Avisos de Pyx =====${problems}\n[Visor] No se pudo abrir el PDF:`
             + ` ${String((e && e.message) || e)}\n\n${state.lastLog.replace(/^===== Avisos de Pyx =====[\s\S]*?\n\n/, '')}`;
           state.lastCompileOk = false;
+          lastReal = { ok: false, log: state.lastLog };
         }
       }
     }
@@ -1125,7 +1169,9 @@ export async function compileActive(showViewer = true) {
       const wantViewer = queued;
       queued = null;
       state.compileQueued = false;
-      compileActive(wantViewer);
+      // Not forced: if the compile that just ended already built what is on
+      // screen now, the follow-up has nothing to add and skips the engine.
+      compileActive(wantViewer, { force: false });
     }
   }
 }

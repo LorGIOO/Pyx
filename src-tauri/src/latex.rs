@@ -243,13 +243,53 @@ fn texinputs(out_dir: &Path, search_dirs: &[String]) -> String {
     v
 }
 
-/// Content fingerprint of the listings a pass reads at `\tableofcontents`,
-/// `\listoffigures` and `\listoftables` and rewrites at `\end{document}`.
-fn listings_stamp(out_dir: &Path, job: &str) -> Vec<Option<Vec<u8>>> {
-    ["toc", "lof", "lot"]
-        .iter()
-        .map(|ext| std::fs::read(out_dir.join(format!("{job}.{ext}"))).ok())
-        .collect()
+/// Extensions of files a pass writes that the NEXT pass does not read back —
+/// outputs, logs, and inputs of external tools (makeindex, bibtex, biber) that
+/// another LaTeX pass cannot bring up to date. A change in any of these is
+/// never a reason for one more pass. `.aux` and `.out` are left out too: a
+/// label or bookmark that moved already makes LaTeX print "Rerun…".
+const NOT_READ_BACK: &[&str] = &[
+    "log", "pdf", "synctex", "synctex.gz", "fls", "xdv", "dvi", "ps", "aux", "out",
+    "idx", "ilg", "ind", "glo", "gls", "glg", "acn", "acr", "alg", "ist",
+    "bcf", "run.xml", "bbl", "blg",
+];
+
+/// Content fingerprint of every listing this job writes at `\end{document}`
+/// and reads back on the next pass: the table of contents and the lists of
+/// figures and tables — and just as much tocloft's `\newlistof` lists
+/// (`.tocA`, `.tocB`, …), minitoc's `.mtc*`, listings' `.lol`, beamer's
+/// `.nav`, any package's own list file.
+///
+/// It used to look at `.toc`, `.lof` and `.lot` only. A template that builds
+/// each document's index with `\newlistof{tocA}` then got ONE pass for an edit
+/// that only changed that index — renaming a section or a data table — and
+/// the PDF kept the previous index until the user pressed compile again. It
+/// looked random: an edit that also moved a label printed "Rerun" and was
+/// settled, one that did not was not.
+///
+/// A list file that did not exist before the pass and does after counts as a
+/// change too, which is what a first compile in a fresh working directory
+/// needs.
+fn listings_stamp(out_dir: &Path, job: &str) -> Vec<(String, Vec<u8>)> {
+    let prefix = format!("{job}.");
+    let mut v: Vec<(String, Vec<u8>)> = std::fs::read_dir(out_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let ext = name.strip_prefix(&prefix)?.to_string();
+            let skip = ext.contains("(busy)")
+                || ext.ends_with(".tex")
+                || NOT_READ_BACK.contains(&ext.as_str());
+            if skip || !e.file_type().ok()?.is_file() {
+                return None;
+            }
+            Some((ext, std::fs::read(e.path()).ok()?))
+        })
+        .collect();
+    v.sort();
+    v
 }
 
 /// Does the file end like a PDF does? A writer that dies mid-document leaves a
@@ -448,23 +488,17 @@ pub fn compile(
         // means errors were recovered — the pass still ran to completion, so
         // reference-settling reruns are still meaningful.
         clean = output.status.success();
-        // Extra passes only when TeX actually asks for one: unsettled refs/TOC
-        // ("Rerun to get…"), or a table-of-contents/list file that didn't exist
-        // yet on this pass ("No file X.toc") — the next pass will pick it up.
-        // Most compiles still finish in a single, fast pass.
-        let missing_listing = pass_out.contains("No file ")
-            && [".toc.", ".lof.", ".lot."]
-                .iter()
-                .any(|ext| pass_out.contains(ext));
-        // …or a listing whose CONTENT this pass changed. LaTeX warns when labels
-        // move but says nothing when the table of contents does: a new section
-        // title is written to the .toc at \end{document}, after the stale one
-        // was already typeset. Comparing the files is what lets the compiler
-        // ask for ONE pass and still never show an out-of-date index.
+        // Extra passes only when TeX actually needs one: unsettled references
+        // ("Rerun to get…"), or a listing whose CONTENT this pass changed —
+        // including one that did not exist before it. LaTeX warns when labels
+        // move but says nothing when an index does: a new section title is
+        // written to the list file at \end{document}, after the stale one was
+        // already typeset. Comparing the files is what lets the compiler ask
+        // for ONE pass and still never show an out-of-date index. Most
+        // compiles still finish in a single, fast pass.
         let needs_rerun = pass_out.contains("Rerun to get")
             || pass_out.contains("rerun LaTeX")
             || pass_out.contains("Rerun LaTeX")
-            || missing_listing
             || listings_stamp(&out_dir, &out_name) != listings_before;
         if i + 1 >= passes && !needs_rerun {
             break;
@@ -667,6 +701,42 @@ Texto del capitulo dos.
         assert!(passes_run(&changed.log) >= 2, "un indice que cambia exige otra pasada");
         let toc = fs::read_to_string(work.join("main.toc")).unwrap();
         assert!(toc.contains("Beta"), "el indice tiene que recoger la seccion nueva");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The same for a list the TEMPLATE defines. The user's report template
+    /// builds each document's index with tocloft's `\newlistof{tocA}`, which
+    /// writes `main.tocA` — and only `.toc/.lof/.lot` were compared, so an
+    /// edit that changed only that index got a single pass and the PDF showed
+    /// the previous one until compile was pressed again.
+    #[test]
+    fn a_template_defined_index_is_settled_too() {
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("tocA");
+        let main = work.join("main.build.tex");
+        let doc = |entry: &str| {
+            format!(
+                "\\documentclass{{article}}\n\\usepackage{{tocloft}}\n\
+                 \\newlistof{{tocA}}{{tocA}}{{Indice A}}\n\\begin{{document}}\n\
+                 \\listoftocA\n\\addcontentsline{{tocA}}{{tocA}}{{{entry}}}\n\\end{{document}}\n"
+            )
+        };
+        let run = || {
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[])
+                .expect("la compilacion deberia ejecutarse")
+        };
+
+        fs::write(&main, doc("Alfa")).unwrap();
+        run();
+        let steady = run();
+        assert_eq!(passes_run(&steady.log), 1, "sin cambios tiene que bastar una pasada");
+
+        fs::write(&main, doc("Beta")).unwrap();
+        let changed = run();
+        assert!(passes_run(&changed.log) >= 2, "un indice de tocloft que cambia exige otra pasada");
+        let list = fs::read_to_string(work.join("main.tocA")).unwrap();
+        assert!(list.contains("Beta"), "la lista tiene que recoger la entrada nueva");
 
         let _ = fs::remove_dir_all(&base);
     }

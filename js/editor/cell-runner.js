@@ -8,6 +8,14 @@ import { createLedger } from './ns-ledger.js';
 
 let reqId = 1;
 let started = false;
+// What made the last compile replace the Python process (library objects the
+// document modified), for the compile log. Read once, then cleared.
+let lastRestart = null;
+export function takeRestartReason() {
+  const r = lastRestart;
+  lastRestart = null;
+  return r;
+}
 
 // ---- kernel execution lock ----
 // The Python kernel serializes individual requests, but two JS-side SEQUENCES
@@ -44,6 +52,34 @@ export const nsRecord = (hash, cwd) => ledger.record(hash, cwd);
 /** How many leading cells of `hashes` the kernel has already executed. */
 export const nsPrefix = (hashes, cwd) => ledger.prefix(hashes, cwd);
 
+/* ---------------- handcalcs output, whichever way a cell ran ----------------
+   A cell may inject LaTeX into the document ONLY when it declares one of the
+   handcalcs cell magics on its own line. Anything else (stdout, results,
+   figures) stays in the editor.
+
+   The typeset block is cached by the fingerprint of the cell body. A cell the
+   compile skips because the ledger says the kernel already ran it still has to
+   contribute its block to the build — and the cache is where that block comes
+   from. So EVERY run must fill it, not only the compile's own: this used to
+   live in the compiler, and a %%render cell run with Shift+Enter or "Ejecutar
+   todo" was recorded in the ledger but never cached. The next compile skipped
+   the cell, found nothing to put in its place, and dropped the calculation
+   from the PDF — compile after compile, until something forced a re-run. */
+export const HANDCALCS_MAGIC = /^\s*%%(render|tex)\b/m;
+const renderCache = new Map(); // codeHash -> latex | null
+const RENDER_CACHE_MAX = 500;
+/** Record what a cell produced for the document (null = nothing). */
+export function recordRender(hash, code, res) {
+  const latex = res && res.render && HANDCALCS_MAGIC.test(code) ? res.render : null;
+  if (!renderCache.has(hash) && renderCache.size >= RENDER_CACHE_MAX) {
+    renderCache.delete(renderCache.keys().next().value);
+  }
+  renderCache.set(hash, latex);
+}
+/** The block a cell body contributes: LaTeX, null (nothing) or undefined (unknown). */
+export const cachedRender = (hash) => renderCache.get(hash);
+export const renderKnown = (hash) => renderCache.has(hash);
+
 export async function ensureKernel() {
   if (started) return;
   if (!isTauri()) { state.kernelStatus = 'error'; return; }
@@ -54,7 +90,7 @@ export async function ensureKernel() {
     const path = general.pythonPath;
     const res = path ? await kernelSetPython(path) : await kernelStart();
     if (res && res.python) state.env.python = res.python;
-    started = true;
+    started = true; warmed.clear();
     nsReset(undefined);
     state.kernelStatus = 'ready';
   } catch (e) {
@@ -72,7 +108,7 @@ export async function setKernelPython(path) {
   state.kernelStatus = 'starting';
   try {
     const res = await kernelSetPython(path);
-    started = true;
+    started = true; warmed.clear();
     nsReset(undefined);
     state.kernelStatus = 'ready';
     if (res && res.python) state.env.python = res.python;
@@ -119,7 +155,7 @@ export async function interruptKernel() {
   try { await kernelInterrupt(hard); } catch (_) { /* best effort */ }
   if (hard) {
     // The process is gone: the next request respawns an empty kernel.
-    started = false;
+    started = false; warmed.clear();
     nsInvalidate();
     state.kernelStatus = 'ready';
   } else {
@@ -153,7 +189,19 @@ export async function runCellCode(code, { cwd, reset } = {}) {
   await ensureKernel();
   state.kernelStatus = 'busy';
   try {
-    const res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset });
+    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset });
+    if (reset && res && Array.isArray(res.restart) && res.restart.length) {
+      // The document modified a library in the running process
+      // (`scipy.constants.g = 10`, `math.pi = …`): no in-process reset can
+      // undo that, so the kernel asked for a new process. Replacing it here,
+      // inside the caller's sequence, keeps the compile's promise — every
+      // result comes from the document as it is now.
+      await kernelReset();
+      started = true; warmed.clear();
+      lastRestart = res.restart;
+      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd });
+      else res = { ...res, restarted: true };
+    }
     if (reset) nsReset(cwd);
     state.kernelStatus = res.ok ? 'ready' : 'error';
     return res;
@@ -187,10 +235,13 @@ export async function evalExpressions(exprs, { cwd, silent } = {}) {
   if (!isTauri() || !exprs.length) return {};
   await ensureKernel();
   // `silent` (the editor's live ghost values) must not flip the status indicator
-  // on every keystroke, nor mark the kernel busy.
+  // on every keystroke, nor mark the kernel busy. Nor may it change the
+  // namespace: `pure` makes the kernel skip expressions with side effects
+  // (\py{lst.pop()}, \py{next(it)}, \py{rng.random()}), which would otherwise
+  // run every half second and shift the values the next compile prints.
   if (!silent) state.kernelStatus = 'busy';
   try {
-    const res = await kernelExec({ id: reqId++, evals: exprs, cwd });
+    const res = await kernelExec({ id: reqId++, evals: exprs, cwd, pure: !!silent });
     if (!silent) state.kernelStatus = 'ready';
     return res.evals || {};
   } catch (e) {
@@ -202,6 +253,28 @@ export async function evalExpressions(exprs, { cwd, silent } = {}) {
     const out = {};
     for (const x of exprs) out[x] = { ok: false, value: msg };
     return out;
+  }
+}
+
+/* ---------------- warm-up ----------------
+   Import the libraries a document uses as soon as it is opened, instead of
+   inside its first compile (kernel.py `_prewarm`: installed modules only,
+   namespace untouched). `warmed` remembers what this kernel process already
+   holds, so switching tabs does not ask twice; it is forgotten whenever the
+   process is replaced. */
+const warmed = new Set();
+export async function prewarmModules(names, cwd) {
+  if (!isTauri()) return;
+  const todo = [...new Set(names)].filter((n) => n && !warmed.has(n));
+  if (!todo.length) return;
+  todo.forEach((n) => warmed.add(n));
+  try {
+    await ensureKernel();
+    // Under the lock: a compile that starts meanwhile simply waits, and finds
+    // the imports done.
+    await withKernelLock(() => kernelExec({ id: reqId++, prewarm: todo, cwd }));
+  } catch (_) {
+    todo.forEach((n) => warmed.delete(n)); // try again next time
   }
 }
 
@@ -222,14 +295,14 @@ export async function restartKernel() {
     interrupting = true;
     lastInterruptAt = Date.now();
     try { await kernelInterrupt(true); } catch (_) { /* best effort */ }
-    started = false;
+    started = false; warmed.clear();
     nsInvalidate();
   }
   return withKernelLock(async () => {
     state.kernelStatus = 'starting';
     try {
       await kernelReset();
-      started = true;
+      started = true; warmed.clear();
       nsReset(undefined);
       state.kernelStatus = 'ready';
     } catch (e) {

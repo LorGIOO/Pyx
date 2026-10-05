@@ -72,7 +72,8 @@ function ghostDecos(view) {
     if (inCell(e.start)) continue;
     const v = cache.get(e.expr);
     if (!v || !v.ok) continue;
-    let val = String(v.value);
+    // A typeset value (pint, sympy) reads better without its math wrapper.
+    let val = String(v.value).replace(/^\\ensuremath\{([\s\S]*)\}$/, '$1');
     if (val.length > 28) val = val.slice(0, 26) + '…';
     b.push(Decoration.widget({ widget: new GhostWidget(val), side: 1 }).range(e.end));
   }

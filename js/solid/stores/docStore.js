@@ -273,7 +273,9 @@ export async function openPath(path) {
       broadcastCellRefresh();
     }
     // Its saved PDF, at once — no compile needed to see a document you opened.
-    import('../../compile/compiler.js').then((m) => m.showSavedPdf()).catch(() => {});
+    // …and the kernel starts importing what the document's cells need, so its
+  // first compile does not wait for scipy and matplotlib to load.
+  import('../../compile/compiler.js').then((m) => { m.showSavedPdf(); m.prewarmActive(); }).catch(() => {});
   } catch (e) {
     // Say why. A damaged .pltx used to open silently as raw bytes.
     await messageDialog(`No se pudo abrir «${baseName(path)}».\n\n${String((e && e.message) || e)}`,
@@ -298,9 +300,11 @@ export function switchTo(index) {
 // document needs, cells and LaTeX, and brings up the viewer: the same as
 // "Compilar y ver". It used to be a background compile, which left the viewer
 // closed if it was closed, so Ctrl+S looked like it only saved.
-// Lazy import avoids a static cycle with the compiler.
+// Not forced: when the live compile already built exactly this text, a save
+// shows that PDF instead of running LaTeX again for the same bytes (an
+// explicit "Compilar" still forces). Lazy import avoids a static cycle.
 function compileAfterSave() {
-  import('../../compile/compiler.js').then((m) => m.compileActive(true)).catch(() => {});
+  import('../../compile/compiler.js').then((m) => m.compileActive(true, { force: false })).catch(() => {});
 }
 
 /* A save that fails must never look like one that worked.

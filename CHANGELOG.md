@@ -3,6 +3,112 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar]
+
+El kernel de Python, revisado a fondo: probado con cientos de celdas por
+cuatro frentes (librerías científicas y salidas, handcalcs frente a Jupyter
+real, semántica de Python e IPython, entrada/salida y procesos) y con 18 000
+peticiones aleatorias con interrupciones sin un solo cuelgue.
+
+### Corregido — el kernel ya no puede colgar la aplicación
+
+- **Nada escrito por debajo de Python llega al canal del protocolo.** Un
+  `os.system(...)`, un `subprocess` sin capturar, un solver que imprime desde
+  C (HiGHS), o un texto sin salto de línea o con acentos de la consola de
+  Windows podían partir un mensaje del kernel y dejar la app esperando para
+  siempre, o matar el kernel. Ahora el protocolo va por descriptores privados
+  y todo eso aparece en la salida de la celda, en su orden.
+- **Un proceso hijo que lee la entrada ya no se come las peticiones de la
+  app** (incluida la de interrumpir): recibe fin de archivo, como en Jupyter.
+- **Pulsar Detener justo cuando la celda termina o empieza ya no deja la app
+  colgada.** La interrupción solo puede alcanzar el código del documento;
+  si llega mientras el kernel prepara la ejecución, se aplica al empezar esa
+  celda. Toda petición recibe siempre respuesta.
+- Un carácter suelto no válido (`'\ud800'`), `getpass()` o `msvcrt.getch()`
+  tampoco cuelgan ya nada.
+- Reiniciar el kernel ya no se queda esperando a un hilo que dejó en marcha
+  una celda.
+
+### Corregido — resultados exactos, compilación tras compilación
+
+- **Lo que borras del documento deja de influir de verdad.** El reinicio de
+  cada compilación restaura también `np.seterr`, los filtros de `warnings`,
+  la configuración regional, el `logging`, las opciones de pandas y sympy,
+  `mpmath.mp.dps`, la precisión de `decimal`, `os.environ`, `sys.path`, el
+  backend de matplotlib…
+- **Si el documento modifica una librería** (`scipy.constants.g = 10`,
+  `math.pi = 3.14`, `Fraction.__str__ = …`), ningún reinicio dentro del mismo
+  proceso puede deshacerlo: la siguiente compilación arranca un **Python
+  nuevo** y el registro dice por qué.
+- **Un `helper.py` junto al documento se vuelve a leer en cada compilación.**
+  Antes se seguía ejecutando la versión que había en disco la primera vez
+  (incluso con dos cambios en el mismo segundo). Además ya no aparece
+  `__pycache__` en la carpeta del proyecto.
+- `\py{}`: un `%` (p. ej. `f"{x:.1%}"`) ya no convierte en comentario el resto
+  de la línea; los números grandes no llevan ceros falsos
+  (`12345678901234.5`); `float32` da `0.1`, no `0.10000000149`; los valores
+  extremos se escriben como `m×10ⁿ`; pint y sympy salen tipografiados; un
+  objeto cualquiera se escapa para que no rompa la compilación; y una
+  expresión que falla ya no se lleva por delante las demás.
+- La vista previa en vivo de `\py{}` ya no ejecuta expresiones que modifican
+  datos (`lst.pop()`, `next(it)`, `rng.random()`), que desplazaban los valores
+  de la siguiente compilación.
+
+### Corregido — cualquier librería, como en Jupyter
+
+- Las celdas se ejecutan en `__main__`: `if __name__ == "__main__":`, `pickle`,
+  `joblib.dump`, `enum` y las anotaciones de tipos funcionan.
+- Sintaxis de IPython: `%matplotlib inline`, `%time`, `%timeit`, `%pip`,
+  `%load_ext autoreload`, `!cmd`, `x = !cmd`, `%%writefile`, `%%html`…
+- `from IPython.display import display` funciona con `HTML`, `Math`, `Latex`,
+  `Markdown`, imágenes JPEG/GIF/SVG, `display_id`/`update`, `clear_output`.
+- Importar seaborn, handcalcs o IPython ya no rompe todas las gráficas de la
+  sesión; `plt.show()` muestra cada figura en su sitio (un bucle con
+  `plt.show()` da una figura por vuelta).
+- sympy y cualquier objeto con `_repr_latex_` se ven tipografiados; plotly ya
+  no sale en blanco ni puede colgar la celda (`renderer="browser"`); bokeh y
+  altair se muestran dentro de la app.
+- `logging`, tqdm o `rich` configurados en una celda siguen escribiendo en las
+  siguientes; `os.chdir` persiste entre celdas; `await` funciona en una celda.
+- La salida respeta el orden real (texto, tablas y figuras intercaladas), los
+  colores de terminal y las barras de progreso con `\r`.
+- El análisis de sintaxis ya no marca como error las celdas `%%render` ni las
+  líneas mágicas, y un error dentro de `%%render` se señala en su línea real.
+- handcalcs: `@handcalc` sigue funcionando tras cientos de ejecuciones,
+  `%%render` exige el `import handcalcs.render` igual que Jupyter (también tras
+  reiniciar), `%decimal_separator` funciona y un error de tipografiado señala
+  su línea. Comparado con Jupyter real: 856 de 873 celdas idénticas; el resto
+  son casos en los que Jupyter falla y Pyx no.
+
+### Más rápido
+
+- Al abrir un documento, el kernel importa ya sus librerías (numpy, scipy,
+  matplotlib, handcalcs…): la primera compilación deja de esperarlas.
+- Índices creados por la plantilla (`\newlistof`) incluidos: una compilación
+  basta, ya no hay que darle varias veces.
+- Un documento compilado con errores recuperables se marca en ámbar
+  («Compilado con errores»), no en rojo.
+
+### Corregido — anterior
+
+- **handcalcs ya no arrastra ajustes de antes.** Una celda `%%render` con
+  `a = 2` salía partida en dos líneas —`a` en una y `= 2` en la siguiente—
+  aunque el código fuese correcto. handcalcs guarda cada
+  `handcalcs.set_option(...)` dentro de su propio módulo, y el reinicio que hace
+  la compilación solo vaciaba las variables: un
+  `set_option("math_environment_start", "gathered")` ejecutado alguna vez en la
+  sesión —en una línea ya borrada, o en otro documento abierto, porque todos
+  comparten el mismo kernel— seguía en vigor. `gathered` tiene una sola columna
+  centrada y TeX convierte cada `&` en una fila nueva. Ahora el reinicio
+  devuelve la configuración de handcalcs a la de un intérprete recién
+  arrancado (respetando lo guardado con `handcalcs.save_config()`), y lo mismo
+  los ajustes de matplotlib (`rcParams`, `plt.style.use`).
+- Los argumentos de `%%render` (`params`, `long`, `short`, la precisión…) se
+  interpretan con el analizador de la propia handcalcs, así que una versión
+  nueva de la librería se comporta igual que en Jupyter. Comprobado contra
+  handcalcs 1.10: la salida de Pyx es idéntica, carácter a carácter, en todos
+  los modos.
+
 ## [1.4.0] — 2026-09-22
 
 Lo que escribes es lo que ves, siempre.

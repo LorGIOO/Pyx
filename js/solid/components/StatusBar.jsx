@@ -63,6 +63,20 @@ export default function StatusBar() {
           </span>
         </div>
       </Show>
+      {/* The PDF was produced, but LaTeX recovered from errors on the way — they
+          are listed in Problemas. Amber, not red: red said "nothing came out"
+          and sent people pressing compile again for a PDF that was already
+          there. codicon: warning */}
+      <Show when={!state.compiling && state.lastCompileOk === 'warn'}>
+        <div class="status-item"
+          title={t('El PDF se ha generado, pero LaTeX ha encontrado errores. Míralos en Problemas.',
+            'The PDF was built, but LaTeX reported errors. See Problems.')}>
+          <span class="value" style={{ color: '#d97706' }}>
+            <span class="pyx-ico status-ico" innerHTML={icons.warn}></span>
+            {t('Compilado con errores', 'Compiled with errors')}
+          </span>
+        </div>
+      </Show>
       <Show when={!state.compiling && state.lastCompileOk === false}>
         {/* codicon: error */}
         <div class="status-item">

@@ -93,7 +93,7 @@ export default function HomeTab() {
             title={state.compiling
               ? t('Compilando… Pulsa otra vez para recompilar al terminar.', 'Compiling… Press again to recompile when it ends.')
               : t('Compilar Python y LaTeX sin abrir el visor', 'Compile Python and LaTeX without opening the viewer')}
-            onClick={() => compileActive(false)} />
+            onClick={() => compileActive(false, { force: true })} />
           <RibbonButton size="small" icon={icons.preview} label={t('Visualizar', 'View')} disabled={!hasDoc()} onClick={showPreview} />
           <RibbonButton size="small" icon={icons.live} label={t('Al escribir', 'On type')} active={state.liveCompile}
             title={t('Compilación automática al dejar de escribir (no bloquea el editor)', "Auto-compile when you stop typing (doesn't block the editor)")}

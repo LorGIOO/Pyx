@@ -93,6 +93,14 @@ async fn compile_latex(
     .map_err(|e| e.to_string())?
 }
 
+/// ChkTeX style warnings for the text on screen (opt-in, latex-lint-ext.js).
+#[tauri::command]
+async fn chktex_lint(text: String) -> Result<Vec<latex::ChkHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || latex::chktex(&text))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Stop the LaTeX run in flight (and the PDF driver it started).
 #[tauri::command]
 fn compile_cancel() -> bool {
@@ -815,6 +823,7 @@ pub fn run() {
             detect_env,
             compile_latex,
             compile_cancel,
+            chktex_lint,
             build_dir,
             copy_file,
             synctex_edit,

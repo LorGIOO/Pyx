@@ -1428,6 +1428,58 @@ fn run_aux_tools(dir: &Path, out_dir: &Path, job: &str, search_dirs: &[String], 
     rerun
 }
 
+// ---------------------------------------------------------------------------
+// ChkTeX: style warnings, the way texlab offers them
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct ChkHit {
+    pub line: u32,
+    pub column: u32,
+    pub length: u32,
+    pub kind: String,
+    pub code: u32,
+    pub message: String,
+}
+
+/// Run ChkTeX (shipped with TeX Live and MiKTeX) over `text` and return what
+/// it reports. `-I0`: it looks at this text only, never at the files it
+/// \inputs — the editor underlines what is on screen.
+pub fn chktex(text: &str) -> Result<Vec<ChkHit>, String> {
+    let exe = resolve_engine("chktex").ok_or("chktex no está instalado")?;
+    let tmp = std::env::temp_dir().join(format!(
+        "pyx-chktex-{}-{}.tex",
+        std::process::id(),
+        WARM_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    ));
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    let mut c = Command::new(exe);
+    c.arg("-q")
+        .arg("-I0")
+        .arg("-f")
+        .arg("%l\t%c\t%d\t%k\t%n\t%m\n")
+        .arg(&tmp);
+    crate::quiet(&mut c);
+    let run = run_watched(c, Limits { loop_repeats: u32::MAX, stall_secs: 10, pass_secs: 20 });
+    let _ = std::fs::remove_file(&tmp);
+    let run = run.map_err(|e| e.to_string())?;
+    Ok(run
+        .stdout
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(6, '\t');
+            Some(ChkHit {
+                line: it.next()?.trim().parse().ok()?,
+                column: it.next()?.trim().parse().ok()?,
+                length: it.next()?.trim().parse().ok()?,
+                kind: it.next()?.trim().to_string(),
+                code: it.next()?.trim().parse().ok()?,
+                message: it.next()?.trim().to_string(),
+            })
+        })
+        .collect())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1893,6 +1945,16 @@ Texto del capitulo dos.
 
     fn passes_run(log: &str) -> usize {
         log.matches("===== Pasada ").count()
+    }
+
+    #[test]
+    fn chktex_reports_line_column_and_message() {
+        if resolve_engine("chktex").is_none() {
+            return;
+        }
+        let hits = chktex("\\documentclass{article}\n\\begin{document}\nHola ,mundo...\n\\end{document}\n").unwrap();
+        assert!(hits.iter().any(|h| h.line == 3 && h.code == 26), "{:?}", hits.iter().map(|h| (h.line, h.code)).collect::<Vec<_>>());
+        assert!(hits.iter().all(|h| !h.message.is_empty() && h.column >= 1));
     }
 
     #[test]

@@ -195,6 +195,10 @@ export const GENERAL_SECTIONS = {
     // Keep a LaTeX engine paused after the preamble, ready for the next
     // compile (latex.rs, "Warm engine").
     warmEngine: true,
+    // Underline LaTeX structure errors while typing (latex-lint.js).
+    latexLint: true,
+    // …plus ChkTeX's style warnings (needs chktex; off: they are many).
+    chktex: false,
   },
   pdf: {
     pdfFit: 'width',

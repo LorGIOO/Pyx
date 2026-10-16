@@ -277,6 +277,18 @@ const FIELDS = () => [
       'After each compile, Pyx leaves a LaTeX engine with the preamble (packages and fonts) already processed, waiting. If the next compile has the same preamble, only the body is typeset: on a typical report ~0.7 s becomes ~0.1 s. If the preamble, a .sty or the engine changes, it compiles the usual way. Uses some memory while it waits.'],
   },
   {
+    cat: 'compile', sec: ['Antes de compilar', 'Before compiling'], key: 'latexLint', type: 'check',
+    label: 'Subrayar errores de LaTeX mientras escribes', en: 'Underline LaTeX errors as you type',
+    hint: ['Como texlab: llaves sin cerrar, \\begin/\\end que no cuadran, etiquetas repetidas, \\ref a etiquetas que no existen y $ sin cerrar. Se ven al escribir, antes de que LaTeX los convierta en un error difícil de localizar.',
+      'Like texlab: unclosed braces, mismatched \\begin/\\end, duplicate labels, \\ref to labels that do not exist and unclosed $. They show as you type, before LaTeX turns them into an error that is hard to locate.'],
+  },
+  {
+    cat: 'compile', sec: ['Antes de compilar', 'Before compiling'], key: 'chktex', type: 'check',
+    label: 'Avisos de estilo con ChkTeX', en: 'Style warnings with ChkTeX',
+    hint: ['ChkTeX (incluido en MiKTeX y TeX Live) revisa la tipografía: espacios antes de la puntuación, \\ldots en vez de «...», espacios irrompibles antes de \\ref… Son muchos avisos, por eso viene desactivado.',
+      'ChkTeX (shipped with MiKTeX and TeX Live) checks typography: spaces before punctuation, \\ldots instead of "...", non-breaking spaces before \\ref… They are many, which is why it is off by default.'],
+  },
+  {
     cat: 'compile', sec: ['Archivos', 'Files'], key: 'encoding', type: 'select',
     label: 'Codificación de los archivos', en: 'File encoding',
     opts: ENCODINGS.map((e) => [e, e]),

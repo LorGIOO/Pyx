@@ -55,6 +55,10 @@
      top of the cell reads as a thick grey line while the other three sides are
      hairlines. The box is one 1px border all the way round, nothing else. */
   font-size: 11px;
+  /* The marker line it sits on has line-height 0 (.cm-cell-shell); without
+     its own, the one-line preview of a COLLAPSED cell (overflow: hidden for
+     its ellipsis) was 0px tall — a folded cell showed an empty box. */
+  line-height: 1.4;
   user-select: none;
 }
 /* The two states that DO need a line of their own: the one-line preview of a
@@ -107,6 +111,18 @@
 .editor-host .cm-cell-code::before,
 .cell-statusbar::before { left: calc(-1 * var(--cell-gutter) + 3px); }
 .cell-head.collapsed .cell-focus { border-radius: 1.5px; bottom: 0; }
+/* The bar folds what it runs along (code or output) — JupyterLab's
+   collapser. The pointer says so; the click zone is a few px wider than the
+   stroke (cells.js, onFocusBar). */
+.cell-focus,
+.editor-host .cm-cell-code::before,
+.cell-statusbar::before,
+.cell-out-row::before { cursor: pointer; }
+.cell-focus::after {
+  content: '';
+  position: absolute;
+  inset: 0 -5px;
+}
 .cell-head.active .cell-focus,
 .editor-host .cm-cell-code.active::before,
 .cell-out.active .cell-statusbar::before,

@@ -30,6 +30,7 @@ import { classifyPythonCached } from './py-highlight.js';
 import { state as appState } from '../core/state.js';
 import { dirOf } from '../core/paths.js';
 import { randomId } from '../core/hash.js';
+import { openExternal } from '../core/platform.js';
 import { docIdOf } from './doc-id.js';
 import {
   CELL_OPEN, CELL_CLOSE, cellKey, parseCells, cellAtLine,
@@ -40,7 +41,7 @@ import {
 } from './cell-runner.js';
 import { broadcastCellRefresh } from './setup.js';
 import { getOutput, setOutput, deleteOutput, clearDoc, gcDoc } from './cell-outputs.js';
-import { createRichFrame, sanitizeFragment, needsIsolation } from './rich-frame.js';
+import { createRichFrame, sanitizeFragment, needsIsolation, guardLinks } from './rich-frame.js';
 import { renderMath } from './math-render.js';
 import { ansiFragment, ansiRuns } from './ansi.js';
 // The shared icon set, for the cell's context menus (`MI` = menu icons).
@@ -500,6 +501,34 @@ const I = {
   more: '<svg viewBox="0 0 16 16"><circle cx="4" cy="8" r="1.1" fill="currentColor"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="8" r="1.1" fill="currentColor"/></svg>',
 };
 
+/* The blue bar down the side of a cell folds it — JupyterLab's "collapser".
+ *
+ * The bar is drawn as a ::before on several elements (the head, every code
+ * line, the status bar, the output row), and a pseudo-element cannot carry a
+ * listener of its own: its clicks land on the element that owns it. So the
+ * click is hit-tested against where the bar actually is, read from the
+ * computed style rather than duplicated here. The zone is a few pixels wider
+ * than the 3px stroke: aiming at a hairline is what made it feel broken. */
+const BAR_SLACK = 5;
+function onFocusBar(el, e) {
+  if (!el || typeof getComputedStyle !== 'function') return false;
+  const left = parseFloat(getComputedStyle(el, '::before').left);
+  if (!Number.isFinite(left)) return false;
+  const r = el.getBoundingClientRect();
+  const x = r.left + el.clientLeft + left;
+  return e.clientX >= x - BAR_SLACK && e.clientX <= x + 3 + BAR_SLACK;
+}
+/** Make the bar on `el` toggle something when clicked. */
+function barToggles(el, toggle) {
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !onFocusBar(el, e)) return;
+    e.preventDefault(); // the caret stays where it was
+    e.stopPropagation();
+    toggle();
+  });
+  return el;
+}
+
 function iconBtn(cls, svg, title, onClick) {
   const b = document.createElement('button');
   b.className = 'cell-ico ' + cls;
@@ -557,6 +586,13 @@ class CellToolbar extends WidgetType {
     // The focus bar and the run button sit in the gutter, left of the box.
     const focus = document.createElement('span');
     focus.className = 'cell-focus';
+    focus.title = this.collapsed ? 'Expandir la celda' : 'Contraer la celda';
+    focus.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({ effects: toggleCollapse.of(this.key) });
+    });
     bar.appendChild(focus);
 
     // Play while idle, stop while running — the button swaps in place.
@@ -685,6 +721,7 @@ function renderDisplay(d, body, view) {
     const rich = document.createElement('div');
     rich.className = 'out-rich';
     rich.appendChild(sanitizeFragment(d.data));
+    guardLinks(rich, (url) => openExternal(url).catch(() => {}));
     holder.appendChild(rich);
   }
   body.appendChild(holder);
@@ -797,6 +834,7 @@ class CellOutput extends WidgetType {
     wrap.classList.add('out-collapsed');
     const row = document.createElement('div');
     row.className = 'cell-out-row';
+    barToggles(row, () => view.dispatch({ effects: toggleOutCollapse.of(this.key) }));
     const gutter = document.createElement('div');
     gutter.className = 'cell-out-gutter';
     gutter.appendChild(iconBtn('collapse', I.chevronRight, 'Expandir salida',
@@ -840,6 +878,8 @@ class CellOutput extends WidgetType {
   makeStatusBar(view, out) {
     const bar = document.createElement('div');
     bar.className = 'cell-statusbar';
+    // Its bar is the bottom of the CODE's bar: it folds the code.
+    barToggles(bar, () => view.dispatch({ effects: toggleCollapse.of(this.key) }));
 
     // The state is an ICON, not a text glyph: ✓ and ✗ pulled in whatever the
     // system font felt like drawing, at a weight and baseline that matched
@@ -896,6 +936,7 @@ class CellOutput extends WidgetType {
       wrap.appendChild(this.makeStatusBar(view, out));
       const row = document.createElement('div');
       row.className = 'cell-out-row';
+      barToggles(row, () => view.dispatch({ effects: toggleOutCollapse.of(this.key) }));
       row.appendChild(this.makeGutter(view, out));
       row.appendChild(b);
       wrap.appendChild(row);
@@ -922,6 +963,8 @@ class CellOutput extends WidgetType {
 
     const row = document.createElement('div');
     row.className = 'cell-out-row';
+    // The output's own bar folds the OUTPUT, independently of the code.
+    barToggles(row, () => view.dispatch({ effects: toggleOutCollapse.of(this.key) }));
     row.appendChild(this.makeGutter(view, out));
 
     const body = document.createElement('div');
@@ -1139,7 +1182,24 @@ const cellDecorations = StateField.define({
   provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
 });
 
+// A click on the bar beside the CODE lines (a ::before of each line) folds
+// the cell. Handled at the editor, because those lines are CodeMirror's.
+const codeBarClicks = EditorView.domEventHandlers({
+  mousedown(e, view) {
+    if (e.button !== 0) return false;
+    const line = e.target && e.target.closest ? e.target.closest('.cm-cell-code') : null;
+    if (!line || !onFocusBar(line, e)) return false;
+    let pos;
+    try { pos = view.posAtDOM(line); } catch (_) { return false; }
+    const cell = cellAtLine(parseCells(view.state), view.state.doc.lineAt(pos).number);
+    if (!cell) return false;
+    e.preventDefault();
+    view.dispatch({ effects: toggleCollapse.of(cellKey(cell)) });
+    return true;
+  },
+});
+
 export const cellsExtension = [
   collapsedCells, collapsedOutputs, hideOutputsState, cellDecorations,
-  pythonHighlight, cellGc,
+  pythonHighlight, cellGc, codeBarClicks,
 ];

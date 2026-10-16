@@ -235,7 +235,7 @@ async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
 #[tauri::command]
 async fn write_text(path: String, content: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        std::fs::write(&path, content.as_bytes())
+        write_atomic(std::path::Path::new(&path), content.as_bytes())
             .map_err(|e| format!("No se pudo escribir {path}: {e}"))
     })
     .await
@@ -260,10 +260,64 @@ async fn write_bytes(request: tauri::ipc::Request<'_>) -> Result<(), String> {
         .ok_or("write_bytes necesita la cabecera «path»")?;
     let bytes = bytes.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        std::fs::write(&path, bytes).map_err(|e| format!("No se pudo escribir {path}: {e}"))
+        write_atomic(std::path::Path::new(&path), &bytes)
+            .map_err(|e| format!("No se pudo escribir {path}: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Replace a file's contents so that it is never seen half-written.
+///
+/// `std::fs::write` truncates the file and then writes it. A crash, a power
+/// cut or a full disk in between left the author's `.tex` empty or cut short —
+/// and the compiler writes the source on compile, so that window opened often.
+/// Here the bytes go to a temporary file beside the target, are flushed to
+/// disk, and only then take its place with a rename, which the OS performs as
+/// one step: the file is either the old version or the new one.
+///
+/// Falls back to a plain write when that cannot work: the target is a symlink
+/// (a rename would replace the link with a file), or the rename is refused
+/// (on Windows, while another program holds the file open without sharing
+/// delete access — an antivirus scan, a sync client).
+pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let is_link = std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return std::fs::write(path, bytes);
+    };
+    if is_link {
+        return std::fs::write(path, bytes);
+    }
+    let tmp = dir.join(format!(
+        ".{}.pyx-{}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let written = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        // Keep the original's permissions (an executable script, a read-only
+        // group bit): the new file would otherwise get the defaults.
+        if let Ok(md) = std::fs::metadata(path) {
+            let _ = std::fs::set_permissions(&tmp, md.permissions());
+        }
+        Ok::<(), std::io::Error>(())
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        // No room for a second copy, a folder that refuses new files…: the
+        // plain write still has a chance, and reports its own error.
+        return std::fs::write(path, bytes);
+    }
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(path, bytes)
+        }
+    }
 }
 
 /// Undo `encodeURIComponent`: `%XX` escapes are UTF-8 bytes.
@@ -548,7 +602,12 @@ async fn open_viewer_window(app: tauri::AppHandle, path: String) -> Result<(), S
         .inner_size(920.0, 1000.0)
         .min_inner_size(420.0, 480.0)
         .decorations(true)
-        .initialization_script(&format!("window.__PYX_VIEWER__={{pdf:\"{path}\"}};"))
+        // Serialized, not pasted: the path is a JS string literal here, and a
+        // quote or backslash in it must not end the literal.
+        .initialization_script(&format!(
+            "window.__PYX_VIEWER__={{pdf:{}}};",
+            serde_json::to_string(&path).map_err(|e| e.to_string())?
+        ))
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -805,6 +864,28 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::percent_decode;
+
+    /// The new content replaces the old one, the permissions survive, and no
+    /// temporary file is left beside the document.
+    #[test]
+    fn write_atomic_replaces_and_leaves_nothing_behind() {
+        let dir = std::env::temp_dir().join(format!("pyx-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("doc.tex");
+        std::fs::write(&f, "viejo contenido, más largo que el nuevo").unwrap();
+        super::write_atomic(&f, "nuevo".as_bytes()).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "nuevo");
+        super::write_atomic(&dir.join("nuevo.tex"), b"x").unwrap();
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["doc.tex".to_string(), "nuevo.tex".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The frontend sends `encodeURIComponent(path)`: accents, spaces and a
     /// Windows drive must come back exactly, and a stray `%` must survive.

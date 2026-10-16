@@ -32,7 +32,10 @@ function docHasCells(doc) {
 
 // Write `content` to `path` in the user-chosen encoding (UTF-8 by default).
 // Non-UTF-8 encodings go through writeBinaryFile with the bytes we build here.
-async function saveWithEncoding(path, content) {
+// The compiler writes the sources it builds through THIS too: it used plain
+// UTF-8, so compiling a Latin-1 document re-encoded the author's file behind
+// their back (and broke `\usepackage[latin1]{inputenc}` under pdflatex).
+export async function saveWithEncoding(path, content) {
   const enc = general.encoding || 'UTF-8';
   if (enc === 'UTF-8') { await writeTextFile(path, content); return; }
   let bytes;

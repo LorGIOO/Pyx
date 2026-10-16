@@ -1167,7 +1167,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // % !TeX program = pdflatex — the document names its own engine, like in
     // TeXstudio. An explicit per-document choice (Configuración) still wins.
     const magicEngine = (
-      /^\s*%\s*!TeX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)\s*$/im.exec(rootContent)
+      /^\s*%\s*!TeX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex|tectonic)\s*$/im.exec(rootContent)
       || []
     )[1];
     const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()

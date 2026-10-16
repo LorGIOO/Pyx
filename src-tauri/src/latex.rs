@@ -18,7 +18,9 @@ pub struct CompileResult {
     /// log names) that is not part of the TeX installation: the document's
     /// .sty, chapters, images, bibliographies… The app re-checks them before
     /// it trusts that nothing changed.
-    pub inputs: Vec<String>,
+    /// None when the engine keeps no such list (Tectonic): the app then
+    /// never skips a compile on the grounds that nothing changed.
+    pub inputs: Option<Vec<String>>,
     /// When the engine started, in ms since the epoch: an input modified after
     /// this was modified DURING the compile, so the PDF may predate it.
     pub started_ms: u64,
@@ -572,7 +574,7 @@ pub fn detect_env() -> EnvInfo {
     let python = crate::kernel::find_python();
 
     let mut engines = Vec::new();
-    for e in ["xelatex", "pdflatex", "lualatex"] {
+    for e in ["xelatex", "pdflatex", "lualatex", "tectonic"] {
         if engine_works(e) {
             engines.push(e.to_string());
         }
@@ -1480,6 +1482,124 @@ pub fn chktex(text: &str) -> Result<Vec<ChkHit>, String> {
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// Tectonic: a whole TeX system in one program
+// ---------------------------------------------------------------------------
+//
+// Tectonic (github.com/tectonic-typesetting/tectonic) is XeTeX plus the TeX
+// Live packages, packaged as ONE executable that downloads the packages a
+// document needs the first time it needs them, and runs TeX, BibTeX and the
+// reruns by itself. For Pyx it means a machine with no MiKTeX or TeX Live —
+// a laptop where nobody may install a 4 GB distribution — can still compile.
+//
+// It takes no -jobname and no TEXINPUTS: the output is named after the input
+// (`main.build.pdf`), so it is renamed to the job's name afterwards, and the
+// folders a normal run finds through TEXINPUTS are handed over as
+// `-Z search-path=…`. It writes no recorder list either, so the compile says
+// it does not know what was read (`inputs: None`) and the app never skips a
+// compile on its account.
+
+/// The arguments of a Tectonic run (kept apart so they can be checked).
+fn tectonic_args(src: &Path, dir: &Path, out_dir: &Path, search_dirs: &[String]) -> Vec<String> {
+    let mut a: Vec<String> = vec![
+        "--outdir".into(),
+        out_dir.to_string_lossy().to_string(),
+        "--synctex".into(),
+        "--keep-logs".into(),
+        "--keep-intermediates".into(),
+        "--chatter".into(),
+        "minimal".into(),
+    ];
+    // Same precedence as TEXINPUTS in a normal run: the project, the working
+    // directory (the .build.tex copies), then the chapters' folders.
+    let mut dirs: Vec<String> = vec![dir.to_string_lossy().to_string(), out_dir.to_string_lossy().to_string()];
+    dirs.extend(search_dirs.iter().filter(|d| !d.is_empty()).cloned());
+    for d in dirs {
+        a.push("-Z".into());
+        a.push(format!("search-path={d}"));
+    }
+    a.push(src.to_string_lossy().to_string());
+    a
+}
+
+fn compile_tectonic(
+    exe: &str,
+    src: &Path,
+    dir: &Path,
+    out_dir: &Path,
+    job: &str,
+    search_dirs: &[String],
+    clean_first: bool,
+) -> Result<CompileResult, String> {
+    drop_warm();
+    if clean_first || interrupted_before(out_dir, job) {
+        clean_intermediates(out_dir, job);
+    }
+    let stem = src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| job.to_string());
+    let pdf = out_dir.join(format!("{job}.pdf"));
+    let stamp_of = |p: &Path| p.metadata().ok().map(|m| (m.modified().ok(), m.len()));
+    let pdf_before = stamp_of(&pdf);
+    let started_ms = now_ms();
+
+    let mut cmd = Command::new(exe);
+    cmd.current_dir(dir).args(tectonic_args(src, dir, out_dir, search_dirs));
+    crate::quiet(&mut cmd);
+    // The first compile may download packages for a while, quietly.
+    let limits = Limits { loop_repeats: 400, stall_secs: 600, pass_secs: 20 * 60 };
+    let run = run_watched(cmd, limits).map_err(|e| {
+        forget_engine("tectonic");
+        crate::spawn_error("tectonic", Some(dir), &e)
+    })?;
+
+    // Its outputs carry the INPUT's name: give them the job's.
+    if stem != job {
+        for ext in ["pdf", "synctex.gz", "log", "aux", "toc", "out"] {
+            let from = out_dir.join(format!("{stem}.{ext}"));
+            if from.exists() {
+                let _ = std::fs::rename(&from, out_dir.join(format!("{job}.{ext}")));
+            }
+        }
+    }
+    let mut log = String::from("===== Pasada 1 (tectonic) =====\n");
+    // The TeX log is what the Problems view reads; Tectonic's own notes go
+    // after it.
+    if let Ok(tex_log) = std::fs::read_to_string(out_dir.join(format!("{job}.log"))) {
+        log.push_str(&tex_log);
+        log.push('\n');
+    }
+    log.push_str(&run.stdout);
+    log.push_str(&run.stderr);
+    log.push('\n');
+    let mut stopped = None;
+    if let Some((code, why)) = run.stopped {
+        clean_intermediates(out_dir, job);
+        log.push_str("===== Pyx: compilación detenida =====\n");
+        log.push_str(&why);
+        log.push('\n');
+        stopped = Some(code);
+    }
+    let written = match (pdf_before, stamp_of(&pdf)) {
+        (None, Some(_)) => true,
+        (Some(b), Some(a)) => a != b,
+        _ => false,
+    };
+    let pdf_fresh = written && pdf_complete(&pdf);
+    if written && !pdf_fresh {
+        let _ = std::fs::remove_file(&pdf);
+        log.push_str("===== Pyx: el PDF no se completó =====\n");
+        log.push_str("Tectonic se detuvo mientras escribía el PDF; se mantiene el anterior.\n");
+    }
+    Ok(CompileResult {
+        ok: run.success && stopped.is_none() && pdf_fresh,
+        pdf_path: pdf_fresh.then(|| pdf.to_string_lossy().to_string()),
+        log,
+        engine: "tectonic".into(),
+        stopped,
+        inputs: None,
+        started_ms,
+    })
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1554,11 +1674,14 @@ pub fn compile(
     let file = src.to_string_lossy().to_string();
 
     let engine = match engine {
-        "pdflatex" | "lualatex" | "xelatex" => engine,
+        "pdflatex" | "lualatex" | "xelatex" | "tectonic" => engine,
         _ => "xelatex",
     };
     let engine_cmd = resolve_engine(engine).ok_or_else(|| {
-        format!("No se encontró el motor «{engine}». Instala MiKTeX o TeX Live.")
+        format!(
+            "No se encontró el motor «{engine}». Instala MiKTeX o TeX Live, o Tectonic \
+             (un único programa que descarga los paquetes que necesita)."
+        )
     })?;
 
     let out_name = jobname
@@ -1596,6 +1719,11 @@ pub fn compile(
     // tick — and then the viewer was never told there was a new PDF.
     let stamp_of = |p: &Path| p.metadata().ok().map(|m| (m.modified().ok(), m.len()));
     let pdf_before = stamp_of(&pdf);
+
+    if engine == "tectonic" {
+        // Its own reruns and BibTeX; none of the pass logic below applies.
+        return compile_tectonic(&engine_cmd, src, dir, &out_dir, &out_name, search_dirs, clean_first);
+    }
 
     let passes = passes.clamp(1, 3);
     const MAX_PASSES: u32 = 3;
@@ -1787,9 +1915,9 @@ pub fn compile(
     }
 
     let inputs = if stopped.is_none() {
-        recorded_inputs(&out_dir, &out_name, dir, &log)
+        Some(recorded_inputs(&out_dir, &out_name, dir, &log))
     } else {
-        Vec::new()
+        Some(Vec::new())
     };
     // Get the NEXT compile's preamble out of the way now, while the user reads
     // this PDF. After everything above has read this run's .log and .fls: the
@@ -1945,6 +2073,45 @@ Texto del capitulo dos.
 
     fn passes_run(log: &str) -> usize {
         log.matches("===== Pasada ").count()
+    }
+
+    /// Run only with a `tectonic` on PATH (`cargo test -- --ignored tectonic`).
+    /// The output carries the input's name and must come out as the job's,
+    /// with its SyncTeX index next to it.
+    #[test]
+    #[ignore]
+    fn tectonic_output_is_renamed_to_the_job() {
+        let _turn = engine_turn();
+        if resolve_engine("tectonic").is_none() {
+            return;
+        }
+        let (base, proj, work) = scratch("tectonic");
+        let main = work.join("main.build.tex");
+        fs::write(&main, "\\documentclass{article}\n\\begin{document}\nHola \\ref{a}\\label{a}.\n\\end{document}\n").unwrap();
+        let res = compile(main.to_str().unwrap(), proj.to_str().unwrap(), "tectonic", 1, Some("main".into()), &[], false, true)
+            .expect("tectonic deberia ejecutarse");
+        let pdf = res.pdf_path.expect("PDF");
+        assert!(pdf.ends_with("main.pdf"), "{pdf}");
+        assert!(work.join("main.synctex.gz").exists());
+        assert!(!work.join("main.build.pdf").exists());
+        assert!(res.inputs.is_none(), "sin lista de lecturas: la app no debe saltarse compilaciones");
+        assert!(res.log.contains("Pasada 1 (tectonic)"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Tectonic finds what a normal run finds through TEXINPUTS, in the same
+    /// order, and writes into the working directory.
+    #[test]
+    fn tectonic_gets_the_same_search_path_as_a_normal_run() {
+        let a = tectonic_args(
+            Path::new("/w/main.build.tex"),
+            Path::new("/p"),
+            Path::new("/w"),
+            &["/p/cap".to_string(), String::new()],
+        );
+        let joined = a.join(" ");
+        assert!(joined.starts_with("--outdir /w --synctex --keep-logs --keep-intermediates"), "{joined}");
+        assert!(joined.contains("-Z search-path=/p -Z search-path=/w -Z search-path=/p/cap /w/main.build.tex"), "{joined}");
     }
 
     #[test]
@@ -2389,7 +2556,7 @@ Texto del capitulo dos.
         .unwrap();
         assert!(res.stopped.is_none());
         assert!(res.pdf_path.is_some(), "{}", res.log);
-        let names: Vec<String> = res.inputs.iter().map(|p| p.replace('\\', "/").to_lowercase()).collect();
+        let names: Vec<String> = res.inputs.as_deref().unwrap_or_default().iter().map(|p| p.replace('\\', "/").to_lowercase()).collect();
         assert!(names.iter().any(|p| p.ends_with("/cap.tex")), "{names:?}");
         assert!(names.iter().any(|p| p.ends_with("/mio.sty")), "{names:?}");
         assert!(!names.iter().any(|p| p.ends_with("article.cls")), "TeX's own files are not inputs: {names:?}");

@@ -422,7 +422,7 @@ export default function ConfigDialog() {
   };
 
   const colorVal = (t) => (settings[t.key] && settings[t.key].color) || defaultColor(t);
-  const engines = () => (state.env.engines && state.env.engines.length ? state.env.engines : ['xelatex', 'pdflatex', 'lualatex']);
+  const engines = () => (state.env.engines && state.env.engines.length ? state.env.engines : ['xelatex', 'pdflatex', 'lualatex', 'tectonic']);
   const setEngine = (e) => { const d = activeDoc(); if (d) d.engine = e.target.value; };
 
   /* ---------- generic option rows ---------- */
@@ -665,7 +665,8 @@ export default function ConfigDialog() {
                 <p class="cfg-hint">
                   {state.env.latex
                     ? `${tr('Motores detectados', 'Detected engines')}: ${engines().join(', ')}.`
-                    : tr('No se detectó LaTeX en el sistema.', 'No LaTeX found on the system.')}
+                    : tr('No se detectó LaTeX en el sistema. Instala MiKTeX o TeX Live, o Tectonic: un único programa que descarga solo los paquetes que cada documento necesita.',
+                      'No LaTeX found on the system. Install MiKTeX or TeX Live, or Tectonic: a single program that downloads only the packages each document needs.')}
                   {' '}{tr('El motor se aplica al documento activo.', 'The engine applies to the active document.')}
                 </p>
               </Show>

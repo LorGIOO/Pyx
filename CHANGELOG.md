@@ -10,6 +10,44 @@ cuatro frentes (librerías científicas y salidas, handcalcs frente a Jupyter
 real, semántica de Python e IPython, entrada/salida y procesos) y con 18 000
 peticiones aleatorias con interrupciones sin un solo cuelgue.
 
+### Más rápido — motor precalentado
+
+- **El preámbulo ya está cargado cuando compilas.** Al terminar cada
+  compilación, Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes)
+  procesado, esperando. Si la siguiente compilación tiene el mismo preámbulo
+  y ningún archivo que este lee ha cambiado, solo se compone el cuerpo. En
+  un informe con fontspec, TikZ y hyperref, xelatex pasa de **0,71 s a
+  0,10 s** por compilación. Idea de tex-fast-recompile; funciona con xelatex,
+  lualatex y pdflatex (mylatexformat no sirve con las fuentes de fontspec).
+  SyncTeX y el panel de problemas no notan la diferencia. Se descarta ante
+  cualquier duda, y se puede desactivar en Configuración → Compilación.
+- **BibTeX, Biber y makeindex se ejecutan solos**, entre pasadas y solo
+  cuando cambia lo que leen (las reglas de latexmk). Antes un `\cite` se
+  quedaba en «[?]» para siempre.
+
+### Nuevo — antes de compilar
+
+- **Errores de LaTeX subrayados mientras escribes** (como texlab): llaves
+  sin cerrar o de más, `\begin`/`\end` desparejados (también un
+  `\end{document}` que falta), etiquetas repetidas, `\ref` a etiquetas que
+  no existen y `$` sin cerrar. Ignora celdas Python, comentarios, verbatim y
+  el Python de `\py{}`.
+- **ChkTeX opcional** para avisos de estilo (desactivado por defecto).
+- **Tectonic** aparece como motor si está instalado: compilar sin MiKTeX ni
+  TeX Live.
+
+### Nuevo — celdas y visor
+
+- **Plegar con la barra lateral, como en JupyterLab**: un clic en la barra
+  de la celda pliega el código; en la de la salida, la salida.
+- **Panel Variables** (el inspector de variables de Jupyter): tipo, tamaño
+  y valor de cada variable del kernel; doble clic inserta `\py{nombre}`.
+- **El PDF sigue lo que escribes** (idea de TeXpresso): tras una compilación
+  en vivo, el visor muestra la parte que estás editando si no estaba a la
+  vista.
+- Corregido: la vista previa de una celda plegada no se veía (0 px de alto).
+- Las salidas HTML se sanean con **DOMPurify**.
+
 ### Más rápido — «Compilar» vuelve a ser incremental
 
 - **«Compilar» (Ctrl+Mayús+B) ya no reconstruye todo desde cero.** Cada pulsación

@@ -74,10 +74,20 @@ async fn compile_latex(
     jobname: Option<String>,
     search_dirs: Option<Vec<String>>,
     clean: Option<bool>,
+    warm: Option<bool>,
 ) -> Result<latex::CompileResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dirs = search_dirs.unwrap_or_default();
-        latex::compile(&path, &project_dir, &engine, passes, jobname, &dirs, clean.unwrap_or(false))
+        latex::compile(
+            &path,
+            &project_dir,
+            &engine,
+            passes,
+            jobname,
+            &dirs,
+            clean.unwrap_or(false),
+            warm.unwrap_or(true),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -842,6 +852,8 @@ pub fn run() {
                     // auxiliary PDF viewer must never kill the interpreter
                     // (it used to: this handler ran for EVERY window).
                     "main" => {
+                        // The engine paused for the next compile goes too.
+                        latex::drop_warm();
                         if let Some(state) = window.try_state::<KernelState>() {
                             let _ = kernel::shutdown(&state.handle());
                         }

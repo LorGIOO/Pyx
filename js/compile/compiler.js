@@ -1206,7 +1206,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // keeps them — that is what lets most compiles finish in ONE pass.
     // (A damaged .aux from an interrupted run is cleaned by latex.rs anyway.)
     state.compilePhase = 'latex';
-    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh);
+    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh,
+      general.warmEngine !== false);
     phase.tex = performance.now() - tTex;
     // Remember what this run read, to know next time whether it may be
     // skipped. A file changed WHILE it ran may not be in this PDF: then the

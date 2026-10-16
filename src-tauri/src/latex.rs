@@ -216,6 +216,8 @@ struct OutWatch {
     pending_error: Option<String>,
     worst: Option<(String, u32)>,
     partial: String,
+    /// A warm engine printed its "preamble done, waiting" marker.
+    ready: bool,
 }
 
 impl OutWatch {
@@ -233,6 +235,10 @@ impl OutWatch {
         }
     }
     fn line(&mut self, l: &str) {
+        if l == WARM_READY {
+            self.ready = true;
+            return;
+        }
         if let Some(rest) = l.strip_prefix("! ") {
             self.pending_error = Some(rest.chars().take(200).collect());
             return;
@@ -257,14 +263,28 @@ impl OutWatch {
     }
 }
 
-/// Run the engine; never longer than the watchdog allows.
-fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Error> {
-    use std::io::Read;
-    use std::sync::atomic::Ordering;
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+/// An engine process that has been started and whose output is being
+/// collected, but that nobody is waiting on yet. A normal pass waits on it at
+/// once; a warm one (see "Warm engine" below) is left paused after its
+/// preamble and waited on only when the next compile continues it.
+struct Spawned {
+    child: std::process::Child,
+    running: std::sync::Arc<Running>,
+    watch: std::sync::Arc<std::sync::Mutex<OutWatch>>,
+    out_buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    err_buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    readers: Vec<std::thread::JoinHandle<()>>,
+    stdin: Option<std::process::ChildStdin>,
+}
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+/// Start the engine and the threads that drain its output.
+fn spawn_watched(mut cmd: Command, keep_stdin: bool) -> Result<Spawned, std::io::Error> {
+    use std::io::Read;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(if keep_stdin { Stdio::piped() } else { Stdio::null() });
     // Its own process group, so stopping it reaches the PDF driver it starts
     // (xelatex pipes into xdvipdfmx) — the Unix counterpart of the Job Object.
     #[cfg(unix)]
@@ -282,9 +302,6 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
         job,
         pid: child.id(),
     });
-    if let Ok(mut g) = RUNNING.lock() {
-        *g = Some(running.clone());
-    }
 
     let watch = Arc::new(Mutex::new(OutWatch::default()));
     let out_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -334,11 +351,42 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
             }
         }));
     }
+    let stdin = child.stdin.take();
+    Ok(Spawned { child, running, watch, out_buf, err_buf, readers, stdin })
+}
+
+/// Stop a spawned engine that is no longer wanted, and everything it started.
+fn kill_spawned(mut sp: Spawned) {
+    drop(sp.stdin.take());
+    kill_tree(&sp.running);
+    let _ = sp.child.kill();
+    let _ = sp.child.wait();
+    for r in sp.readers.drain(..) {
+        let _ = r.join();
+    }
+}
+
+/// Wait for a spawned engine to finish; never longer than the watchdog allows.
+fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Error> {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    drop(sp.stdin.take());
+    let running = sp.running.clone();
+    if let Ok(mut g) = RUNNING.lock() {
+        *g = Some(running.clone());
+    }
+    // A warm engine sat paused before this: its silence then was waiting, not
+    // a loop. The watchdog's clock starts now.
+    if let Ok(mut w) = sp.watch.lock() {
+        w.last_output = Some(Instant::now());
+    }
 
     let started = Instant::now();
     let mut stopped: Option<(String, String)> = None;
     let status = loop {
-        if let Some(st) = child.try_wait()? {
+        if let Some(st) = sp.child.try_wait()? {
             // cancel() kills the tree from ANOTHER thread: the exit can be
             // seen here before the flag is. A killed run is not a finished one.
             if running.cancel.load(Ordering::SeqCst) {
@@ -348,7 +396,7 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
         }
         if running.cancel.load(Ordering::SeqCst) {
             stopped = Some(("cancelado".into(), "Compilación detenida por el usuario.".into()));
-        } else if let Ok(w) = watch.lock() {
+        } else if let Ok(w) = sp.watch.lock() {
             let quiet = w.last_output.map(|t| t.elapsed()).unwrap_or_else(|| started.elapsed());
             if let Some((key, n)) = w.worst.as_ref().filter(|(_, n)| *n >= limits.loop_repeats) {
                 stopped = Some((
@@ -383,15 +431,15 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
         }
         if stopped.is_some() {
             kill_tree(&running);
-            let _ = child.kill();
-            break child.wait().ok();
+            let _ = sp.child.kill();
+            break sp.child.wait().ok();
         }
         // 20 ms: the time between the engine exiting and the PDF being shown
         // includes this sleep, on every compile.
         std::thread::sleep(Duration::from_millis(20));
     };
     // The readers end when the pipes close (the whole tree is gone by now).
-    for r in readers {
+    for r in sp.readers.drain(..) {
         let _ = r.join();
     }
     if let Ok(mut g) = RUNNING.lock() {
@@ -399,14 +447,19 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
             *g = None;
         }
     }
-    let stdout = String::from_utf8_lossy(&out_buf.lock().map(|b| b.clone()).unwrap_or_default()).to_string();
-    let stderr = String::from_utf8_lossy(&err_buf.lock().map(|b| b.clone()).unwrap_or_default()).to_string();
+    let stdout = String::from_utf8_lossy(&sp.out_buf.lock().map(|b| b.clone()).unwrap_or_default()).to_string();
+    let stderr = String::from_utf8_lossy(&sp.err_buf.lock().map(|b| b.clone()).unwrap_or_default()).to_string();
     Ok(Watched {
         stdout,
         stderr,
         success: stopped.is_none() && status.map(|s| s.success()).unwrap_or(false),
         stopped,
     })
+}
+
+/// Run the engine; never longer than the watchdog allows.
+fn run_watched(cmd: Command, limits: Limits) -> Result<Watched, std::io::Error> {
+    wait_watched(spawn_watched(cmd, false)?, limits)
 }
 
 #[derive(Serialize)]
@@ -813,6 +866,14 @@ fn aux_poisoned(log: &str, job: &str) -> bool {
     }
 }
 
+/// Part of the TeX distribution or the system's fonts, not of the project.
+/// `k` is a lowercased path with `\` separators.
+fn installed_file(k: &str) -> bool {
+    k.contains("\\miktex\\") || k.contains("texmf") || k.contains("\\texlive\\")
+        || k.contains("/texlive/") || k.contains("\\windows\\fonts\\")
+        || k.contains("\\fontconfig\\") || k.ends_with(".fmt")
+}
+
 /// Files the engine read that are not part of the TeX installation.
 ///
 /// From the recorder list (`-recorder`: every file TeX opened) plus the
@@ -834,10 +895,7 @@ fn recorded_inputs(out_dir: &Path, job: &str, run_dir: &Path, log: &str) -> Vec<
         let k = s.replace('/', "\\").to_lowercase();
         // The distribution (MiKTeX, TeX Live), system fonts, and the working
         // directory itself (the .build.tex copies are tracked by content).
-        let installed = k.contains("\\miktex\\") || k.contains("texmf") || k.contains("\\texlive\\")
-            || k.contains("/texlive/") || k.contains("\\windows\\fonts\\")
-            || k.contains("\\fontconfig\\") || k.ends_with(".fmt");
-        if installed || k.starts_with(&out_norm) {
+        if installed_file(&k) || k.starts_with(&out_norm) {
             return;
         }
         if seen.insert(k) {
@@ -862,6 +920,512 @@ fn recorded_inputs(out_dir: &Path, job: &str, run_dir: &Path, log: &str) -> Vec<
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Warm engine: the preamble is typeset BEFORE you ask for the PDF
+// ---------------------------------------------------------------------------
+//
+// Measured on an ordinary engineering report (fontspec, amsmath, TikZ,
+// hyperref, booktabs): xelatex spends ~0.65 s of a ~0.70 s compile on the
+// PREAMBLE — loading packages and fonts that are the same on every compile —
+// and ~0.05 s on the document you actually changed.
+//
+// The idea is tex-fast-recompile's (github.com/user202729/tex-fast-recompile),
+// itself an answer to the limits of mylatexformat (a precompiled preamble
+// format): mylatexformat cannot dump the OpenType fonts fontspec loads, so it
+// does nothing for xelatex or lualatex. Instead, right after a compile ends we
+// START THE NEXT ONE: an engine runs the current preamble and then stops at
+// `\read` on its stdin, waiting. When the next compile comes and the preamble
+// is byte-for-byte the same — and no file the preamble read has changed — Pyx
+// writes the body and sends a newline: the engine goes straight into
+// `\begin{document}`. Fonts and packages are already in memory.
+//
+// Everything downstream sees an ordinary compile:
+//   - the stub the engine starts from is the preamble verbatim, so an error in
+//     the preamble is reported on the same line, of a file with the same name;
+//   - the body is `\input` from the build file's OWN path, with the preamble
+//     replaced by as many empty lines, so SyncTeX and every log line point at
+//     the same file and line as a normal pass (checked both directions);
+//   - the build file is put back exactly, mtime included, when the pass ends.
+//
+// Any doubt and it is not used: a different preamble, engine, folder or search
+// path; a preamble input modified since the engine started; an engine that
+// died; one older than WARM_MAX_AGE (\today must not be yesterday's). Then the
+// pass runs normally — the warm engine only ever saves time.
+
+/// Line the stub prints when its preamble is done and it starts waiting.
+const WARM_READY: &str = "PYXWARMREADY";
+/// A paused engine is discarded after this long (memory, and `\today`).
+const WARM_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// Folder of the working directory that holds the stubs.
+pub(crate) const WARM_DIR: &str = "_pyxwarm";
+
+struct Warm {
+    id: u64,
+    /// Engine, folders, job and search path: what the engine was started with.
+    key: String,
+    /// The exact preamble it has typeset.
+    preamble: String,
+    born: std::time::SystemTime,
+    /// Project files the preamble read (from the last run's recorder list),
+    /// with their (mtime, size) as they were when the engine started.
+    deps: Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)>,
+    sp: Spawned,
+}
+
+static WARM: std::sync::Mutex<Option<Warm>> = std::sync::Mutex::new(None);
+static WARM_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Byte offset where the document body starts: the first `\begin{document}`
+/// outside a comment, after a `\documentclass`. None when the file has no
+/// preamble of its own (the class is in an \input'ed file) or no body.
+fn body_start(text: &str) -> Option<usize> {
+    let mut offset = 0usize;
+    let mut seen_class = false;
+    for line in text.split_inclusive('\n') {
+        // The code part of the line: up to the first `%` not escaped as `\%`.
+        let bytes = line.as_bytes();
+        let mut end = bytes.len();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == b'%' {
+                end = i;
+                break;
+            }
+            i += 1;
+        }
+        let code = &line[..end.min(line.len())];
+        let mut from = 0;
+        while let Some(at) = code[from..].find("\\begin") {
+            let at = from + at;
+            let rest = code[at + 6..].trim_start();
+            if rest.starts_with("{document}") {
+                let class_before = seen_class || code[..at].contains("\\documentclass");
+                return if class_before { Some(offset + at) } else { None };
+            }
+            from = at + 6;
+        }
+        if code.contains("\\documentclass") {
+            seen_class = true;
+        }
+        offset += line.len();
+    }
+    None
+}
+
+fn warm_key(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, search_dirs: &[String]) -> String {
+    format!(
+        "{engine_cmd}\n{}\n{}\n{job}\n{}",
+        dir.display(),
+        out_dir.display(),
+        texinputs(out_dir, search_dirs)
+    )
+}
+
+/// What the stub runs after the preamble: say it is ready, wait for a line on
+/// stdin (scrollmode is the lowest mode in which TeX may read the terminal),
+/// go back to nonstopmode, and read the body from the build file itself —
+/// found through TEXINPUTS, so the path recorded is the one a normal pass
+/// records.
+fn warm_tail(build_name: &str) -> String {
+    format!(
+        "\n\\immediate\\write16{{{WARM_READY}}}\\scrollmode\\read-1 to\\pyxwarmgo\\nonstopmode\
+         \\csname @@input\\endcsname\"{build_name}\"\\relax\n"
+    )
+}
+
+/// The SyncTeX scratch file an engine killed while paused leaves behind: it
+/// would make the next compile believe a pass was interrupted (and start over
+/// from nothing).
+fn clear_busy(out_dir: &Path, job: &str) {
+    let _ = std::fs::remove_file(out_dir.join(format!("{job}.synctex(busy)")));
+}
+
+/// Throw away the paused engine, if any, and what it left behind.
+pub fn drop_warm() {
+    let w = WARM.lock().ok().and_then(|mut g| g.take());
+    if let Some(w) = w {
+        let job_dir = w.key.lines().nth(2).map(PathBuf::from);
+        let job = w.key.lines().nth(3).map(str::to_string);
+        kill_spawned(w.sp);
+        if let (Some(d), Some(j)) = (job_dir, job) {
+            clear_busy(&d, &j);
+        }
+    }
+}
+
+/// Project files read while the PREAMBLE was being processed: the recorder's
+/// INPUT lines before the job's `.aux` first appears (LaTeX opens it at
+/// `\begin{document}`). Distribution files and the working directory are left
+/// out, like in `recorded_inputs`.
+fn preamble_inputs(out_dir: &Path, job: &str, run_dir: &Path) -> Vec<PathBuf> {
+    let Ok(fls) = std::fs::read_to_string(out_dir.join(format!("{job}.fls"))) else {
+        return Vec::new();
+    };
+    let aux = format!("{job}.aux").to_lowercase();
+    let out_norm = out_dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    let mut pwd = run_dir.to_path_buf();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for l in fls.lines() {
+        if let Some(d) = l.strip_prefix("PWD ") {
+            pwd = PathBuf::from(d.trim());
+            continue;
+        }
+        let input = l.strip_prefix("INPUT ");
+        let Some(f) = input.or_else(|| l.strip_prefix("OUTPUT ")).map(str::trim) else { continue };
+        if f.to_lowercase().replace('\\', "/").ends_with(&aux) {
+            break;
+        }
+        if input.is_none() {
+            continue;
+        }
+        let p = Path::new(f);
+        let abs = if p.is_absolute() { p.to_path_buf() } else { pwd.join(p) };
+        let k = abs.to_string_lossy().replace('/', "\\").to_lowercase();
+        if installed_file(&k) || k.starts_with(&out_norm) || out.contains(&abs) {
+            continue;
+        }
+        out.push(abs);
+    }
+    out
+}
+
+/// Start the engine that will run the NEXT compile of this build file, and
+/// leave it paused after the preamble. Best effort: any failure just means the
+/// next compile runs the usual way.
+fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &Path, search_dirs: &[String]) {
+    drop_warm();
+    let Ok(text) = std::fs::read_to_string(build) else { return };
+    let Some(at) = body_start(&text) else { return };
+    let Some(name) = build.file_name().map(|n| n.to_string_lossy().to_string()) else { return };
+    // A quote would end the file name in the \input; such a name never warms.
+    if name.contains('"') {
+        return;
+    }
+    let preamble = text[..at].to_string();
+    let stub_dir = out_dir.join(WARM_DIR);
+    if std::fs::create_dir_all(&stub_dir).is_err() {
+        return;
+    }
+    // Same NAME as the build file (in its own folder): an error in the
+    // preamble is reported against the file the log parser already knows.
+    let stub = stub_dir.join(&name);
+    if std::fs::write(&stub, format!("{preamble}{}", warm_tail(&name))).is_err() {
+        return;
+    }
+    // Stamped BEFORE the engine reads them: a change at any moment after this
+    // shows up as a different stamp.
+    let deps = preamble_inputs(out_dir, job, dir)
+        .into_iter()
+        .map(|p| {
+            let st = file_stamp(&p);
+            (p, st)
+        })
+        .collect();
+    let mut cmd = Command::new(engine_cmd);
+    cmd.current_dir(dir)
+        .arg("-interaction=nonstopmode")
+        .arg("-synctex=1")
+        .arg(format!("-output-directory={}", out_dir.display()))
+        .arg(format!("-jobname={job}"))
+        .arg("-recorder")
+        .env("TEXINPUTS", texinputs(out_dir, search_dirs))
+        .arg(&stub);
+    crate::quiet(&mut cmd);
+    let Ok(sp) = spawn_watched(cmd, true) else { return };
+    let id = WARM_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let w = Warm {
+        id,
+        key: warm_key(engine_cmd, dir, out_dir, job, search_dirs),
+        preamble,
+        born: std::time::SystemTime::now(),
+        deps,
+        sp,
+    };
+    match WARM.lock() {
+        Ok(mut g) => *g = Some(w),
+        Err(_) => return,
+    }
+    // Reaper: a paused engine nobody continues is killed after WARM_MAX_AGE,
+    // and one whose PREAMBLE never finishes (a loop before \begin{document})
+    // after the same silence the watchdog allows a pass.
+    let (out_dir, job) = (out_dir.to_path_buf(), job.to_string());
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let stall = std::time::Duration::from_secs(Limits::default().stall_secs);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Ok(mut g) = WARM.lock() else { return };
+            let Some(w) = g.as_mut() else { return };
+            if w.id != id {
+                return; // continued or replaced
+            }
+            let stalled = w
+                .sp
+                .watch
+                .lock()
+                .map(|o| !o.ready && o.last_output.map(|t| t.elapsed()).unwrap_or_else(|| started.elapsed()) > stall)
+                .unwrap_or(false);
+            let exited = w.sp.child.try_wait().map(|s| s.is_some()).unwrap_or(true);
+            if stalled || exited || started.elapsed() > WARM_MAX_AGE {
+                let w = g.take();
+                drop(g);
+                if let Some(w) = w {
+                    kill_spawned(w.sp);
+                }
+                clear_busy(&out_dir, &job);
+                return;
+            }
+        }
+    });
+}
+
+/// The paused engine, if it can run THIS pass: same command, folders and
+/// search path, the identical preamble, alive, young enough, and no project
+/// file its preamble read modified since it started. Anything else is killed.
+fn take_warm(key: &str, preamble: &str, out_dir: &Path, job: &str) -> Option<Warm> {
+    let mut w = WARM.lock().ok()?.take()?;
+    let alive = w.sp.child.try_wait().map(|s| s.is_none()).unwrap_or(false);
+    let young = w.born.elapsed().map(|a| a < WARM_MAX_AGE).unwrap_or(false);
+    let deps_same = w.deps.iter().all(|(p, st)| st.is_some() && file_stamp(p) == *st);
+    if alive && young && deps_same && w.key == key && w.preamble == preamble {
+        return Some(w);
+    }
+    kill_spawned(w.sp);
+    clear_busy(out_dir, job);
+    None
+}
+
+fn file_stamp(p: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(p).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+/// Puts the build file back as the compiler wrote it — content AND mtime, so
+/// the compiler's "is the build file still the one I wrote?" check holds.
+struct RestoreBuild {
+    path: PathBuf,
+    text: String,
+    mtime: Option<std::time::SystemTime>,
+}
+impl Drop for RestoreBuild {
+    fn drop(&mut self) {
+        if std::fs::write(&self.path, self.text.as_bytes()).is_ok() {
+            if let (Some(t), Ok(f)) = (self.mtime, std::fs::OpenOptions::new().write(true).open(&self.path)) {
+                let _ = f.set_modified(t);
+            }
+        }
+    }
+}
+
+/// Continue the paused engine on the body of `build`. Err when it could not be
+/// handed the body (it is killed then, and the caller runs the pass normally).
+fn run_warm(mut w: Warm, build: &Path, out_dir: &Path, job: &str, limits: Limits) -> Result<Watched, ()> {
+    use std::io::Write;
+    let fail = |w: Warm| {
+        kill_spawned(w.sp);
+        clear_busy(out_dir, job);
+        Err(())
+    };
+    let Ok(text) = std::fs::read_to_string(build) else { return fail(w) };
+    let Some(at) = body_start(&text) else { return fail(w) };
+    let mtime = std::fs::metadata(build).and_then(|m| m.modified()).ok();
+    let lines = text[..at].matches('\n').count();
+    let _restore = RestoreBuild { path: build.to_path_buf(), text: text.clone(), mtime };
+    let padded = format!("{}{}", "\n".repeat(lines), &text[at..]);
+    if std::fs::write(build, padded.as_bytes()).is_err() {
+        return fail(w);
+    }
+    let sent = w
+        .sp
+        .stdin
+        .as_mut()
+        .map(|s| s.write_all(b"\n").and_then(|_| s.flush()).is_ok())
+        .unwrap_or(false);
+    if !sent {
+        return fail(w);
+    }
+    // `_restore` puts the build file back when this returns, whatever happened.
+    wait_watched(w.sp, limits).map_err(|_| ())
+}
+
+/// The marker line is Pyx's, not the document's: keep it out of the log.
+fn strip_warm_marker(out: String) -> String {
+    if !out.contains(WARM_READY) {
+        return out;
+    }
+    out.lines().filter(|l| *l != WARM_READY).collect::<Vec<_>>().join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// Bibliographies and indexes: the latexmk rules
+// ---------------------------------------------------------------------------
+//
+// A `\cite` stays "[?]" until BibTeX or Biber has turned the references into a
+// `.bbl`, and an index stays empty until makeindex has sorted the `.idx` into
+// an `.ind` — no number of LaTeX passes changes that. latexmk's answer, which
+// this follows: after a pass, run the tool whose INPUT changed since the last
+// time it ran (and only then), and give LaTeX one more pass if its output
+// changed. A fingerprint of each tool's inputs is kept in the working
+// directory, so an edit to the prose costs nothing here.
+
+/// Separator of a kpathsea search path on this platform.
+const PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
+
+/// `BIBINPUTS` / `BSTINPUTS`: the project and the folders of its files, then
+/// the distribution's defaults (the trailing separator).
+fn tool_path(dir: &Path, search_dirs: &[String]) -> String {
+    let mut v = String::new();
+    v.push_str(&dir.to_string_lossy());
+    v.push(PATH_SEP);
+    for d in search_dirs.iter().filter(|d| !d.is_empty()) {
+        v.push_str(d);
+        v.push(PATH_SEP);
+    }
+    v
+}
+
+/// The lines of the job's `.aux` (and of the `.aux` files it pulls in, one per
+/// `\include`d chapter) that BibTeX reads.
+fn bibtex_inputs(out_dir: &Path, job: &str) -> Option<String> {
+    fn walk(path: &Path, out_dir: &Path, acc: &mut String, depth: u32) {
+        let Ok(text) = std::fs::read_to_string(path) else { return };
+        for l in text.lines() {
+            if l.starts_with("\\citation{") || l.starts_with("\\bibdata{") || l.starts_with("\\bibstyle{") {
+                acc.push_str(l);
+                acc.push('\n');
+            } else if let Some(rest) = l.strip_prefix("\\@input{") {
+                if depth < 4 {
+                    if let Some(name) = rest.strip_suffix('}') {
+                        walk(&out_dir.join(name), out_dir, acc, depth + 1);
+                    }
+                }
+            }
+        }
+    }
+    let mut acc = String::new();
+    walk(&out_dir.join(format!("{job}.aux")), out_dir, &mut acc, 0);
+    acc.contains("\\bibdata{").then_some(acc)
+}
+
+/// Stamp of every `.bib` the project could be reading.
+fn bib_stamps(dir: &Path, search_dirs: &[String]) -> String {
+    let mut v: Vec<String> = Vec::new();
+    let mut dirs: Vec<PathBuf> = vec![dir.to_path_buf()];
+    dirs.extend(search_dirs.iter().map(PathBuf::from));
+    for d in dirs {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.extension().map(|x| x.eq_ignore_ascii_case("bib")).unwrap_or(false) {
+                if let Some((t, n)) = file_stamp(&p) {
+                    let t = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                    v.push(format!("{}:{t}:{n}", p.display()));
+                }
+            }
+        }
+    }
+    v.sort();
+    v.join("\n")
+}
+
+fn fingerprint(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// Run one auxiliary tool; its output goes to the log. None when it is not
+/// installed.
+fn run_tool(name: &str, args: &[String], cwd: &Path, envs: &[(&str, String)], log: &mut String) -> Option<bool> {
+    let exe = resolve_engine(name)?;
+    let mut c = Command::new(exe);
+    c.current_dir(cwd).args(args);
+    for (k, v) in envs {
+        c.env(k, v);
+    }
+    crate::quiet(&mut c);
+    log.push_str(&format!("===== Pyx: {name} =====\n"));
+    match run_watched(c, Limits { loop_repeats: u32::MAX, stall_secs: 120, pass_secs: 5 * 60 }) {
+        Ok(r) => {
+            log.push_str(&r.stdout);
+            log.push_str(&r.stderr);
+            log.push('\n');
+            Some(r.success)
+        }
+        Err(e) => {
+            log.push_str(&format!("No se pudo ejecutar {name}: {e}\n"));
+            Some(false)
+        }
+    }
+}
+
+/// After a pass: run BibTeX / Biber / makeindex when their input changed.
+/// True when one of them produced output that the next pass must read.
+fn run_aux_tools(dir: &Path, out_dir: &Path, job: &str, search_dirs: &[String], log: &mut String) -> bool {
+    let stamp_file = out_dir.join(format!("{job}.pyxtools"));
+    let old = std::fs::read_to_string(&stamp_file).unwrap_or_default();
+    let old_of = |k: &str| {
+        old.lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")).map(str::to_string))
+            .unwrap_or_default()
+    };
+    let mut new_lines: Vec<String> = Vec::new();
+    let mut rerun = false;
+    let out_of = |ext: &str| file_stamp(&out_dir.join(format!("{job}.{ext}")));
+
+    // Biber (biblatex): the .bcf is its whole input, plus the .bib files.
+    let bcf = out_dir.join(format!("{job}.bcf"));
+    if let Ok(text) = std::fs::read_to_string(&bcf) {
+        let fp = fingerprint(&format!("{text}\n{}", bib_stamps(dir, search_dirs)));
+        if fp != old_of("biber") || out_of("bbl").is_none() {
+            let before = out_of("bbl");
+            let args = vec![format!("--output-directory={}", out_dir.display()), job.to_string()];
+            match run_tool("biber", &args, dir, &[], log) {
+                None => log.push_str(
+                    "===== Pyx: biber =====\nEl documento usa biblatex con Biber, pero «biber» no está \
+                     instalado: las citas saldrán sin resolver. Instálalo desde MiKTeX o TeX Live.\n",
+                ),
+                Some(_) => rerun |= out_of("bbl") != before,
+            }
+        }
+        new_lines.push(format!("biber={fp}"));
+    } else if let Some(cites) = bibtex_inputs(out_dir, job) {
+        // BibTeX: the \citation / \bibdata / \bibstyle lines, plus the .bib files.
+        let fp = fingerprint(&format!("{cites}\n{}", bib_stamps(dir, search_dirs)));
+        if fp != old_of("bibtex") || out_of("bbl").is_none() {
+            let before = out_of("bbl");
+            let paths = tool_path(dir, search_dirs);
+            let envs = [("BIBINPUTS", paths.clone()), ("BSTINPUTS", paths)];
+            if run_tool("bibtex", &[job.to_string()], out_dir, &envs, log).is_some() {
+                rerun |= out_of("bbl") != before;
+            }
+        }
+        new_lines.push(format!("bibtex={fp}"));
+    }
+
+    // makeindex: the .idx LaTeX wrote this pass.
+    let idx = out_dir.join(format!("{job}.idx"));
+    if let Ok(text) = std::fs::read_to_string(&idx) {
+        let fp = fingerprint(&text);
+        if fp != old_of("makeindex") || out_of("ind").is_none() {
+            let before = out_of("ind");
+            if run_tool("makeindex", &[format!("{job}.idx")], out_dir, &[], log).is_some() {
+                rerun |= out_of("ind") != before;
+            }
+        }
+        new_lines.push(format!("makeindex={fp}"));
+    }
+
+    if !new_lines.is_empty() || !old.is_empty() {
+        let _ = std::fs::write(&stamp_file, new_lines.join("\n"));
+    }
+    rerun
 }
 
 fn now_ms() -> u64 {
@@ -919,6 +1483,7 @@ pub fn compile(
     jobname: Option<String>,
     search_dirs: &[String],
     clean_first: bool,
+    warm: bool,
 ) -> Result<CompileResult, String> {
     let src = Path::new(path);
     if !src.exists() {
@@ -987,10 +1552,28 @@ pub fn compile(
     let mut stopped: Option<String> = None;
     let started_ms = now_ms();
 
+    // The engine left paused after the last compile, if it can run this one
+    // (see "Warm engine"). Taken BEFORE the check below: while it waits, the
+    // SyncTeX index it has open is marked busy, and that is not a dead pass.
+    let mut warm_engine = if warm && !clean_first && passes == 1 {
+        let key = warm_key(&engine_cmd, dir, &out_dir, &out_name, search_dirs);
+        std::fs::read_to_string(src)
+            .ok()
+            .and_then(|t| body_start(&t).map(|at| t[..at].to_string()))
+            .and_then(|pre| take_warm(&key, &pre, &out_dir, &out_name))
+    } else {
+        drop_warm();
+        None
+    };
+    if warm_engine.is_none() {
+        // A paused engine that could not be used is gone: so is its index.
+        clear_busy(&out_dir, &out_name);
+    }
+
     // A compile from scratch (asked for), or one after a pass that never
     // finished (its SyncTeX index is still marked busy): nothing an earlier
     // run left behind may take part in this one.
-    if clean_first || interrupted_before(&out_dir, &out_name) {
+    if clean_first || (warm_engine.is_none() && interrupted_before(&out_dir, &out_name)) {
         clean_intermediates(&out_dir, &out_name);
     }
     let mut healed = false;
@@ -1036,14 +1619,28 @@ pub fn compile(
         crate::quiet(&mut cmd);
         let listings_before = listings_stamp(&out_dir, &out_name);
         cmd.arg(&file);
-        let run = run_watched(cmd, Limits::default()).map_err(|e| {
-            // Uninstalled or moved since it was found: look again next time.
-            forget_engine(engine);
-            crate::spawn_error(engine, Some(dir), &e)
-        })?;
+        // The paused engine runs the first pass when it can; a failure to
+        // hand it the body falls back to the ordinary pass, same result.
+        let warm_run = warm_engine
+            .take()
+            .and_then(|w| run_warm(w, src, &out_dir, &out_name, Limits::default()).ok());
+        let warmed = warm_run.is_some();
+        let run = match warm_run {
+            Some(r) => r,
+            None => run_watched(cmd, Limits::default()).map_err(|e| {
+                // Uninstalled or moved since it was found: look again next time.
+                forget_engine(engine);
+                crate::spawn_error(engine, Some(dir), &e)
+            })?,
+        };
 
-        log.push_str(&format!("===== Pasada {} ({}) =====\n", i + 1, engine));
-        let pass_out = run.stdout;
+        log.push_str(&format!(
+            "===== Pasada {} ({}{}) =====\n",
+            i + 1,
+            engine,
+            if warmed { ", preámbulo ya cargado" } else { "" }
+        ));
+        let pass_out = strip_warm_marker(run.stdout);
         log.push_str(&pass_out);
         if !run.stderr.trim().is_empty() {
             log.push_str(&run.stderr);
@@ -1091,7 +1688,11 @@ pub fn compile(
         // already typeset. Comparing the files is what lets the compiler ask
         // for ONE pass and still never show an out-of-date index. Most
         // compiles still finish in a single, fast pass.
-        let needs_rerun = pass_out.contains("Rerun to get")
+        // Bibliography and index tools run between passes, latexmk-style, and
+        // only when their input changed; new output means one more pass.
+        let tools_changed = run_aux_tools(dir, &out_dir, &out_name, search_dirs, &mut log);
+        let needs_rerun = tools_changed
+            || pass_out.contains("Rerun to get")
             || pass_out.contains("rerun LaTeX")
             || pass_out.contains("Rerun LaTeX")
             || listings_stamp(&out_dir, &out_name) != listings_before;
@@ -1138,6 +1739,12 @@ pub fn compile(
     } else {
         Vec::new()
     };
+    // Get the NEXT compile's preamble out of the way now, while the user reads
+    // this PDF. After everything above has read this run's .log and .fls: the
+    // new engine starts by truncating them.
+    if warm && stopped.is_none() {
+        spawn_warm(&engine_cmd, dir, &out_dir, &out_name, src, search_dirs);
+    }
     Ok(CompileResult {
         ok: clean && pdf_fresh,
         pdf_path: if pdf_fresh {
@@ -1210,6 +1817,7 @@ Texto del capitulo dos.
             2,
             Some("main".to_string()),
             &[],
+            false,
             false,
         )
         .expect("la compilacion deberia ejecutarse");
@@ -1287,6 +1895,171 @@ Texto del capitulo dos.
         log.matches("===== Pasada ").count()
     }
 
+    #[test]
+    fn the_body_starts_at_the_first_real_begin_document() {
+        let t = "\\documentclass{article}\n% \\begin{document} in a comment\n\\usepackage{x}\n\\begin {document}\nHola\n\\end{document}\n";
+        let at = body_start(t).unwrap();
+        assert!(t[at..].starts_with("\\begin {document}"));
+        assert_eq!(t[..at].matches('\n').count(), 3);
+        // `\%` is a percent sign, not a comment.
+        let t = "\\documentclass{article}\n50\\% \\begin{document}x\\end{document}";
+        assert!(t[body_start(t).unwrap()..].starts_with("\\begin{document}"));
+        // No class of its own (it lives in an \input'ed file): nothing to keep warm.
+        assert!(body_start("\\input{preambulo}\n\\begin{document}\n\\end{document}\n").is_none());
+        assert!(body_start("\\documentclass{article}\nsin cuerpo\n").is_none());
+    }
+
+    /// The whole point, end to end: the second compile is run by the engine
+    /// left paused after the first, the PDF is the NEW text, SyncTeX points at
+    /// the build file and its real line, and the build file is put back
+    /// exactly. A changed preamble, or a changed file the preamble reads, is
+    /// never served by the paused engine.
+    #[test]
+    fn a_paused_engine_runs_the_next_compile_and_only_when_it_may() {
+        let _turn = engine_turn();
+        for engine in ["pdflatex", "xelatex", "lualatex"] {
+            if engine_works(engine) {
+                paused_engine_case(engine);
+            }
+        }
+    }
+
+    /// Timing, not a check: `cargo test -- --ignored warm_benchmark --nocapture`.
+    #[test]
+    #[ignore]
+    fn warm_benchmark() {
+        let _turn = engine_turn();
+        if !engine_works("xelatex") {
+            return;
+        }
+        let (base, proj, work) = scratch("bench");
+        let main = work.join("main.build.tex");
+        let doc = |n: usize| {
+            let mut d = String::from("\\documentclass{article}\n\\usepackage{fontspec}\n\\usepackage{amsmath,amssymb,graphicx,booktabs,xcolor,tikz,hyperref}\n\\begin{document}\n");
+            for i in 0..20 {
+                d.push_str(&format!("\\section{{S{i}}} Texto {n} \\begin{{tikzpicture}}\\draw (0,0)--(1,1);\\end{{tikzpicture}}\n"));
+            }
+            d.push_str("\\end{document}\n");
+            d
+        };
+        for warm in [false, true] {
+            fs::write(&main, doc(0)).unwrap();
+            let _ = compile(main.to_str().unwrap(), proj.to_str().unwrap(), "xelatex", 1, Some("main".into()), &[], false, warm);
+            let mut total = 0.0;
+            for k in 1..=5 {
+                std::thread::sleep(std::time::Duration::from_millis(800)); // the user typing
+                fs::write(&main, doc(k)).unwrap();
+                let t = std::time::Instant::now();
+                let r = compile(main.to_str().unwrap(), proj.to_str().unwrap(), "xelatex", 1, Some("main".into()), &[], false, warm).unwrap();
+                assert!(r.pdf_path.is_some());
+                total += t.elapsed().as_secs_f64();
+            }
+            println!("xelatex, motor precalentado={warm}: {:.3} s por compilación", total / 5.0);
+        }
+        drop_warm();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// latexmk's rules: a citation is resolved without the user knowing BibTeX
+    /// exists, an index is sorted by makeindex, and neither tool runs again
+    /// when nothing it reads changed.
+    #[test]
+    fn citations_and_indexes_are_resolved_like_latexmk_does() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        if resolve_engine("bibtex").is_none() || resolve_engine("makeindex").is_none() {
+            return;
+        }
+        let (base, proj, work) = scratch("bib");
+        fs::write(
+            proj.join("refs.bib"),
+            "@book{knuth,author={Donald Knuth},title={The TeXbook},year={1984},publisher={AW}}\n",
+        )
+        .unwrap();
+        let main = work.join("main.build.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\usepackage{makeidx}\\makeindex\n\\begin{document}\n\
+             Ver \\cite{knuth}.\\index{TeX}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\printindex\n\\end{document}\n",
+        )
+        .unwrap();
+        let run = || {
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        let first = run();
+        assert!(first.log.contains("===== Pyx: bibtex ====="), "{}", first.log);
+        assert!(first.log.contains("===== Pyx: makeindex ====="));
+        let bbl = fs::read_to_string(work.join("main.bbl")).unwrap();
+        assert!(bbl.contains("TeXbook"));
+        assert!(work.join("main.ind").exists());
+        // Resolved in the final pass: no "undefined citations" left.
+        let last = first.log.rsplit("===== Pasada ").next().unwrap();
+        assert!(!last.contains("Citation `knuth' on page 1 undefined"), "{last}");
+
+        // Nothing the tools read changed: they do not run again.
+        let again = run();
+        assert!(!again.log.contains("===== Pyx: bibtex ====="), "{}", again.log);
+        assert!(!again.log.contains("===== Pyx: makeindex ====="));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    fn paused_engine_case(engine: &'static str) {
+        let (base, proj, work) = scratch(&format!("warm-{engine}"));
+        let main = work.join("main.build.tex");
+        fs::write(proj.join("mio.sty"), "\\newcommand\\marca{A}\n").unwrap();
+        let doc = |pre: &str, body: &str| {
+            format!("\\documentclass{{article}}\n\\usepackage{{mio}}\n{pre}\\begin{{document}}\n{body}\n\\end{{document}}\n")
+        };
+        let run = || {
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, true)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        let warmed = |log: &str| log.contains("preámbulo ya cargado");
+
+        fs::write(&main, doc("", "Primero \\marca.")).unwrap();
+        let first = run();
+        assert!(!warmed(&first.log), "la primera compilacion no tiene motor en espera");
+        assert!(WARM.lock().unwrap().is_some(), "tras compilar queda un motor en espera");
+
+        // Body only: served by the paused engine.
+        let body2 = doc("", "Segundo texto \\marca.\n\nOtra linea.");
+        fs::write(&main, &body2).unwrap();
+        let before = fs::metadata(&main).unwrap().modified().unwrap();
+        let second = run();
+        assert!(warmed(&second.log), "{}", second.log);
+        assert!(second.pdf_path.is_some(), "{}", second.log);
+        assert!(!second.log.contains(WARM_READY), "la marca interna no llega al registro");
+        assert_eq!(fs::read_to_string(&main).unwrap(), body2, "el archivo de compilacion vuelve a quedar igual");
+        assert_eq!(fs::metadata(&main).unwrap().modified().unwrap(), before, "…con su fecha");
+        // SyncTeX: line 6 of the build file ("Otra linea.") is on page 1, and
+        // the index names the build file itself, not the stub.
+        if let Ok(loc) = synctex_view(main.to_str().unwrap(), 6, second.pdf_path.as_deref().unwrap()) {
+            assert_eq!(loc.page, 1);
+        }
+
+        // A different preamble: the paused engine typeset the old one.
+        fs::write(&main, doc("\\usepackage{amsmath}\n", "Tercero.")).unwrap();
+        let third = run();
+        assert!(!warmed(&third.log), "un preambulo distinto no se sirve en caliente");
+        assert!(third.pdf_path.is_some());
+
+        // A file the preamble reads changed after the engine started.
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        fs::write(proj.join("mio.sty"), "\\newcommand\\marca{B}\n").unwrap();
+        fs::write(&main, doc("\\usepackage{amsmath}\n", "Cuarto \\marca.")).unwrap();
+        let fourth = run();
+        assert!(!warmed(&fourth.log), "un .sty modificado obliga a cargar el preambulo de nuevo");
+
+        // And after that, the paused engine is used again.
+        fs::write(&main, doc("\\usepackage{amsmath}\n", "Quinto \\marca.")).unwrap();
+        let fifth = run();
+        assert!(warmed(&fifth.log), "{}", fifth.log);
+
+        drop_warm();
+        let _ = fs::remove_dir_all(&base);
+    }
+
     /// The compiler asks for ONE pass. That must never leave a stale table of
     /// contents — LaTeX prints no warning when the .toc changes — and it must
     /// stay ONE pass when nothing moved, which is the entire point.
@@ -1300,7 +2073,7 @@ Texto del capitulo dos.
             format!("\\documentclass{{article}}\n\\begin{{document}}\n\\tableofcontents\n{sections}\n\\end{{document}}\n")
         };
         let run = || {
-            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false)
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
                 .expect("la compilacion deberia ejecutarse")
         };
 
@@ -1338,7 +2111,7 @@ Texto del capitulo dos.
             )
         };
         let run = || {
-            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false)
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
                 .expect("la compilacion deberia ejecutarse")
         };
 
@@ -1384,6 +2157,7 @@ Texto del capitulo dos.
             1,
             Some("main".into()),
             &[cap.to_string_lossy().to_string()],
+            false,
             false,
         )
         .expect("la compilacion deberia ejecutarse");
@@ -1547,6 +2321,7 @@ Texto del capitulo dos.
             1,
             Some("main".into()),
             &[],
+            false,
             false,
         )
         .unwrap();

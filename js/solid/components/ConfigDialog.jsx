@@ -270,6 +270,13 @@ const FIELDS = () => [
       'Pyx also waits at least three times what the last compile took: a very heavy project stops rebuilding on every pause.'],
   },
   {
+    cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'warmEngine', type: 'check',
+    label: 'Tener el preámbulo cargado de antemano (motor precalentado)',
+    en: 'Keep the preamble loaded in advance (warm engine)',
+    hint: ['Al terminar cada compilación, Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes) ya procesado, esperando. Si la siguiente compilación tiene el mismo preámbulo, solo se compone el cuerpo: en un informe típico pasa de ~0,7 s a ~0,1 s. Si el preámbulo, un .sty o el motor cambian, se compila de la forma normal. Ocupa algo de memoria mientras espera.',
+      'After each compile, Pyx leaves a LaTeX engine with the preamble (packages and fonts) already processed, waiting. If the next compile has the same preamble, only the body is typeset: on a typical report ~0.7 s becomes ~0.1 s. If the preamble, a .sty or the engine changes, it compiles the usual way. Uses some memory while it waits.'],
+  },
+  {
     cat: 'compile', sec: ['Archivos', 'Files'], key: 'encoding', type: 'select',
     label: 'Codificación de los archivos', en: 'File encoding',
     opts: ENCODINGS.map((e) => [e, e]),

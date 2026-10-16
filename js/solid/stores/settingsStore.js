@@ -192,6 +192,9 @@ export const GENERAL_SECTIONS = {
     encoding: 'UTF-8',
     liveCompile: true,
     liveDelay: 1100,
+    // Keep a LaTeX engine paused after the preamble, ready for the next
+    // compile (latex.rs, "Warm engine").
+    warmEngine: true,
   },
   pdf: {
     pdfFit: 'width',

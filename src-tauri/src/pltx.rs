@@ -264,6 +264,11 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
                 if rel.contains("(busy)") {
                     continue;
                 }
+                // The paused engine's stub (latex.rs, "Warm engine"): a
+                // copy of the preamble that the next compile rewrites.
+                if rel.starts_with(crate::latex::WARM_DIR) {
+                    continue;
+                }
                 if let Ok(data) = fs::read(&abs) {
                     // The text of a build directory (.aux, .log, .toc) deflates
                     // to a fraction of its size and is worth compressing. The

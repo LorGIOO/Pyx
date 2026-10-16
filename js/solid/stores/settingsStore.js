@@ -192,10 +192,20 @@ export const GENERAL_SECTIONS = {
     encoding: 'UTF-8',
     liveCompile: true,
     liveDelay: 1100,
+    // Keep a LaTeX engine paused after the preamble, ready for the next
+    // compile (latex.rs, "Warm engine").
+    warmEngine: true,
+    // Underline LaTeX structure errors while typing (latex-lint.js).
+    latexLint: true,
+    // …plus ChkTeX's style warnings (needs chktex; off: they are many).
+    chktex: false,
   },
   pdf: {
     pdfFit: 'width',
     pdfInvert: false,
+    // After a background compile, scroll the PDF to what is being edited
+    // when it is out of view (commands.js followCursorInPdf).
+    pdfFollowCursor: true,
     loupeZoom: 3,
     selSyncPdfToCode: false,
   },

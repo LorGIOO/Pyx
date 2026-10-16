@@ -3178,6 +3178,89 @@ def _reset_session(cwd):
     _reset_library_state()
 
 
+# Names the kernel itself puts in (or that IPython users expect there): not
+# the document's variables.
+_VARS_HIDDEN = {"In", "Out", "get_ipython", "exit", "quit", "display", "open"}
+
+
+def _describe(value):
+    """(type, size, value) of one variable, for the Variables panel.
+
+    Cheap and safe by construction: a DataFrame or an array is described by
+    its shape and dtype — never printed — and everything else goes through a
+    length-capped repr that cannot raise. Nothing here may be slow on a large
+    object or run more of the user's code than its __repr__."""
+    import reprlib
+    t = type(value)
+    tname = t.__name__
+    mod = getattr(t, "__module__", "") or ""
+    short = reprlib.Repr()
+    short.maxstring, short.maxother, short.maxlist, short.maxdict = 80, 80, 8, 6
+    size = ""
+    try:
+        shape = getattr(value, "shape", None)
+        if mod.startswith("pandas") and tname == "DataFrame":
+            size = "%d × %d" % tuple(value.shape)
+            cols = ", ".join(str(c) for c in list(value.columns)[:6])
+            more = "…" if len(value.columns) > 6 else ""
+            return tname, size, "columnas: %s%s" % (cols, more)
+        if mod.startswith("pandas") and tname == "Series":
+            return tname, str(len(value)), "dtype %s" % value.dtype
+        if isinstance(shape, tuple) and mod.startswith("numpy"):
+            size = " × ".join(str(n) for n in shape) or "escalar"
+            if getattr(value, "size", 0) <= 6:
+                return "%s[%s]" % (tname, getattr(value, "dtype", "")), size, _safe_str(value.tolist())
+            return "%s[%s]" % (tname, getattr(value, "dtype", "")), size, ""
+        if isinstance(value, bool) or value is None:
+            return tname, "", repr(value)
+        if isinstance(value, float):
+            return tname, "", "%.10g" % value
+        if isinstance(value, (int, complex)):
+            return tname, "", short.repr(value)
+        if isinstance(value, str):
+            return tname, str(len(value)), short.repr(value)
+        if isinstance(value, (list, tuple, dict, set, frozenset)):
+            return tname, str(len(value)), short.repr(value)
+        # pint quantities, sympy expressions, Decimal, Fraction…: their str is
+        # what an engineer wants to read ("9.81 meter / second ** 2").
+        text = _safe_str(value)
+        if len(text) > 120:
+            text = text[:117] + "…"
+        return tname, size, text
+    except BaseException:
+        return tname, size, "<no se puede mostrar>"
+
+
+def _vars():
+    """The document's variables, like JupyterLab's variable inspector: no
+    modules, functions or classes, no _private names."""
+    out = []
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        for name, value in list(NS.items()):
+            if name.startswith("_") or name in _VARS_HIDDEN:
+                continue
+            if isinstance(value, (types.ModuleType, types.FunctionType, types.BuiltinFunctionType, type)):
+                continue
+            if callable(value) and not hasattr(value, "shape") and not hasattr(value, "__len__"):
+                continue  # functools.partial, ufuncs, bound methods…
+            try:
+                with _USER_CODE:
+                    tname, size, text = _describe(value)
+            except BaseException:
+                tname, size, text = type(value).__name__, "", "<no se puede mostrar>"
+            out.append({"name": name, "type": tname, "size": size, "value": text})
+            if len(out) >= 500:
+                break
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+    out.sort(key=lambda v: v["name"].lower())
+    return out
+
+
 def _evals(req):
     """\\py{...} values. One bad expression never costs the others — not even
     a SystemExit or an exception whose message cannot be printed."""
@@ -3428,6 +3511,8 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, "evals": _evals(req)}
     if "lint" in req:
         return {"id": req.get("id"), "ok": True, "lint": _lint(req.get("lint"))}
+    if req.get("vars"):
+        return {"id": req.get("id"), "ok": True, "vars": _vars()}
     return _run_request(req)
 
 

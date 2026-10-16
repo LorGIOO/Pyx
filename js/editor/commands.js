@@ -376,6 +376,26 @@ export async function forwardSearch(lineNo, word) {
   }
 }
 
+/** After a background compile: show in the PDF the place being edited, if
+ *  it is not already visible (TeXpresso's live view, in Word's spirit — you
+ *  see what you write). Silent: no flash, no viewer opened, and never while
+ *  the PDF is the thing being looked at (the last interaction was there). */
+export async function followCursorInPdf() {
+  const v = getView();
+  const d = state.documents[state.activeIndex];
+  if (!v || !d || d.kind || !d.path || !state.lastPdfPath || !state.previewVisible) return;
+  const line = v.state.doc.lineAt(v.state.selection.main.head).number;
+  const { synctexView } = await import('../core/platform.js');
+  const buildTex = sourceToBuildPath(d.path) || d.path.replace(/\.(tex|pltx)$/i, '') + '.build.tex';
+  try {
+    const loc = await synctexView(buildTex, srcToBuildLine(lineMapFor(d.path), line), state.lastPdfPath);
+    if (loc && loc.page) {
+      const prev = await import('../pdf/preview.js');
+      prev.revealPdfLocation(loc.page, loc.y);
+    }
+  } catch (_) { /* a line SyncTeX does not know (preamble, a cell): stay put */ }
+}
+
 /* ---- move cell / line (Alt+↑ / Alt+↓, Jupyter/VSCode-style) ---- */
 // Inside a cell the WHOLE cell block moves one line per press (hold to glide);
 // outside, the regular line move runs. Returns true at document edges so the

@@ -25,7 +25,7 @@ import {
   scanVerbatimUse, stripTexComment,
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
-import { auxOpen } from '../solid/stores/previewStore.js';
+import { auxOpen, lastArea } from '../solid/stores/previewStore.js';
 import { saveActiveAs, saveWithEncoding } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
 
@@ -1167,7 +1167,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // % !TeX program = pdflatex — the document names its own engine, like in
     // TeXstudio. An explicit per-document choice (Configuración) still wins.
     const magicEngine = (
-      /^\s*%\s*!TeX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)\s*$/im.exec(rootContent)
+      /^\s*%\s*!TeX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex|tectonic)\s*$/im.exec(rootContent)
       || []
     )[1];
     const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()
@@ -1206,7 +1206,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // keeps them — that is what lets most compiles finish in ONE pass.
     // (A damaged .aux from an interrupted run is cleaned by latex.rs anyway.)
     state.compilePhase = 'latex';
-    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh);
+    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh,
+      general.warmEngine !== false);
     phase.tex = performance.now() - tTex;
     // Remember what this run read, to know next time whether it may be
     // skipped. A file changed WHILE it ran may not be in this PDF: then the
@@ -1277,6 +1278,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       } else {
         try {
           await loadPdf(res.pdf_path);
+          // A compile that typing fired: let the PDF show what was typed.
+          if (!showViewer && general.pdfFollowCursor !== false && lastArea() !== 'pdf') {
+            import('../editor/commands.js').then((m) => m.followCursorInPdf()).catch(() => {});
+          }
         } catch (e) {
           // The viewer's failure is ADDED to the engine's log. It used to
           // replace it (via the catch below), and the one line left —

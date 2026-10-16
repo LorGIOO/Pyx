@@ -54,6 +54,7 @@ function startKernel() {
     evals: (evals, extra = {}) => send({ evals, ...extra }).then((f) => f.evals),
     lint: (cells) => send({ lint: cells }).then((f) => f.lint),
     raw: (obj) => proc.stdin.write(`${JSON.stringify(obj)}\n`),
+    send,
     close: () => { try { proc.stdin.end(); proc.kill(); } catch (_) { /* gone */ } },
   };
 }
@@ -132,6 +133,20 @@ describe.skipIf(!python)('kernel protocol guarantees', { timeout: 60000 }, () =>
     const found = await k.lint(['%%render\na = 2\nb = 3', '%%render\na = 2\nb = (']);
     expect(found.filter((f) => f.cell === 0)).toEqual([]);
     expect(found.find((f) => f.cell === 1).line).toBe(3);
+  });
+
+  it('the Variables panel lists data, not modules or functions, and never prints big objects', async () => {
+    await k.run('', { reset: true });
+    await k.run('import math\nfrom math import sqrt\nL = 2.5\nn = 3\nnombre = "viga"\n'
+      + 'cargas = [1, 2, 3]\n_privada = 1\ndef f(x):\n    return x\nclass C: pass\nobj = C()');
+    const vars = await k.send({ vars: true }).then((f) => f.vars);
+    const names = vars.map((v) => v.name);
+    expect(names).toEqual(['cargas', 'L', 'n', 'nombre', 'obj']);
+    const by = Object.fromEntries(vars.map((v) => [v.name, v]));
+    expect(by.L).toMatchObject({ type: 'float', value: '2.5' });
+    expect(by.cargas).toMatchObject({ type: 'list', size: '3', value: '[1, 2, 3]' });
+    expect(by.nombre).toMatchObject({ type: 'str', size: '4' });
+    expect(by.obj.type).toBe('C');
   });
 
   it('a monkeypatched library makes the next reset ask for a new process', async () => {

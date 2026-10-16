@@ -45,6 +45,7 @@ import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from '.
 import { calcCompletions } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
 import { pyLint } from './py-lint.js';
+import { latexLint } from './latex-lint-ext.js';
 import { latexHighlight } from './latex-highlight.js';
 import { indentGuides } from './indent-guides.js';
 import { pyxSearchPanel } from './search-panel.js';
@@ -270,6 +271,9 @@ export function createDocState(docId, content) {
       cellsExtension,
       // Live Python syntax squiggles in cells (VSCode-style, exact line/col).
       pyLint,
+      // Live LaTeX structure checks (texlab-style): braces, environments,
+      // labels and references, unclosed $ — before any compile.
+      latexLint(docId),
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
       // they read the user's bindings from Configuración → Atajos live.
       dynamicKeys,

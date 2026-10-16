@@ -656,6 +656,23 @@ export async function showPdfLocation(page, x, y, word) {
   setTimeout(() => flash.remove(), 1400);
 }
 
+/** Bring a PDF spot into view only if it is not already on screen — no
+ *  flash, no jump when you can already see it. What "the PDF follows what
+ *  you write" uses after a background compile (TeXpresso-style live view). */
+export function revealPdfLocation(page, y) {
+  if (!pdfDoc || !container || page < 1 || page > pageCount()) return false;
+  const idx = page - 1;
+  const pageH = baseH[idx] || 1;
+  const yDoc = padTop + tops[idx] + Math.max(0, Math.min(1, y / pageH)) * pageHpx(idx);
+  const top = container.scrollTop, bottom = top + container.clientHeight;
+  const margin = Math.min(80, container.clientHeight * 0.15);
+  if (yDoc >= top + margin && yDoc <= bottom - margin) return false;
+  container.scrollTop = Math.max(0, yDoc - container.clientHeight * 0.4);
+  setCurrentPage(page);
+  scheduleVisible();
+  return true;
+}
+
 /* ---------- SyncTeX inverse search: Ctrl+click → exact source word ---------- */
 // The word under a point in the text layer (so the jump can land on the EXACT
 // clicked word, not just the line — SyncTeX's column is unreliable).

@@ -270,6 +270,25 @@ const FIELDS = () => [
       'Pyx also waits at least three times what the last compile took: a very heavy project stops rebuilding on every pause.'],
   },
   {
+    cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'warmEngine', type: 'check',
+    label: 'Tener el preámbulo cargado de antemano (motor precalentado)',
+    en: 'Keep the preamble loaded in advance (warm engine)',
+    hint: ['Al terminar cada compilación, Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes) ya procesado, esperando. Si la siguiente compilación tiene el mismo preámbulo, solo se compone el cuerpo: en un informe típico pasa de ~0,7 s a ~0,1 s. Si el preámbulo, un .sty o el motor cambian, se compila de la forma normal. Ocupa algo de memoria mientras espera.',
+      'After each compile, Pyx leaves a LaTeX engine with the preamble (packages and fonts) already processed, waiting. If the next compile has the same preamble, only the body is typeset: on a typical report ~0.7 s becomes ~0.1 s. If the preamble, a .sty or the engine changes, it compiles the usual way. Uses some memory while it waits.'],
+  },
+  {
+    cat: 'compile', sec: ['Antes de compilar', 'Before compiling'], key: 'latexLint', type: 'check',
+    label: 'Subrayar errores de LaTeX mientras escribes', en: 'Underline LaTeX errors as you type',
+    hint: ['Como texlab: llaves sin cerrar, \\begin/\\end que no cuadran, etiquetas repetidas, \\ref a etiquetas que no existen y $ sin cerrar. Se ven al escribir, antes de que LaTeX los convierta en un error difícil de localizar.',
+      'Like texlab: unclosed braces, mismatched \\begin/\\end, duplicate labels, \\ref to labels that do not exist and unclosed $. They show as you type, before LaTeX turns them into an error that is hard to locate.'],
+  },
+  {
+    cat: 'compile', sec: ['Antes de compilar', 'Before compiling'], key: 'chktex', type: 'check',
+    label: 'Avisos de estilo con ChkTeX', en: 'Style warnings with ChkTeX',
+    hint: ['ChkTeX (incluido en MiKTeX y TeX Live) revisa la tipografía: espacios antes de la puntuación, \\ldots en vez de «...», espacios irrompibles antes de \\ref… Son muchos avisos, por eso viene desactivado.',
+      'ChkTeX (shipped with MiKTeX and TeX Live) checks typography: spaces before punctuation, \\ldots instead of "...", non-breaking spaces before \\ref… They are many, which is why it is off by default.'],
+  },
+  {
     cat: 'compile', sec: ['Archivos', 'Files'], key: 'encoding', type: 'select',
     label: 'Codificación de los archivos', en: 'File encoding',
     opts: ENCODINGS.map((e) => [e, e]),
@@ -294,6 +313,12 @@ const FIELDS = () => [
       ['text', tr('Ajustar al texto', 'Fit text')],
       ['1', '100 %'], ['1.25', '125 %'], ['1.5', '150 %'],
     ],
+  },
+  {
+    cat: 'pdf', sec: ['Vista', 'View'], key: 'pdfFollowCursor', type: 'check',
+    label: 'El PDF sigue lo que escribes', en: 'The PDF follows what you write',
+    hint: ['Tras cada compilación en vivo, si el punto que estás editando no está a la vista, el visor se desplaza hasta él (sin destellos). No lo hace si lo último que tocaste fue el propio PDF.',
+      'After each live compile, if the spot you are editing is out of view, the viewer scrolls to it (no flashing). It does not if the last thing you touched was the PDF itself.'],
   },
   {
     cat: 'pdf', sec: ['Vista', 'View'], key: 'pdfInvert', type: 'check',
@@ -403,7 +428,7 @@ export default function ConfigDialog() {
   };
 
   const colorVal = (t) => (settings[t.key] && settings[t.key].color) || defaultColor(t);
-  const engines = () => (state.env.engines && state.env.engines.length ? state.env.engines : ['xelatex', 'pdflatex', 'lualatex']);
+  const engines = () => (state.env.engines && state.env.engines.length ? state.env.engines : ['xelatex', 'pdflatex', 'lualatex', 'tectonic']);
   const setEngine = (e) => { const d = activeDoc(); if (d) d.engine = e.target.value; };
 
   /* ---------- generic option rows ---------- */
@@ -646,7 +671,8 @@ export default function ConfigDialog() {
                 <p class="cfg-hint">
                   {state.env.latex
                     ? `${tr('Motores detectados', 'Detected engines')}: ${engines().join(', ')}.`
-                    : tr('No se detectó LaTeX en el sistema.', 'No LaTeX found on the system.')}
+                    : tr('No se detectó LaTeX en el sistema. Instala MiKTeX o TeX Live, o Tectonic: un único programa que descarga solo los paquetes que cada documento necesita.',
+                      'No LaTeX found on the system. Install MiKTeX or TeX Live, or Tectonic: a single program that downloads only the packages each document needs.')}
                   {' '}{tr('El motor se aplica al documento activo.', 'The engine applies to the active document.')}
                 </p>
               </Show>

@@ -7,6 +7,7 @@ import { gotoLine, insertSnippet } from '../../editor/commands.js';
 import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
+import VariablesPanel from './VariablesPanel.jsx';
 
 // Side-strip icons, same hand as the ribbon (16x16, 1.2px strokes). The
 // codicon each one is modelled on is named in the comment.
@@ -20,12 +21,15 @@ const I = {
   symbols: `<svg ${S}><path d="M11.6 3.6V2.5H4.5L8.2 8l-3.7 5.5h7.1v-1.1"/></svg>`,
   // codicon: files
   files: `<svg ${S}><path d="M5.5 1.5h4L12.5 4.5v8a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M9.5 1.5v3h3"/><path d="M2.5 4.2v9.3a1 1 0 0 0 1 1H10"/></svg>`,
+  // codicon: symbol-variable
+  vars: `<svg ${S}><path d="M2.5 4.5 8 1.8l5.5 2.7v7L8 14.2l-5.5-2.7z"/><path d="M2.5 4.5 8 7.2l5.5-2.7M8 7.2v7"/></svg>`,
 };
 const TABS = [
   { id: 'structure', label: 'Estructura', icon: I.structure },
   { id: 'toc', label: 'TOC', icon: I.toc },
   { id: 'symbols', label: 'Símbolos', icon: I.symbols },
   { id: 'files', label: 'Archivos', icon: I.files },
+  { id: 'vars', label: 'Variables', icon: I.vars },
 ];
 const KIND_SHORT = {
   part: 'P', chapter: 'C', section: 'S', subsection: 'ss',
@@ -137,6 +141,11 @@ export default function SidePanel() {
                   </div>
                 )}
               </For>
+            </Show>
+
+            {/* Variables: the kernel's namespace (Jupyter's variable inspector) */}
+            <Show when={tab() === 'vars'}>
+              <VariablesPanel />
             </Show>
 
             {/* Archivos: VSCode-style explorer of the document's folder */}

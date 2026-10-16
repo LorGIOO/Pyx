@@ -8,7 +8,7 @@
 
 Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-![versión](https://img.shields.io/badge/versión-1.4.0-007ACC?style=flat-square)
+![versión](https://img.shields.io/badge/versión-1.5.0-007ACC?style=flat-square)
 ![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
 ![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
@@ -57,7 +57,12 @@ from pyx import figure, figtex, tabletex, tex, texesc
 - **Kernel Python plano, como Jupyter** — el espacio de nombres arranca **vacío**: ninguna librería viene precargada ni tiene trato de favor, así que las actualizas, las cambias o las parcheas como en cualquier IDE. Lo que sí trae el kernel es el protocolo del cuaderno: `display()`, `get_ipython()`, las figuras de matplotlib capturadas solas y **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar).
 - **handcalcs igual que en Jupyter** — `import handcalcs.render` y las magias `%%render` / `%%tex` quedan disponibles; sin ese import no existen. Se usa la librería **real** (antes se sustituía por un sucedáneo interno, y no se podía ni actualizar).
 - **Los resultados viajan con el documento** — al abrir un informe ves sus números, tablas y figuras **sin ejecutar nada** (ni hace falta Python instalado). Si una celda cambió desde que se calculó, su resultado se marca **«desactualizado»** en vez de pasar por vigente: en una memoria de cálculo, un número que ya no corresponde a su fórmula es el error más caro que existe.
-- **Ejecución incremental** — al recompilar solo se re-ejecuta lo que cambió; una celda de simulación larga no se repite porque hayas retocado un párrafo.
+- **Ejecución incremental** — al recompilar solo se re-ejecuta lo que cambió; una celda de simulación larga no se repite porque hayas retocado un párrafo. Para empezar de cero sin dudas, **Recompilar desde cero** (`Ctrl+Alt+Mayús+B`).
+- **Compilación casi instantánea (motor precalentado)** — tras cada compilación Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes) ya cargado, esperando. La siguiente solo compone el cuerpo: en un informe con fontspec, TikZ y hyperref, **0,7 s → 0,1 s**. Funciona con xelatex, lualatex y pdflatex.
+- **Bibliografías e índices sin pensar en ellos** — BibTeX, Biber y makeindex se ejecutan solos entre pasadas, y solo cuando cambia lo que leen (las reglas de latexmk).
+- **Errores de LaTeX subrayados mientras escribes** — llaves sin cerrar, `\begin`/`\end` que no cuadran, etiquetas repetidas, `\ref` a etiquetas inexistentes y `$` sin cerrar, antes de compilar. Opcional: avisos de estilo de ChkTeX.
+- **El PDF sigue lo que escribes** — tras cada compilación en vivo, el visor muestra la parte que estás editando si no estaba a la vista.
+- **Celdas como en JupyterLab** — pulsa la barra lateral de una celda para plegar su código, o la de su salida para plegar la salida. Panel **Variables** con el tipo, tamaño y valor de cada variable del kernel (doble clic: inserta `\py{nombre}`).
 - **Interrupción sin perder la sesión** — parar una celda lanza `KeyboardInterrupt` como en Jupyter: **las variables ya calculadas siguen en memoria**.
 - **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
 - **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
@@ -85,8 +90,8 @@ Descarga el instalador de tu sistema desde la [**última release**](https://gith
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | `Pyx_1.4.0_x64-setup.exe` |
-| **macOS** (Intel y Apple Silicon) | `Pyx_1.4.0_universal.dmg` |
+| **Windows** (x64) | `Pyx_1.5.0_x64-setup.exe` |
+| **macOS** (Intel y Apple Silicon) | `Pyx_1.5.0_universal.dmg` |
 | **Linux** | `.deb` (Debian/Ubuntu) · `.rpm` (Fedora) · `.AppImage` (cualquier distro) |
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.
@@ -94,7 +99,7 @@ Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un avis
 Para que las celdas y la compilación funcionen, ten instalados aparte:
 
 - **Python 3** en el PATH — opcional: `pip install numpy matplotlib pandas sympy handcalcs`.
-- Una distribución **LaTeX** con `xelatex` — [MiKTeX](https://miktex.org/) (Windows), [MacTeX](https://tug.org/mactex/) (macOS) o [TeX Live](https://tug.org/texlive/) (Linux).
+- Una distribución **LaTeX** con `xelatex` — [MiKTeX](https://miktex.org/) (Windows), [MacTeX](https://tug.org/mactex/) (macOS) o [TeX Live](https://tug.org/texlive/) (Linux). Alternativa ligera: [Tectonic](https://tectonic-typesetting.github.io/), un único programa que descarga solo los paquetes que cada documento necesita (Pyx lo detecta y lo ofrece como motor).
 
 ## ⚙️ Compilar desde el código
 
@@ -127,7 +132,23 @@ Todos reconfigurables en **Configuración → Atajos**.
 
 ## 🛠️ Stack
 
-Tauri 2 · SolidJS · Vite · CodeMirror 6 · PDF.js · kernel Python embebido gestionado desde Rust.
+Tauri 2 · SolidJS · Vite · CodeMirror 6 · PDF.js · DOMPurify · KaTeX · kernel Python embebido gestionado desde Rust.
+
+## 🙏 Código abierto en el que se apoya Pyx
+
+Pyx adapta ideas y código de estos proyectos. Gracias a sus autores.
+
+| Proyecto | Qué usa Pyx | Cómo |
+|---|---|---|
+| [tex-fast-recompile](https://github.com/user202729/tex-fast-recompile) | La idea del **motor precalentado**: un TeX que ya ha procesado el preámbulo y espera el cuerpo del documento. | Reimplementado en Rust (`src-tauri/src/latex.rs`, «Warm engine»), integrado con SyncTeX, el registro y el vigilante de bucles. |
+| [mylatexformat](https://ctan.org/pkg/mylatexformat) + [latexmk](https://ctan.org/pkg/latexmk) | La separación preámbulo/cuerpo de los preámbulos precompilados, y las reglas de latexmk: repetir pasadas solo cuando hace falta y ejecutar BibTeX/Biber/makeindex cuando cambian sus entradas. | Reimplementado en `latex.rs`. El formato precompilado de mylatexformat no sirve con xelatex/fontspec; por eso se usa el motor precalentado, que sí. |
+| [TeXpresso](https://github.com/let-def/texpresso) | La vista en vivo: el PDF acompaña a lo que escribes. | Tras cada compilación en vivo, el visor se desplaza vía SyncTeX a lo que estás editando (`followCursorInPdf`). |
+| [Tectonic](https://github.com/tectonic-typesetting/tectonic) | Motor LaTeX autocontenido. | Opcional: si está instalado aparece como motor; Pyx adapta sus salidas y rutas de búsqueda. |
+| [texlab](https://github.com/latex-lsp/texlab) + [ChkTeX](https://www.nongnu.org/chktex/) | Los diagnósticos de estructura del servidor de lenguaje de LaTeX y su integración con ChkTeX. | Comprobaciones reescritas desde cero en `js/editor/latex-lint.js` (texlab es GPL-3; no se copia su código). ChkTeX se ejecuta tal cual, si está instalado. |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | Saneado del HTML de las salidas de las celdas. | Dependencia directa, con las reglas propias de Pyx como *hooks*. |
+| [Jupyter](https://github.com/jupyter) / [JupyterLab](https://github.com/jupyterlab/jupyterlab) | El plegado de celdas y salidas con la barra lateral («collapser»), el inspector de variables, el protocolo de visualización (`display`, `_repr_*_`) y el contador de ejecución. | Reimplementado sobre CodeMirror y el kernel propio de Pyx. |
+
+Y la base de todo: [Tauri](https://tauri.app), [SolidJS](https://www.solidjs.com), [CodeMirror](https://codemirror.net), [PDF.js](https://mozilla.github.io/pdf.js/), [KaTeX](https://katex.org), [handcalcs](https://github.com/connorferster/handcalcs) y [nspell](https://github.com/wooorm/nspell).
 
 ## 📄 Licencia
 

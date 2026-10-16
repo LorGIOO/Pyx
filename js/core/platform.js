@@ -182,8 +182,10 @@ export const detectEnv = () => invoke('detect_env');
 // the author wrote them. `searchDirs` are the folders of the \input'ed files:
 // an image beside a chapter resolves, behind anything beside the main file.
 // `clean` = start from nothing: no .aux, lists or SyncTeX index from earlier runs.
-export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false) =>
-  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean });
+// `warm` = let a paused engine (preamble already typeset) run this pass, and
+// leave one paused for the next (latex.rs, "Warm engine").
+export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false, warm = true) =>
+  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean, warm });
 // Stop the LaTeX run in flight (engine + PDF driver).
 export const compileCancel = () => invoke('compile_cancel');
 // The project's working directory (created on demand). Everything the build

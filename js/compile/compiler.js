@@ -25,7 +25,7 @@ import {
   scanVerbatimUse, stripTexComment,
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
-import { auxOpen } from '../solid/stores/previewStore.js';
+import { auxOpen, lastArea } from '../solid/stores/previewStore.js';
 import { saveActiveAs, saveWithEncoding } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
 
@@ -1278,6 +1278,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       } else {
         try {
           await loadPdf(res.pdf_path);
+          // A compile that typing fired: let the PDF show what was typed.
+          if (!showViewer && general.pdfFollowCursor !== false && lastArea() !== 'pdf') {
+            import('../editor/commands.js').then((m) => m.followCursorInPdf()).catch(() => {});
+          }
         } catch (e) {
           // The viewer's failure is ADDED to the engine's log. It used to
           // replace it (via the catch below), and the one line left —

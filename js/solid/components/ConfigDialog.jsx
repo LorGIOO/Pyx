@@ -315,6 +315,12 @@ const FIELDS = () => [
     ],
   },
   {
+    cat: 'pdf', sec: ['Vista', 'View'], key: 'pdfFollowCursor', type: 'check',
+    label: 'El PDF sigue lo que escribes', en: 'The PDF follows what you write',
+    hint: ['Tras cada compilación en vivo, si el punto que estás editando no está a la vista, el visor se desplaza hasta él (sin destellos). No lo hace si lo último que tocaste fue el propio PDF.',
+      'After each live compile, if the spot you are editing is out of view, the viewer scrolls to it (no flashing). It does not if the last thing you touched was the PDF itself.'],
+  },
+  {
     cat: 'pdf', sec: ['Vista', 'View'], key: 'pdfInvert', type: 'check',
     label: 'Invertir los colores (modo noche)', en: 'Invert colors (night mode)',
     after: (v) => setInvert(v),

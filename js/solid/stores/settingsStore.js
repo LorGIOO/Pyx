@@ -203,6 +203,9 @@ export const GENERAL_SECTIONS = {
   pdf: {
     pdfFit: 'width',
     pdfInvert: false,
+    // After a background compile, scroll the PDF to what is being edited
+    // when it is out of view (commands.js followCursorInPdf).
+    pdfFollowCursor: true,
     loupeZoom: 3,
     selSyncPdfToCode: false,
   },

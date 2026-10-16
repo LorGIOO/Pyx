@@ -19,6 +19,7 @@
 // now happen INSIDE the frame, through a small bootstrap script that talks back
 // over `postMessage` — the only channel a sandboxed frame has.
 
+import DOMPurify from 'dompurify';
 import { openExternal } from '../core/platform.js';
 
 let seq = 0;
@@ -155,20 +156,28 @@ export function createRichFrame(html, onResize, extraCss = '', autoSize = true) 
 /* ---------------- static markup sanitizer ----------------
    Rich output that carries no <script> is rendered inline (no frame) because
    it is cheaper and it can be selected/copied like the rest of the document.
-   Inline means it lives in the APP's DOM, so it is stripped of everything that
-   can execute or phone home first. Anything with a script goes to the
-   sandboxed frame above instead. */
+   Inline means it lives in the APP's DOM — next to the Tauri commands — so it
+   is sanitized first. And since a .pltx carries its outputs, that markup can
+   come from someone else's report.
+
+   The sanitizer is DOMPurify (github.com/cure53/DOMPurify), the one browsers'
+   own security teams test against, instead of the hand-written walker this
+   used to be: that one missed `href="java&#x09;script:…"` (the tab is dropped
+   by the URL parser) and SVG `<animate>` rewriting a link after the check.
+   Pyx's own rules stay on top of it as hooks: no stylesheets (they would
+   restyle the whole app — markup with one goes to the frame instead), no
+   forms, no `target`, and the stricter URL test below. */
 
 // STYLE too: markup that reaches this inline path should carry none (see
 // needsIsolation), and one that slipped through must not restyle the app.
 // SVG animation elements can REWRITE another element's href after the
-// sanitizer has looked at it (`<animate attributeName="href"
-// values="javascript:…">`): static output never needs them.
-const FORBIDDEN = new Set([
-  'SCRIPT', 'STYLE', 'IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED', 'APPLET', 'PORTAL',
-  'LINK', 'META', 'BASE', 'FORM', 'NOSCRIPT',
-  'ANIMATE', 'SET', 'ANIMATEMOTION', 'ANIMATETRANSFORM', 'HANDLER', 'LISTENER',
-]);
+// sanitizer has looked at it: static output never needs them.
+const FORBID_TAGS = [
+  'script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'portal',
+  'link', 'meta', 'base', 'form', 'input', 'button', 'textarea', 'select', 'noscript',
+  'animate', 'set', 'animatemotion', 'animatetransform', 'handler', 'listener',
+];
+const FORBID_ATTR = ['srcdoc', 'formaction', 'action', 'target', 'ping'];
 
 /** Does this attribute value name a URL that would RUN something?
  *
@@ -176,53 +185,38 @@ const FORBIDDEN = new Set([
  *  parser drops ASCII tab and newline anywhere in a URL and trims leading
  *  control characters and spaces, and the HTML parser has already decoded
  *  entities. So `href="java&#x09;script:…"` reaches the DOM as
- *  "java\tscript:…" — and runs as `javascript:`. The old test,
- *  `/^\s*javascript/`, let exactly that through, and inline output lives in
- *  the APP's origin, with the Tauri commands one call away. */
+ *  "java\tscript:…" — and runs as `javascript:`. */
 export function isDangerousUrl(value) {
   const v = String(value || '').replace(/[\u0000-\u0020\u007f]+/g, '').toLowerCase();
   return /^(javascript|vbscript|livescript):/.test(v)
     || /^data:(text\/html|application\/xhtml|image\/svg\+xml|text\/xml|application\/xml)/.test(v);
 }
 
-/** Parse `html` in an inert document and return a sanitized DocumentFragment. */
-export function sanitizeFragment(html) {
-  const doc = new DOMParser().parseFromString(
-    '<!doctype html><body>' + html, 'text/html');
-  const walk = (node) => {
-    for (const el of [...node.children]) {
-      // Upper-cased: HTML elements report SCRIPT, but SVG-namespace ones keep
-      // their lower-case `script` / `style` — and slipped past the check.
-      if (FORBIDDEN.has(String(el.tagName).toUpperCase())) { el.remove(); continue; }
-      for (const attr of [...el.attributes]) {
-        const name = attr.name.toLowerCase();
-        const value = attr.value || '';
-        // Event handlers, and any URL scheme that can execute — in ANY
-        // attribute (href, src, xlink:href, action, formaction, poster,
-        // background, data…): a list of "URL attributes" is how the next
-        // bypass gets in.
-        if (name.startsWith('on') || name === 'formaction' || name === 'srcdoc') {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        if (name !== 'style' && isDangerousUrl(value)) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        // A link must never retarget or navigate the app's window (see
-        // guardLinks): the click is handled there.
-        if (name === 'target') { el.removeAttribute(attr.name); continue; }
-        if (name === 'style' && /expression\s*\(|url\s*\(\s*['"]?\s*(javascript|vbscript)/i.test(value)) {
-          el.removeAttribute(attr.name);
-        }
-      }
-      walk(el);
+let purifier = null;
+function getPurifier(win) {
+  if (purifier && purifier.__win === win) return purifier;
+  purifier = DOMPurify(win);
+  purifier.__win = win;
+  // A second opinion on every attribute, whatever DOMPurify decided: a list
+  // of "URL attributes" is how the next bypass gets in.
+  purifier.addHook('uponSanitizeAttribute', (_node, data) => {
+    if (data.attrName !== 'style' && isDangerousUrl(data.attrValue)) data.keepAttr = false;
+    if (data.attrName === 'style'
+      && /expression\s*\(|url\s*\(\s*['"]?\s*(javascript|vbscript)/i.test(data.attrValue || '')) {
+      data.keepAttr = false;
     }
-  };
-  walk(doc.body);
-  const frag = document.createDocumentFragment();
-  while (doc.body.firstChild) frag.appendChild(doc.body.firstChild);
-  return frag;
+  });
+  return purifier;
+}
+
+/** Sanitize `html` into a DocumentFragment that is safe to insert in the app. */
+export function sanitizeFragment(html, win = (typeof window !== 'undefined' ? window : null)) {
+  return getPurifier(win).sanitize(String(html || ''), {
+    RETURN_DOM_FRAGMENT: true,
+    USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true },
+    FORBID_TAGS,
+    FORBID_ATTR,
+  });
 }
 
 /** Clicks on links inside inline output open in the system browser.

@@ -3,7 +3,11 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar]
+## [1.5.0] — 2026-10-16
+
+Compilar casi al instante: el preámbulo ya está cargado cuando compilas,
+«Compilar» vuelve a ser incremental, los errores de LaTeX se ven mientras
+escribes y el kernel de Python se ha revisado a fondo.
 
 El kernel de Python, revisado a fondo: probado con cientos de celdas por
 cuatro frentes (librerías científicas y salidas, handcalcs frente a Jupyter

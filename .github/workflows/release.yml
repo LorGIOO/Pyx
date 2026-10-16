@@ -69,7 +69,7 @@ jobs:
 
             Novedades de esta versión en el [CHANGELOG](https://github.com/LorGIOO/Pyx/blob/main/CHANGELOG.md).
 
-            Requiere **Python 3** y una distribución **LaTeX** (MiKTeX, MacTeX o TeX Live) instalados aparte.
+            Requiere **Python 3** y una distribución **LaTeX** (MiKTeX, MacTeX, TeX Live o Tectonic) instalados aparte.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

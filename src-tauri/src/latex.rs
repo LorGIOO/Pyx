@@ -1029,15 +1029,25 @@ fn warm_key(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, search_dirs
     )
 }
 
+/// The line Pyx sends to let a paused engine go on.
+const WARM_GO: &str = "PYXWARMGO";
+
 /// What the stub runs after the preamble: say it is ready, wait for a line on
 /// stdin (scrollmode is the lowest mode in which TeX may read the terminal),
-/// go back to nonstopmode, and read the body from the build file itself —
-/// found through TEXINPUTS, so the path recorded is the one a normal pass
-/// records.
+/// go back to nonstopmode, and — only if that line is Pyx's go-ahead — read
+/// the body from the build file itself, found through TEXINPUTS so the path
+/// recorded is the one a normal pass records.
+///
+/// Anything else (end of file because Pyx went away, an empty line, a TeX
+/// that does not block on `\read` at all) ends the job right there, before
+/// `\begin{document}`: no page, no .aux, and the PDF on disk is not touched.
 fn warm_tail(build_name: &str) -> String {
     format!(
-        "\n\\immediate\\write16{{{WARM_READY}}}\\scrollmode\\read-1 to\\pyxwarmgo\\nonstopmode\
-         \\csname @@input\\endcsname\"{build_name}\"\\relax\n"
+        "\n\\def\\pyxwarmok{{{WARM_GO} }}\
+         \\def\\pyxwarmbody{{\\csname @@input\\endcsname\"{build_name}\"\\relax}}\
+         \\def\\pyxwarmquit{{\\csname @@end\\endcsname}}\n\
+         \\immediate\\write16{{{WARM_READY}}}\\scrollmode\\read-1 to\\pyxwarmgo\\nonstopmode\
+         \\ifx\\pyxwarmgo\\pyxwarmok\\expandafter\\pyxwarmbody\\else\\expandafter\\pyxwarmquit\\fi\n"
     )
 }
 
@@ -1247,7 +1257,7 @@ fn run_warm(mut w: Warm, build: &Path, out_dir: &Path, job: &str, limits: Limits
         .sp
         .stdin
         .as_mut()
-        .map(|s| s.write_all(b"\n").and_then(|_| s.flush()).is_ok())
+        .map(|s| s.write_all(format!("{WARM_GO}\n").as_bytes()).and_then(|_| s.flush()).is_ok())
         .unwrap_or(false);
     if !sent {
         return fail(w);
@@ -2230,6 +2240,40 @@ Texto del capitulo dos.
         let again = run();
         assert!(!again.log.contains("===== Pyx: bibtex ====="), "{}", again.log);
         assert!(!again.log.contains("===== Pyx: makeindex ====="));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The safety net under the warm engine: if what reaches it is not Pyx's
+    /// go-ahead — Pyx went away (end of file), or a TeX that does not block
+    /// on \read — it ends before \begin{document}, touching neither the PDF
+    /// nor the .aux that are on disk.
+    #[test]
+    fn a_paused_engine_not_told_to_go_writes_nothing() {
+        use std::io::Write;
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("warmquit");
+        let main = work.join("main.build.tex");
+        fs::write(&main, "\\documentclass{article}\n\\begin{document}\nHola\\label{a}\n\\end{document}\n").unwrap();
+        for line in [None, Some("otra cosa\n")] {
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, true)
+                .expect("la compilacion deberia ejecutarse");
+            let pdf = fs::read(work.join("main.pdf")).unwrap();
+            let aux = fs::read(work.join("main.aux")).unwrap();
+            let mut w = WARM.lock().unwrap().take().expect("motor en espera");
+            if let Some(l) = line {
+                let _ = w.sp.stdin.as_mut().unwrap().write_all(l.as_bytes());
+            }
+            drop(w.sp.stdin.take());
+            let st = w.sp.child.wait().unwrap();
+            for r in w.sp.readers.drain(..) {
+                let _ = r.join();
+            }
+            let _ = st;
+            assert_eq!(fs::read(work.join("main.pdf")).unwrap(), pdf, "el PDF no se toca");
+            assert_eq!(fs::read(work.join("main.aux")).unwrap(), aux, "el .aux no se toca");
+            clear_busy(&work, "main");
+        }
         let _ = fs::remove_dir_all(&base);
     }
 

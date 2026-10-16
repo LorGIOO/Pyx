@@ -39,6 +39,8 @@ export const state = createMutable({
   pdfForeign: false,
   compiling: false,
   compileQueued: false, // a compile was asked for mid-compile and runs right after
+  compilePhase: null,  // 'prep' | 'python' | 'latex' | 'pdf' while compiling (status bar)
+  compileFresh: false, // the compile in flight is a "Recompilar desde cero"
   liveCompile: true, // TeXstudio-style: background compile shortly after typing stops
   lastLog: '',
   lastCompileOk: null, // null | true | 'warn' (PDF built, LaTeX reported errors) | false (no PDF)

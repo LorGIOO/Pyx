@@ -186,7 +186,15 @@ fn kill_tree(r: &Running) {
     }
     #[cfg(not(windows))]
     {
-        let _ = Command::new("kill").arg("-9").arg(r.pid.to_string()).status();
+        // The whole group (see run_watched): killing only the engine's pid
+        // left xdvipdfmx running, still writing the PDF and holding the
+        // working directory, after "Detener" or a watchdog stop.
+        let _ = Command::new("kill")
+            .args(["-9", "--", &format!("-{}", r.pid)])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = Command::new("kill").arg("-9").arg(r.pid.to_string()).stderr(Stdio::null()).status();
     }
 }
 
@@ -257,6 +265,13 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
     use std::time::{Duration, Instant};
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    // Its own process group, so stopping it reaches the PDF driver it starts
+    // (xelatex pipes into xdvipdfmx) — the Unix counterpart of the Job Object.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn()?;
 
     #[cfg(windows)]
@@ -371,7 +386,9 @@ fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Err
             let _ = child.kill();
             break child.wait().ok();
         }
-        std::thread::sleep(Duration::from_millis(50));
+        // 20 ms: the time between the engine exiting and the PDF being shown
+        // includes this sleep, on every compile.
+        std::thread::sleep(Duration::from_millis(20));
     };
     // The readers end when the pipes close (the whole tree is gone by now).
     for r in readers {
@@ -446,9 +463,39 @@ fn tex_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Where each tool was found, for the life of the process.
+///
+/// Answering "is xelatex on PATH?" means STARTING it (`xelatex --version`),
+/// and that ran on every compile and on every SyncTeX Ctrl+click. With MiKTeX
+/// on Windows one such probe costs 100–500 ms — paid before the engine even
+/// began, on the compile a typing pause fires. Only hits are kept: a TeX
+/// distribution installed while Pyx is open is still found on the next try.
+static RESOLVED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
 /// Resolve a TeX engine to a runnable command: the bare name if it's on PATH,
 /// otherwise a full path from a known install location. Returns None if absent.
 pub fn resolve_engine(name: &str) -> Option<String> {
+    if let Some(hit) = RESOLVED.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(name).cloned())) {
+        return Some(hit);
+    }
+    let found = probe_engine(name)?;
+    if let Ok(mut g) = RESOLVED.lock() {
+        g.get_or_insert_with(Default::default).insert(name.to_string(), found.clone());
+    }
+    Some(found)
+}
+
+/// Forget a resolved tool (it could not be started from where it was found).
+fn forget_engine(name: &str) {
+    if let Ok(mut g) = RESOLVED.lock() {
+        if let Some(m) = g.as_mut() {
+            m.remove(name);
+        }
+    }
+}
+
+fn probe_engine(name: &str) -> Option<String> {
     if runs(name) {
         return Some(name.to_string());
     }
@@ -989,7 +1036,11 @@ pub fn compile(
         crate::quiet(&mut cmd);
         let listings_before = listings_stamp(&out_dir, &out_name);
         cmd.arg(&file);
-        let run = run_watched(cmd, Limits::default()).map_err(|e| crate::spawn_error(engine, Some(dir), &e))?;
+        let run = run_watched(cmd, Limits::default()).map_err(|e| {
+            // Uninstalled or moved since it was found: look again next time.
+            forget_engine(engine);
+            crate::spawn_error(engine, Some(dir), &e)
+        })?;
 
         log.push_str(&format!("===== Pasada {} ({}) =====\n", i + 1, engine));
         let pass_out = run.stdout;
@@ -1367,6 +1418,11 @@ Texto del capitulo dos.
 
     /// The same error at the same line, again and again, is a loop: TeX's own
     /// "100 errors" stop never comes, because each round is a new paragraph.
+    ///
+    /// The paragraph must have TEXT in it (`x`): TeX resets its error count
+    /// only when a real paragraph ends. With an empty `\par`, TeX Live stops by
+    /// itself at 100 errors, and whether the watchdog saw 50 repeats first was
+    /// a race the test lost about half the time on Linux.
     #[test]
     fn a_looping_pass_is_stopped_and_explained() {
         let _turn = engine_turn();
@@ -1374,7 +1430,7 @@ Texto del capitulo dos.
         let d = watch_dir("loop");
         fs::write(
             d.join("t.tex"),
-            "\\documentclass{article}\\begin{document}\n\\loop \\nosuchmacro\\par \\iftrue\\repeat\n\\end{document}\n",
+            "\\documentclass{article}\\begin{document}\n\\loop x\\nosuchmacro\\par \\iftrue\\repeat\n\\end{document}\n",
         )
         .unwrap();
         let t = std::time::Instant::now();

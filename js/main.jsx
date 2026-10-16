@@ -10,7 +10,7 @@ import { setChangeHandler } from './editor/setup.js';
 import {
   openDocument, saveActive, closeActive, splitActivePane, openFromOs,
 } from './solid/stores/docStore.js';
-import { compileActive, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
+import { compileActive, cancelCompile, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
 import { loadPdf } from './pdf/preview.js';
 import { openFind, runAll, gotoLineCol, forwardSearch, buildLineToSource } from './editor/commands.js';
 import { openPath } from './solid/stores/docStore.js';
@@ -36,15 +36,16 @@ if (import.meta.env.VITE_PYX_QA) {
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // Links produced by Python (or anywhere in the UI) open in the system browser,
-// never inside the app.
+// never inside the app. And NO link navigates the app's own window: a
+// relative `href="informe.html"` or a `file:///…` in an output used to replace
+// the editor (and the unsaved text in it) with that page.
 window.addEventListener('click', (e) => {
   const a = e.target.closest && e.target.closest('a[href]');
   if (!a) return;
-  const href = a.getAttribute('href') || '';
-  if (/^https?:\/\//i.test(href)) {
-    e.preventDefault();
-    openExternal(href);
-  }
+  const href = (a.getAttribute('href') || '').trim();
+  if (href.startsWith('#')) return; // in-page anchor: harmless
+  e.preventDefault();
+  if (/^(https?:\/\/|mailto:)/i.test(href)) openExternal(href);
 }, true);
 
 // Apply any saved syntax-highlight customizations.
@@ -122,6 +123,8 @@ if (viewerBoot) {
     'file.save': () => { saveActive(); },
     'file.close': () => { closeActive(); },
     'compile.run': () => { compileActive(); },
+    'compile.fresh': () => { compileActive(true, { fresh: true }); },
+    'compile.stop': () => { cancelCompile(); },
     'compile.live': () => {
       state.liveCompile = !state.liveCompile;
       setGeneral({ liveCompile: state.liveCompile });

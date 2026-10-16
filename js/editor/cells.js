@@ -30,6 +30,7 @@ import { classifyPythonCached } from './py-highlight.js';
 import { state as appState } from '../core/state.js';
 import { dirOf } from '../core/paths.js';
 import { randomId } from '../core/hash.js';
+import { openExternal } from '../core/platform.js';
 import { docIdOf } from './doc-id.js';
 import {
   CELL_OPEN, CELL_CLOSE, cellKey, parseCells, cellAtLine,
@@ -40,7 +41,7 @@ import {
 } from './cell-runner.js';
 import { broadcastCellRefresh } from './setup.js';
 import { getOutput, setOutput, deleteOutput, clearDoc, gcDoc } from './cell-outputs.js';
-import { createRichFrame, sanitizeFragment, needsIsolation } from './rich-frame.js';
+import { createRichFrame, sanitizeFragment, needsIsolation, guardLinks } from './rich-frame.js';
 import { renderMath } from './math-render.js';
 import { ansiFragment, ansiRuns } from './ansi.js';
 // The shared icon set, for the cell's context menus (`MI` = menu icons).
@@ -685,6 +686,7 @@ function renderDisplay(d, body, view) {
     const rich = document.createElement('div');
     rich.className = 'out-rich';
     rich.appendChild(sanitizeFragment(d.data));
+    guardLinks(rich, (url) => openExternal(url).catch(() => {}));
     holder.appendChild(rich);
   }
   body.appendChild(holder);

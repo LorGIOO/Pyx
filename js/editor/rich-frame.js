@@ -161,7 +161,29 @@ export function createRichFrame(html, onResize, extraCss = '', autoSize = true) 
 
 // STYLE too: markup that reaches this inline path should carry none (see
 // needsIsolation), and one that slipped through must not restyle the app.
-const FORBIDDEN = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'BASE', 'FORM']);
+// SVG animation elements can REWRITE another element's href after the
+// sanitizer has looked at it (`<animate attributeName="href"
+// values="javascript:…">`): static output never needs them.
+const FORBIDDEN = new Set([
+  'SCRIPT', 'STYLE', 'IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED', 'APPLET', 'PORTAL',
+  'LINK', 'META', 'BASE', 'FORM', 'NOSCRIPT',
+  'ANIMATE', 'SET', 'ANIMATEMOTION', 'ANIMATETRANSFORM', 'HANDLER', 'LISTENER',
+]);
+
+/** Does this attribute value name a URL that would RUN something?
+ *
+ *  Compared the way the browser's URL parser reads it, not as written: the
+ *  parser drops ASCII tab and newline anywhere in a URL and trims leading
+ *  control characters and spaces, and the HTML parser has already decoded
+ *  entities. So `href="java&#x09;script:…"` reaches the DOM as
+ *  "java\tscript:…" — and runs as `javascript:`. The old test,
+ *  `/^\s*javascript/`, let exactly that through, and inline output lives in
+ *  the APP's origin, with the Tauri commands one call away. */
+export function isDangerousUrl(value) {
+  const v = String(value || '').replace(/[\u0000-\u0020\u007f]+/g, '').toLowerCase();
+  return /^(javascript|vbscript|livescript):/.test(v)
+    || /^data:(text\/html|application\/xhtml|image\/svg\+xml|text\/xml|application\/xml)/.test(v);
+}
 
 /** Parse `html` in an inert document and return a sanitized DocumentFragment. */
 export function sanitizeFragment(html) {
@@ -175,14 +197,22 @@ export function sanitizeFragment(html) {
       for (const attr of [...el.attributes]) {
         const name = attr.name.toLowerCase();
         const value = attr.value || '';
-        // Event handlers, and any URL scheme that can execute.
-        if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
-        if ((name === 'href' || name === 'src' || name === 'xlink:href')
-          && /^\s*(javascript|vbscript|data:text\/html)/i.test(value)) {
+        // Event handlers, and any URL scheme that can execute — in ANY
+        // attribute (href, src, xlink:href, action, formaction, poster,
+        // background, data…): a list of "URL attributes" is how the next
+        // bypass gets in.
+        if (name.startsWith('on') || name === 'formaction' || name === 'srcdoc') {
           el.removeAttribute(attr.name);
           continue;
         }
-        if (name === 'style' && /expression\s*\(|url\s*\(\s*['"]?\s*javascript/i.test(value)) {
+        if (name !== 'style' && isDangerousUrl(value)) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        // A link must never retarget or navigate the app's window (see
+        // guardLinks): the click is handled there.
+        if (name === 'target') { el.removeAttribute(attr.name); continue; }
+        if (name === 'style' && /expression\s*\(|url\s*\(\s*['"]?\s*(javascript|vbscript)/i.test(value)) {
           el.removeAttribute(attr.name);
         }
       }
@@ -193,6 +223,25 @@ export function sanitizeFragment(html) {
   const frag = document.createDocumentFragment();
   while (doc.body.firstChild) frag.appendChild(doc.body.firstChild);
   return frag;
+}
+
+/** Clicks on links inside inline output open in the system browser.
+ *
+ *  Without this, a plain `<a href="https://…">` in a pandas table or a
+ *  Markdown output navigated the WHOLE APP to that page: the editor, the
+ *  unsaved text and the kernel's session were replaced by a website, with no
+ *  back button. Only web and mail links are handed to the OS; anything else
+ *  does nothing. */
+export function guardLinks(el, open) {
+  el.addEventListener('click', (e) => {
+    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a || !el.contains(a)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const href = a.getAttribute('href') || '';
+    if (/^(https?:|mailto:)/i.test(href.trim())) open(href.trim());
+  });
+  return el;
 }
 
 /** True when the markup must go in a frame rather than inline.

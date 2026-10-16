@@ -117,6 +117,7 @@ Los instaladores de las tres plataformas los produce GitHub Actions al empujar u
 | `Ctrl+Alt+Enter` | Ejecutar todas las celdas |
 | `Ctrl+Alt+R` | Reiniciar el kernel |
 | `Ctrl+Mayús+B` | Compilar el documento |
+| `Ctrl+Alt+Mayús+B` | Recompilar desde cero (kernel nuevo, sin datos auxiliares) |
 | `Ctrl+S` · `Ctrl+N` · `Ctrl+O` | Guardar · Nuevo · Abrir |
 | `Ctrl+F` | Buscar (editor o PDF, según el foco) |
 | `Ctrl+T` | Comentar / descomentar |

@@ -24,6 +24,8 @@ export const KEY_ACTIONS = [
   { id: 'calc.restart', group: 'Cálculo', label: 'Reiniciar el kernel', en: 'Restart the kernel', def: 'Ctrl+Alt+R' },
 
   { id: 'compile.run', group: 'Compilación', label: 'Compilar y ver', en: 'Compile & view', def: 'Ctrl+Shift+B' },
+  { id: 'compile.fresh', group: 'Compilación', label: 'Recompilar desde cero (kernel nuevo, sin datos auxiliares)', en: 'Recompile from scratch (fresh kernel, no auxiliary files)', def: 'Ctrl+Alt+Shift+B' },
+  { id: 'compile.stop', group: 'Compilación', label: 'Detener la compilación', en: 'Stop compiling', def: '' },
   { id: 'compile.live', group: 'Compilación', label: 'Compilar al escribir (alternar)', en: 'Compile on type (toggle)', def: '' },
 
   { id: 'view.forward', group: 'Vista', label: 'Ir a esta línea en el PDF (búsqueda directa)', en: 'Jump to this line in the PDF (forward search)', def: 'Ctrl+Alt+F' },

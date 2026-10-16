@@ -26,7 +26,7 @@ import {
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
 import { auxOpen } from '../solid/stores/previewStore.js';
-import { saveActiveAs } from '../solid/stores/docStore.js';
+import { saveActiveAs, saveWithEncoding } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
 
 /* ---- live compile (TeXstudio-style) ----
@@ -543,7 +543,7 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
       if (save && open.modified && !isPltx(child)) {
         // .pltx children are ZIP containers (packed on Save) — never overwrite
         // with raw text; the child's .build.tex is what actually compiles.
-        await writeTextFile(child, c);
+        await saveWithEncoding(child, c);
         open.modified = false;
         diskCache.delete(child); // we just changed it
       }
@@ -585,6 +585,7 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
  * `true` = someone asked to see the viewer. */
 let queued = null;
 let queuedForce = false; // a queued request that was an explicit "Compilar"
+let queuedFresh = false; // …or a "Recompilar desde cero"
 
 /* "Detener compilación".
  *
@@ -598,6 +599,7 @@ export async function cancelCompile() {
   cancelRequested = true;
   queued = null;
   queuedForce = false;
+  queuedFresh = false;
   state.compileQueued = false;
   try { await compileCancel(); } catch (_) { /* no engine running */ }
   if (state.kernelStatus === 'busy') {
@@ -643,11 +645,22 @@ let lastReal = { ok: null, log: '' };
  *   outside Pyx. A save, and the follow-up of a request that arrived while a
  *   compile was running, do not: when the build is already exactly what is on
  *   screen, running LaTeX again only made the user wait twice for the same PDF.
+ *
+ *   fresh = rebuild from NOTHING: a new Python namespace (every cell runs), no
+ *   .aux/lists/SyncTeX from earlier runs, and two passes when the document has
+ *   references. That is "Recompilar desde cero" — the escape hatch, never the
+ *   default. Forcing it on every "Compilar" (as 1.4.x did) made each press pay
+ *   for every import, dataset and simulation again plus two or three full
+ *   xelatex passes, although the ledger (cells) and the rerun detection in
+ *   latex.rs (references, lists) already guarantee the same result
+ *   incrementally — and fall back to a full run on any doubt.
  */
-export async function compileActive(showViewer = true, { force = showViewer } = {}) {
+export async function compileActive(showViewer = true, { force = showViewer, fresh = false } = {}) {
+  if (fresh) force = true;
   if (state.compiling) {
     queued = !!(queued || showViewer);
     queuedForce = queuedForce || force;
+    queuedFresh = queuedFresh || fresh;
     state.compileQueued = true;
     return;
   }
@@ -658,6 +671,8 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
   // Claim the slot BEFORE the first await: a second request arriving while the
   // save dialog below is open must queue, not start a compile of its own.
   state.compiling = true;
+  state.compilePhase = 'prep';
+  state.compileFresh = fresh;
 
   // A file must exist on disk for the engine (and relative paths) to work.
   if (!doc.path) {
@@ -665,6 +680,8 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     doc = activeDoc();
     if (!ok || !doc || !doc.path) {
       state.compiling = false;
+      state.compilePhase = null;
+      state.compileFresh = false;
       queued = null; // nothing to compile until the document has a place on disk
       state.compileQueued = false;
       return;
@@ -685,8 +702,12 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     // but a .pltx is a ZIP container (packed only on explicit Save): writing
     // plain text to it would corrupt it, so we compile from the .build.tex and
     // leave the container untouched (stays 'modified' until the user saves).
-    if (!isPltx(doc.path)) {
-      await writeTextFile(doc.path, content);
+    //
+    // Only when the buffer differs from the file: a live compile fires on
+    // every typing pause, and rewriting an unchanged source each time was
+    // pure disk churn (and bumped its mtime for every sync tool watching it).
+    if (!isPltx(doc.path) && doc.modified) {
+      await saveWithEncoding(doc.path, content);
       doc.modified = false;
     }
 
@@ -702,7 +723,10 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       if (open) {
         rootDoc = open;
         rootContent = getDocContent(open.id);
-        if (!isPltx(rootPath)) { await writeTextFile(rootPath, rootContent); open.modified = false; }
+        if (!isPltx(rootPath) && open.modified) {
+          await saveWithEncoding(rootPath, rootContent);
+          open.modified = false;
+        }
       } else {
         rootDoc = { id: -1, path: rootPath, fileName: baseName(rootPath), engine: doc.engine };
         try { rootContent = await readSourceFile(rootPath); } catch (_) { rootContent = ''; }
@@ -818,6 +842,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
           if (why) pythonNote = `proceso nuevo: el documento modificaba ${why.join(', ')}`;
         }
         for (let i = start; i < runOrder.length; i++) {
+          if (cancelRequested) break; // "Detener": not one more cell
           phase.ran++;
           const { path, cell, nth } = runOrder[i];
           const od = state.documents.find((d) => !d.kind && samePath(d.path, path));
@@ -856,13 +881,14 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       // run atomically — a manual Shift+Enter can never mutate the namespace
       // between running the cells and reading the values for the document.
       const tCells = performance.now();
+      state.compilePhase = 'python';
       await withKernelLock(async () => {
-        // An explicit "Compilar" is the ground truth: every cell, from a clean
-        // namespace — nothing the kernel remembers takes part in it.
-        const ranFrom = await runTree(force);
+        // Only "Recompilar desde cero" discards what the kernel holds; any
+        // other compile reuses the ledger-verified prefix (see runTree).
+        const ranFrom = await runTree(fresh);
 
         // 2) Resolve \py{...} expressions against that exact namespace.
-        if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
+        if (exprs.length && !cancelRequested) valueMap = await evalExpressions(exprs, { cwd });
 
         // Self-heal: if an incremental run met a namespace that had drifted
         // (the kernel was restarted between compiles, a cell was interrupted),
@@ -882,7 +908,9 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
         // work of every compile with a broken \py{} (and turning one
         // interrupted 30-second cell into sixty), and the log said "2
         // ejecutadas de 1".
-        if (ranFrom > 0 && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
+        // Never after "Detener": the stop interrupted a cell, and healing
+        // would re-run every cell the user just asked to stop.
+        if (!cancelRequested && ranFrom > 0 && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
           await runTree(true);
           if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
         }
@@ -1071,7 +1099,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       const stampNow = processed.length + ':' + hashString(processed);
       const rec = lastBuildWritten.get(buildFile);
       const disk = onDisk.get(buildFile);
-      if (!force && rec && rec.fp === stampNow && disk && disk.mtime >= 0
+      if (!fresh && rec && rec.fp === stampNow && disk && disk.mtime >= 0
         && disk.mtime === rec.mtime && disk.size === rec.size) continue;
       // The working directory mirrors the project's folders; create the branch
       // the first time a chapter in a subfolder is written.
@@ -1132,7 +1160,10 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     // already settled. With xelatex, which has no draft mode, that was a
     // second full typesetting of the whole document almost every time.
     const usesRefs = [...files.values()].some((f) => NEEDS_REFS.test(f.content));
-    const passes = force && usesRefs ? 2 : 1;
+    // From scratch the .aux is gone, so references need a second pass up
+    // front; otherwise the kept .aux settles them and latex.rs adds a pass
+    // only when TeX asks for one.
+    const passes = fresh && usesRefs ? 2 : 1;
     // % !TeX program = pdflatex — the document names its own engine, like in
     // TeXstudio. An explicit per-document choice (Configuración) still wins.
     const magicEngine = (
@@ -1170,9 +1201,12 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     const searchDirs = [...new Set([...files.keys()].map(dirOf))].filter((d) => !samePath(d, cwd));
 
     const tTex = performance.now();
-    // An explicit compile starts the engine from nothing as well: no .aux,
-    // no lists, no SyncTeX index from earlier runs.
-    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, force);
+    // "Recompilar desde cero" starts the engine from nothing as well: no
+    // .aux, no lists, no SyncTeX index from earlier runs. Any other compile
+    // keeps them — that is what lets most compiles finish in ONE pass.
+    // (A damaged .aux from an interrupted run is cleaned by latex.rs anyway.)
+    state.compilePhase = 'latex';
+    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh);
     phase.tex = performance.now() - tTex;
     // Remember what this run read, to know next time whether it may be
     // skipped. A file changed WHILE it ran may not be in this PDF: then the
@@ -1210,6 +1244,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       + `Motor LaTeX   : ${Math.round(phase.tex)} ms `
       + `(${engine}, ${ranPasses} pasada${ranPasses === 1 ? '' : 's'})\n`
       + `Total         : ${Math.round(performance.now() - t0)} ms`
+      + (fresh ? '\nModo          : desde cero (kernel nuevo, sin datos auxiliares)' : '')
       + (pythonNote ? `\nPython        : ${pythonNote}` : '');
     // Three outcomes, not two. A PDF that LaTeX produced while recovering from
     // errors is not a failed compile — the document IS there, with its
@@ -1233,6 +1268,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       }
       // This PDF IS the active document's: whatever warning was up is stale.
       markPdfForeign(false);
+      state.compilePhase = 'pdf';
       if (auxOpen()) {
         // The detached window is the active viewer: refresh THAT one (the
         // in-app pane is closed; it reloads via reloadLastPdf when the
@@ -1267,17 +1303,22 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     state.compileMs = Math.round(lastCompileMs);
     state.liveSuspended = liveCompileSuspended();
     state.compiling = false;
+    state.compilePhase = null;
+    state.compileFresh = false;
     compilingRoot = null;
     // Serve whatever was asked for while this one ran (see `queued`).
     if (queued !== null && !cancelRequested) {
       const wantViewer = queued;
-      const wantFresh = queuedForce;
+      const wantForce = queuedForce;
+      const wantFresh = queuedFresh;
       queued = null;
       queuedForce = false;
+      queuedFresh = false;
       state.compileQueued = false;
-      // A queued "Compilar" stays a compile from scratch; a queued background
-      // one may still skip the engine when nothing it reads has changed.
-      compileActive(wantViewer, { force: wantFresh });
+      // A queued "Compilar" still runs the engine (and a queued "desde cero"
+      // stays one); a queued background compile may still skip the engine
+      // when nothing it reads has changed.
+      compileActive(wantViewer, { force: wantForce, fresh: wantFresh });
     }
     cancelRequested = false;
   }

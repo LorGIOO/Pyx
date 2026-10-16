@@ -10,6 +10,57 @@ cuatro frentes (librerías científicas y salidas, handcalcs frente a Jupyter
 real, semántica de Python e IPython, entrada/salida y procesos) y con 18 000
 peticiones aleatorias con interrupciones sin un solo cuelgue.
 
+### Más rápido — «Compilar» vuelve a ser incremental
+
+- **«Compilar» (Ctrl+Mayús+B) ya no reconstruye todo desde cero.** Cada pulsación
+  reiniciaba Python y re-ejecutaba **todas** las celdas, borraba los `.aux` y
+  `.toc` y forzaba 2 (a menudo 3) pasadas de xelatex. Ahora solo se ejecutan las
+  celdas que cambiaron (el registro del kernel ya garantiza el mismo resultado
+  y vuelve a empezar ante cualquier duda, incluido un CSV o Excel modificado) y
+  LaTeX hace una pasada, añadiendo otra solo cuando TeX la pide. En un documento
+  de prueba la parte de LaTeX pasa de ~1,0 s a ~0,5 s; la de Python, de «todas
+  las celdas» a «las que cambiaron».
+- **Nuevo «Recompilar desde cero»** (botón *Desde cero*, Ctrl+Alt+Mayús+B):
+  kernel nuevo y sin datos auxiliares, para cuando quieras la certeza absoluta.
+- **El motor se localiza una vez por sesión**: antes cada compilación (y cada
+  Ctrl+clic de SyncTeX) arrancaba `xelatex --version`, 100–500 ms con MiKTeX.
+- El PDF aparece unos milisegundos antes al terminar el motor (sondeo de 20 ms
+  en lugar de 50 ms).
+- Compilar ya no reescribe en disco el `.tex` si no ha cambiado.
+
+### Corregido
+
+- **«Detener compilación» existía pero no había forma de pulsarlo.** Ahora hay
+  un botón *Detener* en la cinta y otro junto al estado de la barra inferior,
+  más una acción configurable en Atajos. Detener durante las celdas ya no
+  provoca que se re-ejecuten todas («autocuración») justo después.
+- **En Linux y macOS, detener el motor dejaba vivo a `xdvipdfmx`**, que seguía
+  escribiendo el PDF. El motor corre ahora en su propio grupo de procesos (el
+  equivalente del Job Object de Windows).
+- **Compilar cambiaba la codificación del archivo.** Con la codificación
+  Latin-1/Windows-1252 configurada, guardar respetaba la codificación pero
+  compilar reescribía el `.tex` (y los capítulos abiertos) en UTF-8.
+- **Guardar ya no puede dejar un archivo a medias.** Se escribe en un temporal
+  junto al documento y se sustituye de una vez; un corte de luz o un disco
+  lleno dejan la versión anterior intacta.
+- La barra de estado dice en qué fase está la compilación (Python, LaTeX,
+  cargando PDF) y cuánto tardó la última.
+- Prueba del vigilante de bucles que fallaba de forma intermitente con TeX Live.
+
+### Seguridad
+
+- **Salidas HTML: cerrado un bypass del saneado.** `href="java&#x09;script:…"`
+  llega al DOM con un tabulador que el navegador ignora en una URL, y el filtro
+  no lo detectaba. Como los `.pltx` llevan sus salidas, abrir un informe ajeno y
+  pulsar un enlace podía ejecutar código con acceso a los comandos de la app.
+  Se eliminan también las animaciones SVG (`<animate>`, `<set>`), capaces de
+  reescribir un enlace después del saneado.
+- **Ningún enlace navega la ventana de la app**: uno relativo (`informe.html`)
+  o `file:///…` en una salida sustituía el editor —y el texto sin guardar— por
+  esa página. Los enlaces web y de correo se abren en el navegador del sistema.
+- La ruta del PDF en la ventana del visor separada se pasa serializada, no
+  pegada dentro de un literal de JavaScript.
+
 ### Corregido — el kernel ya no puede colgar la aplicación
 
 - **Nada escrito por debajo de Python llega al canal del protocolo.** Un

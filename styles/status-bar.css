@@ -44,3 +44,20 @@
 .status-dot.error { background: #dc2626; }
 .status-dot.idle { background: #9aa0a6; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* Small icon button inside a status item (stop the compile in flight). The
+   explicit padding:0 matters: a <button> keeps the browser's own 1px 6px
+   otherwise, which squashed every icon button in the app (see 1.4.0). */
+.status-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.status-btn:hover { background: rgba(220, 38, 38, 0.18); color: #dc2626; }

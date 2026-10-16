@@ -3,6 +3,18 @@ import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import { wordCount } from '../stores/structureStore.js';
 import { icons } from './ribbon/icons.js';
+import { cancelCompile } from '../../compile/compiler.js';
+
+// What the compile in flight is doing right now. "Compilando…" alone gave no
+// clue whether a slow compile was waiting on a Python cell or on LaTeX — and
+// those have different cures (a heavy cell vs. a heavy document).
+const phaseLabel = () => ({
+  prep: t('Preparando…', 'Preparing…'),
+  python: t('Ejecutando Python…', 'Running Python…'),
+  latex: t('Componiendo LaTeX…', 'Typesetting LaTeX…'),
+  pdf: t('Cargando PDF…', 'Loading PDF…'),
+});
+const secs = (ms) => (ms >= 10_000 ? Math.round(ms / 1000) : (ms / 1000).toFixed(1));
 
 const kernelLabel = () => ({
   idle: t('Kernel inactivo', 'Kernel idle'),
@@ -35,7 +47,17 @@ export default function StatusBar() {
       <div class="status-spacer"></div>
 
       <Show when={state.compiling}>
-        <div class="status-item"><span class="value">{t('Compilando…', 'Compiling…')}</span></div>
+        <div class="status-item">
+          <span class="value">
+            {(state.compileFresh ? t('Desde cero · ', 'From scratch · ') : '')
+              + (phaseLabel()[state.compilePhase] || t('Compilando…', 'Compiling…'))}
+          </span>
+          <button class="status-btn" type="button"
+            title={t('Detener la compilación (se conserva el PDF anterior)', 'Stop compiling (the previous PDF is kept)')}
+            onClick={() => cancelCompile()}>
+            <span class="pyx-ico status-ico" innerHTML={icons.stop}></span>
+          </button>
+        </div>
       </Show>
       {/* codicon: pass */}
       <Show when={!state.compiling && state.lastCompileOk === true}>
@@ -43,6 +65,7 @@ export default function StatusBar() {
           <span class="value" style={{ color: '#16a34a' }}>
             <span class="pyx-ico status-ico" innerHTML={icons.pass}></span>
             {t('Compilado', 'Compiled')}
+            <Show when={state.compileMs > 0}>{` · ${secs(state.compileMs)} s`}</Show>
           </span>
         </div>
       </Show>

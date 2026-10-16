@@ -3251,6 +3251,8 @@ def _run_request(req):
     ok, result, render_latex, error = True, None, None, None
     info = _exec_info(code)
     exc_obj = None
+    _READS.clear()
+    _READS_ON[0] = bool(code.strip())
     try:
         with _USER_CODE:
             _trigger("pre_execute")
@@ -3284,6 +3286,7 @@ def _run_request(req):
         except Exception:
             err.write(traceback.format_exc())
     finally:
+        _READS_ON[0] = False
         _resolve_patch_scans()
         try:
             _trigger("post_execute")
@@ -3325,7 +3328,82 @@ def _run_request(req):
         "displays": list(DISPLAYS),
         "render": render_latex,
         "images": images,
+        # Data files the cell read: [path, mtime ms, size] (see _pyx_open).
+        "reads": [[p, m, s] for p, (m, s) in list(_READS.items())[:_READS_MAX]],
     }
+
+
+# ---------------------------------------------------------------------------
+# which files a cell reads
+# ---------------------------------------------------------------------------
+# A compile skips the cells the kernel already ran, when their CODE did not
+# change. Code is not all a cell depends on: `pd.read_excel("datos.xlsx")`
+# gives a different result the moment the spreadsheet changes, with the same
+# code — and the PDF kept the old numbers. So the kernel notes every file a
+# cell opens for reading (open() is what pandas, openpyxl, numpy, PIL, csv and
+# json all go through), and the app re-runs from the start when one of them
+# is no longer what the cell read.
+_READS = {}            # path -> (mtime ms, size), for the cell running now
+_READS_ON = [False]
+_READS_MAX = 500
+_ORIG_OPEN = None
+
+
+def _note_read(file):
+    if isinstance(file, int) or len(_READS) >= _READS_MAX:
+        return
+    try:
+        p = os.path.abspath(os.fspath(file))
+    except Exception:
+        return
+    if not isinstance(p, str) or p in _READS:
+        return
+    n = os.path.normcase(p)
+    roots = _ROOTS_CACHE or ()
+    if any(n.startswith(r + os.sep) for r in roots):
+        return  # the Python installation
+    doc = os.path.normcase(_DOC_DIR) if _DOC_DIR else None
+    in_project = bool(doc) and n.startswith(doc.rstrip("\\/") + os.sep)
+    if not in_project:
+        # Outside the document's folder: never the temp folder (scratch files
+        # a cell writes and reads back) …
+        tmp = os.path.normcase(os.path.abspath(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp"))
+        if n.startswith(tmp + os.sep):
+            return
+    # … and never the caches and settings of tools (~/.matplotlib, ~/.ipython,
+    # a .venv, .cache…), wherever they are.
+    parts = (n[len(doc):] if in_project else n).replace("\\", "/").split("/")
+    if any(part.startswith(".") and part not in (".", "..") for part in parts):
+        return
+    try:
+        st = os.stat(p)
+    except OSError:
+        return
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        return
+    _READS[p] = (st.st_mtime_ns // 1_000_000, st.st_size)
+
+
+def _install_read_tracking():
+    global _ORIG_OPEN
+    import builtins
+    if _ORIG_OPEN is not None:
+        return
+    _ORIG_OPEN = builtins.open
+
+    def open(file, mode="r", *args, **kwargs):  # noqa: A001 - the builtin's name
+        f = _ORIG_OPEN(file, mode, *args, **kwargs)
+        if _READS_ON[0] and isinstance(mode, str) and not any(c in mode for c in "wax+"):
+            try:
+                _note_read(file)
+            except Exception:
+                pass
+        return f
+
+    open.__doc__ = _ORIG_OPEN.__doc__
+    builtins.open = open
+    io.open = open
 
 
 def handle(req):
@@ -3676,6 +3754,7 @@ def main():
 
     _install_import_hook()
     _install_kernel_builtins()
+    _install_read_tracking()
     _snapshot_process_state()  # what a reset restores
 
     req_q = queue.Queue()

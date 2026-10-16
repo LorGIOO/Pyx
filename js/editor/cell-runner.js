@@ -47,10 +47,13 @@ const ledger = createLedger();
 export const nsReset = (cwd) => ledger.reset(cwd);
 /** The namespace changed in a way we cannot describe (error, crash, restart). */
 export const nsInvalidate = () => ledger.invalidate();
-/** Record that a cell body ran successfully against the current namespace. */
-export const nsRecord = (hash, cwd) => ledger.record(hash, cwd);
+/** Record that a cell body ran successfully against the current namespace,
+ *  with the data files it read (the kernel's `reads`). */
+export const nsRecord = (hash, cwd, reads) => ledger.record(hash, cwd, reads);
 /** How many leading cells of `hashes` the kernel has already executed. */
 export const nsPrefix = (hashes, cwd) => ledger.prefix(hashes, cwd);
+/** The data files the first `n` executed cells read. */
+export const nsReads = (n) => ledger.reads(n);
 
 /* ---------------- handcalcs output, whichever way a cell ran ----------------
    A cell may inject LaTeX into the document ONLY when it declares one of the

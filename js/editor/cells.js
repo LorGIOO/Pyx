@@ -175,7 +175,7 @@ async function execCell(docId, cell, cwd) {
   setOutput(docId, key, { ...res, running: false, count, ms, codeHash: cell.codeHash });
   // What this cell puts in the document, for a compile that later skips it.
   recordRender(cell.codeHash, cell.code, res);
-  if (res.ok) nsRecord(cell.codeHash, cwd);
+  if (res.ok) nsRecord(cell.codeHash, cwd, res.reads);
   else nsInvalidate();
   broadcastCellRefresh();
   return res;
@@ -393,7 +393,7 @@ export async function execCellFor(view, docId, cell, cwd) {
   if (view && docId != null) return execCell(docId, cell, cwd);
   const res = await runCellCode(cell.code, { cwd });
   recordRender(cell.codeHash, cell.code, res);
-  if (res.ok) nsRecord(cell.codeHash, cwd);
+  if (res.ok) nsRecord(cell.codeHash, cwd, res.reads);
   else nsInvalidate();
   return res;
 }

@@ -488,6 +488,27 @@ export function scanVerbatimUse(line, out) {
 const BT = '`'; // TeX's opening quote, which a template literal cannot hold
 const MISSING_FILE_GUARDS = [
   String.raw`\providecommand\Pyx@missing[1]{\@latex@warning{File ${BT}#1' not found}\leavevmode\fbox{\normalfont\ttfamily\small No encontrado: \detokenize{#1}}}`,
+  String.raw`\providecommand\Pyx@badpdf[1]{\@latex@warning{Pyx: PDF ilegible o incompleto: #1}\leavevmode\fbox{\normalfont\ttfamily\small PDF ilegible o incompleto: \detokenize{#1}}}`,
+  // Is this PDF one the engine can actually read? A file that EXISTS is not
+  // enough. A plan being written by AutoCAD, a truncated download, an empty
+  // file, one locked by the program that writes it: xelatex's pdfpages then
+  // counts 0 pages and `pages=-` loops forever (a compile that never ends,
+  // reproduced), and pdflatex stops with a fatal error. Checked here, in TeX,
+  // so it covers every file of the project — plain .tex chapters included:
+  //   - a real size and the `%PDF-` header;
+  //   - XeTeX: the engine's own page count (> 0);
+  //   - pdfTeX/LuaTeX: the `%%EOF` trailer in the last kilobyte.
+  // Names not ending in .pdf (a PNG through \includepdf) are left alone.
+  [
+    String.raw`\ExplSyntaxOn`,
+    String.raw`\cs_if_exist:NF \Pyx@ifpdfok { \cs_new_protected:Npn \Pyx@ifpdfok #1#2#3 { \group_begin: \str_set:Ne \l_tmpa_str {#1} \bool_set_true:N \l_tmpa_bool`,
+    String.raw`\str_if_eq:eeT { \str_lowercase:f { \str_range:Nnn \l_tmpa_str {-4} {-1} } } { .pdf } { \tl_set:Ne \l_tmpa_tl { \file_size:n { \l_tmpa_str } } \bool_set_false:N \l_tmpa_bool`,
+    String.raw`\tl_if_blank:VF \l_tmpa_tl { \int_compare:nNnT { \l_tmpa_tl } > { 64 } { \str_if_eq:eeT { \file_hex_dump:nnn { \l_tmpa_str } {1} {5} } { 255044462D } {`,
+    String.raw`\sys_if_engine_xetex:TF { \int_compare:nNnT { \XeTeXpdfpagecount " \l_tmpa_str " \scan_stop: } > { 0 } { \bool_set_true:N \l_tmpa_bool } }`,
+    String.raw`{ \exp_args:Ne \str_if_in:nnT { \file_hex_dump:nnn { \l_tmpa_str } { \int_max:nn {1} { \l_tmpa_tl - 1023 } } { \l_tmpa_tl } } { 2525454F46 } { \bool_set_true:N \l_tmpa_bool } } } } } }`,
+    String.raw`\bool_if:NTF \l_tmpa_bool { \group_end: #2 } { \group_end: #3 } } }`,
+    String.raw`\ExplSyntaxOff`,
+  ].join('\n'),
   // \input{…}
   String.raw`\@ifundefined{Pyx@iinput}{\let\Pyx@iinput\@iinput\def\@iinput#1{\IfFileExists{#1}{\Pyx@iinput{#1}}{\Pyx@missing{#1}}}}{}`,
   // \include{…} (its argument is space-delimited: `\@include name `)
@@ -497,14 +518,16 @@ const MISSING_FILE_GUARDS = [
   // \includegraphics looked. The frame is graphicx's own draft box, at the
   // size the image was asked to have (4:3 for the proportions). A name with
   // no extension fails earlier, with an error: that one is caught too.
-  String.raw`\@ifundefined{Gin@setfile}{}{\@ifundefined{Pyx@Gin@setfile}{\let\Pyx@Gin@setfile\Gin@setfile\def\Pyx@Gin@missing#1#2#3{\Gin@drafttrue\Gin@bboxtrue\def\Gin@llx{0}\def\Gin@lly{0}\def\Gin@urx{400}\def\Gin@ury{300}\Pyx@Gin@setfile{#1}{#2}{No encontrado: #3}}\def\Gin@setfile#1#2#3{\IfFileExists{#3}{\Pyx@Gin@setfile{#1}{#2}{#3}}{\Pyx@Gin@missing{#1}{#2}{#3}}}\let\Pyx@Ginclude@graphics\Ginclude@graphics\def\Ginclude@graphics#1{\begingroup\def\Pyx@nf{File ${BT}#1' not found}\let\Pyx@err\@latex@error\def\@latex@error##1##2{\def\Pyx@m{##1}\ifx\Pyx@m\Pyx@nf\@latex@warning{File ${BT}#1' not found}\Pyx@Gin@missing{eps}{}{#1}\else\Pyx@err{##1}{##2}\fi}\Pyx@Ginclude@graphics{#1}\endgroup}}{}}`,
+  String.raw`\@ifundefined{Gin@setfile}{}{\@ifundefined{Pyx@Gin@setfile}{\let\Pyx@Gin@setfile\Gin@setfile\def\Pyx@Gin@missing#1#2#3{\Gin@drafttrue\Gin@bboxtrue\def\Gin@llx{0}\def\Gin@lly{0}\def\Gin@urx{400}\def\Gin@ury{300}\Pyx@Gin@setfile{#1}{#2}{No encontrado: #3}}\def\Pyx@Gin@bad#1#2#3{\@latex@warning{Pyx: PDF ilegible o incompleto: #3}\Gin@drafttrue\Gin@bboxtrue\def\Gin@llx{0}\def\Gin@lly{0}\def\Gin@urx{400}\def\Gin@ury{300}\Pyx@Gin@setfile{#1}{#2}{PDF ilegible o incompleto: #3}}\def\Gin@setfile#1#2#3{\IfFileExists{#3}{\Pyx@ifpdfok{#3}{\Pyx@Gin@setfile{#1}{#2}{#3}}{\Pyx@Gin@bad{#1}{#2}{#3}}}{\Pyx@Gin@missing{#1}{#2}{#3}}}\let\Pyx@Ginclude@graphics\Ginclude@graphics\def\Ginclude@graphics#1{\begingroup\def\Pyx@nf{File ${BT}#1' not found}\let\Pyx@err\@latex@error\def\@latex@error##1##2{\def\Pyx@m{##1}\ifx\Pyx@m\Pyx@nf\@latex@warning{File ${BT}#1' not found}\Pyx@Gin@missing{eps}{}{#1}\else\Pyx@err{##1}{##2}\fi}\Pyx@Ginclude@graphics{#1}\endgroup}}{}}`,
   // \includepdf (pdfpages): ONE page with the path where its pages would be.
   // Decided up front with pdfpages' own lookup (\AM@findfile@i: the name, the
   // name + .pdf, the \graphicspath folders), because once \includepdf starts
   // on a file that is not there it keeps expanding page ranges against a page
   // count that never got set, one error after another. \NewCommandCopy, not
   // \let: \includepdf takes an optional argument.
-  String.raw`\@ifundefined{includepdf}{}{\@ifundefined{NewCommandCopy}{}{\@ifundefined{Pyx@includepdf}{\NewCommandCopy\Pyx@includepdf\includepdf\renewcommand\includepdf[2][]{\begingroup\AM@findfile@i{#2}{pdf}\ifx\AM@currentdocname\relax\aftergroup\@secondoftwo\else\aftergroup\@firstoftwo\fi\endgroup{\Pyx@includepdf[#1]{#2}}{\clearpage\null\vfill\begin{center}\Pyx@missing{#2}\end{center}\vfill\clearpage}}}{}}}`,
+  // …and with the file found, the same PDF check as \includegraphics: an
+  // unreadable one gets the page with the reason instead of the endless loop.
+  String.raw`\@ifundefined{includepdf}{}{\@ifundefined{NewCommandCopy}{}{\@ifundefined{Pyx@includepdf}{\NewCommandCopy\Pyx@includepdf\includepdf\renewcommand\includepdf[2][]{\begingroup\AM@findfile@i{#2}{pdf}\ifx\AM@currentdocname\relax\gdef\Pyx@pdfstate{m}\else\Pyx@ifpdfok{\AM@currentdocname}{\gdef\Pyx@pdfstate{o}}{\gdef\Pyx@pdfstate{b}}\fi\endgroup\if o\Pyx@pdfstate\expandafter\@firstoftwo\else\expandafter\@secondoftwo\fi{\Pyx@includepdf[#1]{#2}}{\clearpage\null\vfill\begin{center}\if m\Pyx@pdfstate\Pyx@missing{#2}\else\Pyx@badpdf{#2}\fi\end{center}\vfill\clearpage}}}{}}}`,
   // \lstinputlisting (listings). Its missing-file branch then runs
   // \lst@doendpe outside the group that defined it — never noticed, because
   // that branch used to end the compile first.

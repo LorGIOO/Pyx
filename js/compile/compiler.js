@@ -5,19 +5,19 @@ import { state, activeDoc } from '../core/state.js';
 import { getDocContent, getViewOfDoc } from '../editor/setup.js';
 import {
   writeTextFile, readTextFile, readDir, pathExists, compileLatex, emitToWindow,
-  pltxRead, fileStamps, buildDirFor, createDir,
+  pltxRead, fileStamps, buildDirFor, createDir, compileCancel,
 } from '../core/platform.js';
-import { relativeTo } from '../core/paths.js';
+import { relativeTo, normalizePath, samePath } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
 import { docIdOf } from '../editor/doc-id.js';
 import {
-  runCellCode, evalExpressions, withKernelLock, nsPrefix,
+  runCellCode, evalExpressions, withKernelLock, nsPrefix, nsReads, interruptKernel,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
 } from '../editor/cell-runner.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
-import { setBuildMaps } from './build-maps.js';
+import { setBuildMaps, persistBuildMaps } from './build-maps.js';
 import {
   findPyExprs, resolvePyText, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
   findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
@@ -109,8 +109,7 @@ export function reloadLastPdf() {
 }
 
 // Paths from Rust carry the OS separator, paths built here forward slashes.
-const samePath = (a, b) => !!a && !!b
-  && a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
+// samePath (paths.js): case- and separator-insensitive, `.`/`..` resolved.
 
 /* Show a document's PDF the moment it opens.
  *
@@ -353,7 +352,9 @@ async function resolveChildPath(rootDir, raw) {
   const key = `${rootDir}\n${rel}`; // no path contains a newline
   const hit = childPathCache.get(key);
   if (hit) return hit;
-  const base = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : joinPath(rootDir, rel);
+  // Normalized: `\\input{./cap.pltx}` must name the same file the editor has
+  // open, or the compile reads the saved copy instead of the screen.
+  const base = normalizePath(/^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : joinPath(rootDir, rel));
   const cands = /\.[a-z0-9]+$/i.test(base) ? [base] : [base + '.tex', base + '.pltx'];
   // Both candidates at once, but `.tex` still wins: Promise.all preserves order.
   const found = (await Promise.all(
@@ -535,7 +536,7 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
     const fromDisk = [];
     const live = new Map(); // path -> content taken from an open editor buffer
     for (const child of pending) {
-      const open = state.documents.find((d) => d.path === child && !d.kind);
+      const open = state.documents.find((d) => !d.kind && samePath(d.path, child));
       if (!open) { fromDisk.push(child); continue; }
       const c = getDocContent(open.id);
       live.set(child, c);
@@ -583,6 +584,50 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
  * is THEN — so the last thing on screen is always the last thing you wrote.
  * `true` = someone asked to see the viewer. */
 let queued = null;
+let queuedForce = false; // a queued request that was an explicit "Compilar"
+
+/* "Detener compilación".
+ *
+ * A compile is the cells, then the engine. Stopping it means stopping
+ * whichever is running — the Python cell (a soft interrupt, as the cell's own
+ * stop button does) or the LaTeX engine with the PDF driver it started — and
+ * dropping the follow-up compile a queued request would have started. */
+let cancelRequested = false;
+export async function cancelCompile() {
+  if (!state.compiling) return;
+  cancelRequested = true;
+  queued = null;
+  queuedForce = false;
+  state.compileQueued = false;
+  try { await compileCancel(); } catch (_) { /* no engine running */ }
+  if (state.kernelStatus === 'busy') {
+    try { await interruptKernel(); } catch (_) { /* best effort */ }
+  }
+}
+
+/* What the last engine run READ (its recorder list + graphics), with each
+   file's {mtime, size} as it was then. A background compile may skip the
+   engine only when every one of them is still that file: a plain .tex
+   chapter, a .sty, a .bib or an image edited since would otherwise never reach
+   the PDF — the build copies alone cannot see them. null = unknown, so the
+   engine always runs. */
+let lastInputs = null;
+
+async function inputsUnchanged() {
+  if (!lastInputs || !lastInputs.paths.length) return lastInputs !== null;
+  try {
+    const now = await fileStamps(lastInputs.paths);
+    return now.every((st, i) => st && st.mtime === lastInputs.stamps[i].mtime
+      && st.size === lastInputs.stamps[i].size);
+  } catch (_) {
+    return false;
+  }
+}
+
+/** A document that needs a second pass from a clean start (references, a
+ *  table of contents, lists, a bibliography, LastPage): its first pass then
+ *  skips writing a PDF nobody will see. */
+const NEEDS_REFS = /\\(?:label|ref|pageref|eqref|autoref|cref|Cref|cite|tableofcontents|listof\w*|printbibliography|bibliography|newlistof|addcontentsline)\b|LastPage/;
 
 /* The last compile that actually ran the engine: its status and its log. A
    compile that finds nothing to do reports THAT, instead of a bare "no
@@ -602,9 +647,11 @@ let lastReal = { ok: null, log: '' };
 export async function compileActive(showViewer = true, { force = showViewer } = {}) {
   if (state.compiling) {
     queued = !!(queued || showViewer);
+    queuedForce = queuedForce || force;
     state.compileQueued = true;
     return;
   }
+  cancelRequested = false;
   let doc = activeDoc();
   if (!doc) return;
 
@@ -651,7 +698,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     let rootDoc = doc;
     let rootContent = content;
     if (rootPath !== doc.path) {
-      const open = state.documents.find((d) => d.path === rootPath && !d.kind);
+      const open = state.documents.find((d) => !d.kind && samePath(d.path, rootPath));
       if (open) {
         rootDoc = open;
         rootContent = getDocContent(open.id);
@@ -750,6 +797,21 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
         // full re-run is the right answer.
         if (runOrder.slice(0, start).some((e) => HANDCALCS_MAGIC.test(e.cell.code)
           && !renderKnown(e.cell.codeHash))) start = 0;
+        // A cell is only "already run" if what it READ is still the same: a
+        // spreadsheet or CSV edited since gives different numbers with the
+        // same code. One changed file and the run starts over, from a clean
+        // namespace.
+        if (start > 0) {
+          const deps = nsReads(start);
+          if (deps.length) {
+            try {
+              const st = await fileStamps(deps.map((d) => d.path));
+              if (st.some((x, i) => !x || x.mtime !== deps[i].mtime || x.size !== deps[i].size)) start = 0;
+            } catch (_) {
+              start = 0;
+            }
+          }
+        }
         if (start === 0) {
           await runCellCode('', { cwd, reset: true });
           const why = takeRestartReason();
@@ -758,7 +820,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
         for (let i = start; i < runOrder.length; i++) {
           phase.ran++;
           const { path, cell, nth } = runOrder[i];
-          const od = state.documents.find((d) => d.path === path && !d.kind);
+          const od = state.documents.find((d) => !d.kind && samePath(d.path, path));
           const view = od ? getViewOfDoc(od.id) : null;
           const res = await execCellFor(view, view ? docIdOf(view.state) : null, cell, cwd);
           // execCellFor recorded the cell's typeset block (recordRender, where
@@ -795,7 +857,9 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       // between running the cells and reading the values for the document.
       const tCells = performance.now();
       await withKernelLock(async () => {
-        const ranFrom = await runTree(false);
+        // An explicit "Compilar" is the ground truth: every cell, from a clean
+        // namespace — nothing the kernel remembers takes part in it.
+        const ranFrom = await runTree(force);
 
         // 2) Resolve \py{...} expressions against that exact namespace.
         if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
@@ -826,6 +890,11 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       phase.cells = performance.now() - tCells;
     }
 
+    if (cancelRequested) {
+      state.lastLog = '===== Avisos de Pyx =====\n[Pyx] Compilación detenida por el usuario.';
+      state.lastCompileOk = false;
+      return null;
+    }
     // Python-only .pltx (no LaTeX document): running the cells IS the compile.
     if (pythonOnly) {
       state.lastLog =
@@ -1002,7 +1071,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
       const stampNow = processed.length + ':' + hashString(processed);
       const rec = lastBuildWritten.get(buildFile);
       const disk = onDisk.get(buildFile);
-      if (rec && rec.fp === stampNow && disk && disk.mtime >= 0
+      if (!force && rec && rec.fp === stampNow && disk && disk.mtime >= 0
         && disk.mtime === rec.mtime && disk.size === rec.size) continue;
       // The working directory mirrors the project's folders; create the branch
       // the first time a chapter in a subfolder is written.
@@ -1028,7 +1097,7 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     // build file's lowercase basename. These are plain data (arrays of tens of
     // thousands of integers) that nothing renders, so they live outside the
     // reactive store: behind a Proxy, every lookup paid a trap.
-    setBuildMaps({
+    const buildMapData = {
       lineMaps,
       project: cwd,
       work: outDir,
@@ -1040,7 +1109,17 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
         baseName(p).toLowerCase(),
         (baseName(p).replace(/\.(tex|pltx)$/i, '') + BUILD_SUFFIX).toLowerCase(),
       ])),
-    });
+      // build path (relative to the working directory) -> real source path:
+      // what SyncTeX reports is matched by its FULL relative path, so two
+      // chapters with the same name in different folders cannot be confused.
+      files: Object.fromEntries([...files.keys()]
+        .filter((p) => p === rootPath || needs.get(p))
+        .map((p) => [buildRel.get(p), p])),
+    };
+    setBuildMaps(buildMapData);
+    // …and on disk, next to the PDF: Ctrl+click works right after opening a
+    // document, before this session has compiled it.
+    persistBuildMaps(buildMapData).catch(() => {});
 
     // ONE pass. The engine asks for more when it needs them, and the backend
     // listens: labels that moved ("Rerun to get cross-references right"), a
@@ -1052,7 +1131,8 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     // although the .aux is kept between compiles and the references are
     // already settled. With xelatex, which has no draft mode, that was a
     // second full typesetting of the whole document almost every time.
-    const passes = 1;
+    const usesRefs = [...files.values()].some((f) => NEEDS_REFS.test(f.content));
+    const passes = force && usesRefs ? 2 : 1;
     // % !TeX program = pdflatex — the document names its own engine, like in
     // TeXstudio. An explicit per-document choice (Configuración) still wins.
     const magicEngine = (
@@ -1074,7 +1154,8 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     //    project, "nothing changed" is not a reason to keep someone else's.
     const expectedPdf = joinPath(outDir, `${stem}.pdf`);
     if (!force && !wroteAny && phase.ran === 0
-      && samePath(lastPdfPath, expectedPdf) && await pathExists(lastPdfPath)) {
+      && samePath(lastPdfPath, expectedPdf) && await pathExists(lastPdfPath)
+      && await inputsUnchanged()) {
       state.lastLog = (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '')
         + (lastReal.log || 'Sin cambios que afecten al PDF: no se ha recompilado.');
       state.lastCompileOk = problems ? false : (lastReal.ok ?? true);
@@ -1089,8 +1170,31 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     const searchDirs = [...new Set([...files.keys()].map(dirOf))].filter((d) => !samePath(d, cwd));
 
     const tTex = performance.now();
-    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs);
+    // An explicit compile starts the engine from nothing as well: no .aux,
+    // no lists, no SyncTeX index from earlier runs.
+    const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, force);
     phase.tex = performance.now() - tTex;
+    // Remember what this run read, to know next time whether it may be
+    // skipped. A file changed WHILE it ran may not be in this PDF: then the
+    // next compile must run.
+    lastInputs = null;
+    if (!res.stopped && Array.isArray(res.inputs)) {
+      try {
+        const st = res.inputs.length ? await fileStamps(res.inputs) : [];
+        if (st.every((x) => x && x.mtime >= 0 && x.mtime < (res.started_ms || 0))) {
+          lastInputs = { paths: res.inputs, stamps: st };
+        }
+      } catch (_) { /* unknown → never skipped */ }
+    }
+    if (res.stopped) {
+      problems += res.stopped === 'cancelado'
+        ? '\n[LaTeX] Compilación detenida por el usuario.'
+        : '\n[LaTeX] Pyx detuvo el motor: '
+          + (res.stopped === 'bucle' ? 'el mismo error se repetía sin fin (bucle).'
+            : res.stopped === 'sin-progreso' ? 'llevaba demasiado tiempo sin avanzar (bucle infinito).'
+              : 'superó el tiempo máximo de una pasada.')
+          + ' Detalles al final del registro.';
+    }
     // What the engine actually did: the backend adds passes when TeX needs them.
     const ranPasses = ((res.log || '').match(/===== Pasada /g) || []).length || passes;
     // The engine died writing the PDF (latex.rs explains why and names any
@@ -1165,13 +1269,16 @@ export async function compileActive(showViewer = true, { force = showViewer } = 
     state.compiling = false;
     compilingRoot = null;
     // Serve whatever was asked for while this one ran (see `queued`).
-    if (queued !== null) {
+    if (queued !== null && !cancelRequested) {
       const wantViewer = queued;
+      const wantFresh = queuedForce;
       queued = null;
+      queuedForce = false;
       state.compileQueued = false;
-      // Not forced: if the compile that just ended already built what is on
-      // screen now, the follow-up has nothing to add and skips the engine.
-      compileActive(wantViewer, { force: false });
+      // A queued "Compilar" stays a compile from scratch; a queued background
+      // one may still skip the engine when nothing it reads has changed.
+      compileActive(wantViewer, { force: wantFresh });
     }
+    cancelRequested = false;
   }
 }

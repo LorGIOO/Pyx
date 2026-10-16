@@ -181,8 +181,11 @@ export const detectEnv = () => invoke('detect_env');
 // the folder the engine runs from, so relative paths in the source resolve as
 // the author wrote them. `searchDirs` are the folders of the \input'ed files:
 // an image beside a chapter resolves, behind anything beside the main file.
-export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = []) =>
-  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs });
+// `clean` = start from nothing: no .aux, lists or SyncTeX index from earlier runs.
+export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false) =>
+  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean });
+// Stop the LaTeX run in flight (engine + PDF driver).
+export const compileCancel = () => invoke('compile_cancel');
 // The project's working directory (created on demand). Everything the build
 // produces lives there, outside the user's folder.
 export const buildDirFor = (path) => invoke('build_dir', { path });

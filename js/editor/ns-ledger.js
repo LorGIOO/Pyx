@@ -17,8 +17,15 @@
 // a full reset. Skipping can therefore never produce a value that a full run
 // would not have produced.
 
+// WHAT A CELL READ. Code is not all a cell depends on: `pd.read_excel(...)`
+// returns different numbers the moment the spreadsheet changes, with the same
+// code. The kernel reports the files each cell opened for reading, with their
+// {mtime, size}; `reads(n)` hands back those of the first n cells so the caller
+// can check them against the disk before trusting the prefix.
+
 export function createLedger() {
   let chain = [];
+  let deps = []; // per chain entry: [[path, mtime, size], ...]
   let cwd;
   let known = true; // false = the namespace contents are unknown
 
@@ -26,6 +33,7 @@ export function createLedger() {
     /** The kernel was reset: the namespace is empty, and we know it exactly. */
     reset(dir) {
       chain = [];
+      deps = [];
       cwd = dir;
       known = true;
     },
@@ -33,19 +41,34 @@ export function createLedger() {
     /** The namespace changed in a way we cannot describe. */
     invalidate() {
       chain = [];
+      deps = [];
       known = false;
     },
 
-    /** Record a cell body that ran successfully against the current namespace. */
-    record(hash, dir) {
+    /** Record a cell body that ran successfully against the current namespace,
+     *  and the data files it read. */
+    record(hash, dir, reads) {
       if (!known) return;
       if (cwd !== undefined && dir !== undefined && dir !== cwd) {
         chain = [];
+        deps = [];
         known = false;
         return;
       }
       if (dir !== undefined) cwd = dir;
       chain.push(hash);
+      deps.push(Array.isArray(reads) ? reads : []);
+    },
+
+    /** The files the first `n` recorded cells read: [{path, mtime, size}]. */
+    reads(n) {
+      const out = [];
+      for (const list of deps.slice(0, n)) {
+        for (const r of list) {
+          if (Array.isArray(r) && typeof r[0] === 'string') out.push({ path: r[0], mtime: r[1], size: r[2] });
+        }
+      }
+      return out;
     },
 
     /** How many leading cells of `hashes` the kernel has already executed. */

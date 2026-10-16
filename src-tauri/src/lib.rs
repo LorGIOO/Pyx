@@ -73,13 +73,20 @@ async fn compile_latex(
     passes: u32,
     jobname: Option<String>,
     search_dirs: Option<Vec<String>>,
+    clean: Option<bool>,
 ) -> Result<latex::CompileResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dirs = search_dirs.unwrap_or_default();
-        latex::compile(&path, &project_dir, &engine, passes, jobname, &dirs)
+        latex::compile(&path, &project_dir, &engine, passes, jobname, &dirs, clean.unwrap_or(false))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Stop the LaTeX run in flight (and the PDF driver it started).
+#[tauri::command]
+fn compile_cancel() -> bool {
+    latex::cancel()
 }
 
 /// Copy a file. Used to export the compiled PDF out of the project's working
@@ -738,6 +745,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             detect_env,
             compile_latex,
+            compile_cancel,
             build_dir,
             copy_file,
             synctex_edit,

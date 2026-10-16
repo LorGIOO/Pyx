@@ -10,6 +10,386 @@ pub struct CompileResult {
     pub pdf_path: Option<String>,
     pub log: String,
     pub engine: String,
+    /// Why the engine was stopped before it finished, if it was: "cancelado"
+    /// (the user), "bucle", "sin-progreso", "tiempo". None for a run that ended
+    /// on its own.
+    pub stopped: Option<String>,
+    /// Every file the engine READ (its `-recorder` list plus the graphics its
+    /// log names) that is not part of the TeX installation: the document's
+    /// .sty, chapters, images, bibliographies… The app re-checks them before
+    /// it trusts that nothing changed.
+    pub inputs: Vec<String>,
+    /// When the engine started, in ms since the epoch: an input modified after
+    /// this was modified DURING the compile, so the PDF may predate it.
+    pub started_ms: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Running the engine under a watchdog
+// ---------------------------------------------------------------------------
+//
+// `Command::output()` waits forever, and a TeX run CAN run forever: a macro
+// that recurses, a package looping on bad input. It happened with nothing more
+// exotic than `\includepdf[pages=-]{plano.pdf}` while AutoCAD was still writing
+// plano.pdf: pdfpages counted 0 pages and xelatex looped for 40 minutes. The app
+// waited on it, every later compile queued behind it, the PDF stopped updating
+// — and closing Pyx left xelatex and its dvipdfmx running, holding the working
+// directory's files (the SyncTeX index among them).
+//
+// So the engine runs watched:
+//   - the same error at the same source line, over and over, is a loop;
+//   - no output at all for a long while is a loop that prints nothing;
+//   - a hard ceiling for anything else;
+//   - the user can stop it (compile_cancel);
+// and on Windows it runs inside a Job Object that dies with the app, so a
+// crash or a closed window can never leave an engine behind.
+
+/// When the watchdog stops a pass.
+#[derive(Clone, Copy)]
+struct Limits {
+    /// The same `(error, line)` this many times: a loop, not a document.
+    loop_repeats: u32,
+    /// Seconds without a single byte of output.
+    stall_secs: u64,
+    /// Seconds for one pass, whatever it is doing.
+    pass_secs: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits { loop_repeats: 400, stall_secs: 120, pass_secs: 20 * 60 }
+    }
+}
+
+#[cfg(windows)]
+mod job {
+    //! A Windows Job Object that kills every process in it when it closes —
+    //! when the compile ends, when it is cancelled, and when Pyx itself exits
+    //! or crashes (the OS closes the handle then).
+    use std::os::windows::io::AsRawHandle;
+    type Handle = *mut core::ffi::c_void;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicLimit {
+        per_process_user_time: i64,
+        per_job_user_time: i64,
+        limit_flags: u32,
+        min_ws: usize,
+        max_ws: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoCounters([u64; 6]);
+    #[repr(C)]
+    #[derive(Default)]
+    struct ExtendedLimit {
+        basic: BasicLimit,
+        io: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory: usize,
+        peak_job_memory: usize,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(attrs: *mut core::ffi::c_void, name: *const u16) -> Handle;
+        fn SetInformationJobObject(job: Handle, class: i32, info: *mut core::ffi::c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+        fn TerminateJobObject(job: Handle, code: u32) -> i32;
+        fn CloseHandle(h: Handle) -> i32;
+    }
+    const EXTENDED_LIMIT_INFORMATION: i32 = 9;
+    const KILL_ON_JOB_CLOSE: u32 = 0x2000;
+
+    pub struct Job(Handle);
+    // The handle is only ever used through the kernel32 calls above, which are
+    // thread-safe for job objects.
+    unsafe impl Send for Job {}
+    unsafe impl Sync for Job {}
+
+    impl Job {
+        pub fn new() -> Option<Job> {
+            unsafe {
+                let h = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+                if h.is_null() {
+                    return None;
+                }
+                let mut info = ExtendedLimit::default();
+                info.basic.limit_flags = KILL_ON_JOB_CLOSE;
+                let ok = SetInformationJobObject(
+                    h,
+                    EXTENDED_LIMIT_INFORMATION,
+                    &mut info as *mut _ as *mut core::ffi::c_void,
+                    std::mem::size_of::<ExtendedLimit>() as u32,
+                );
+                if ok == 0 {
+                    CloseHandle(h);
+                    return None;
+                }
+                Some(Job(h))
+            }
+        }
+        pub fn assign(&self, child: &std::process::Child) -> bool {
+            unsafe { AssignProcessToJobObject(self.0, child.as_raw_handle() as Handle) != 0 }
+        }
+        pub fn kill(&self) {
+            unsafe {
+                TerminateJobObject(self.0, 1);
+            }
+        }
+    }
+    impl Drop for Job {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+/// The engine run in flight, so `cancel()` can reach it.
+struct Running {
+    cancel: std::sync::atomic::AtomicBool,
+    #[cfg(windows)]
+    job: Option<job::Job>,
+    pid: u32,
+}
+
+static RUNNING: std::sync::Mutex<Option<std::sync::Arc<Running>>> = std::sync::Mutex::new(None);
+
+/// Stop the compile in flight (the engine and everything it started).
+pub fn cancel() -> bool {
+    let cur = RUNNING.lock().ok().and_then(|g| g.clone());
+    let Some(r) = cur else { return false };
+    r.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    kill_tree(&r);
+    true
+}
+
+fn kill_tree(r: &Running) {
+    #[cfg(windows)]
+    {
+        if let Some(j) = r.job.as_ref() {
+            j.kill();
+            return;
+        }
+        let mut c = Command::new("taskkill");
+        c.args(["/PID", &r.pid.to_string(), "/F", "/T"]);
+        crate::quiet(&mut c);
+        let _ = c.status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill").arg("-9").arg(r.pid.to_string()).status();
+    }
+}
+
+/// What one watched engine run produced.
+struct Watched {
+    stdout: String,
+    stderr: String,
+    success: bool,
+    /// (code, explanation) when the watchdog or the user stopped it.
+    stopped: Option<(String, String)>,
+}
+
+/// State the output reader shares with the watchdog.
+#[derive(Default)]
+struct OutWatch {
+    last_output: Option<std::time::Instant>,
+    /// (error line + its `l.NNN` context) -> times seen
+    repeats: std::collections::HashMap<String, u32>,
+    pending_error: Option<String>,
+    worst: Option<(String, u32)>,
+    partial: String,
+}
+
+impl OutWatch {
+    fn feed(&mut self, chunk: &str) {
+        self.last_output = Some(std::time::Instant::now());
+        self.partial.push_str(chunk);
+        while let Some(nl) = self.partial.find('\n') {
+            let line: String = self.partial[..nl].trim_end_matches('\r').to_string();
+            self.partial.drain(..=nl);
+            self.line(&line);
+        }
+        // A run that never prints a newline must not grow this forever.
+        if self.partial.len() > 64 * 1024 {
+            self.partial.clear();
+        }
+    }
+    fn line(&mut self, l: &str) {
+        if let Some(rest) = l.strip_prefix("! ") {
+            self.pending_error = Some(rest.chars().take(200).collect());
+            return;
+        }
+        // TeX prints the error, then the source context `l.NNN …`.
+        if let Some(err) = self.pending_error.as_ref() {
+            if l.starts_with("l.") {
+                let key = format!("{err}\n{}", l.chars().take(160).collect::<String>());
+                self.pending_error = None;
+                let n = self.repeats.entry(key.clone()).or_insert(0);
+                *n += 1;
+                let n = *n;
+                if self.worst.as_ref().map(|w| n > w.1).unwrap_or(true) {
+                    self.worst = Some((key, n));
+                }
+                // Bounded: a long document with many DIFFERENT errors.
+                if self.repeats.len() > 20_000 {
+                    self.repeats.clear();
+                }
+            }
+        }
+    }
+}
+
+/// Run the engine; never longer than the watchdog allows.
+fn run_watched(mut cmd: Command, limits: Limits) -> Result<Watched, std::io::Error> {
+    use std::io::Read;
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    let mut child = cmd.spawn()?;
+
+    #[cfg(windows)]
+    let job = job::Job::new().filter(|j| j.assign(&child));
+    let running = Arc::new(Running {
+        cancel: std::sync::atomic::AtomicBool::new(false),
+        #[cfg(windows)]
+        job,
+        pid: child.id(),
+    });
+    if let Ok(mut g) = RUNNING.lock() {
+        *g = Some(running.clone());
+    }
+
+    let watch = Arc::new(Mutex::new(OutWatch::default()));
+    let out_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let err_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let mut readers = Vec::new();
+    if let Some(mut so) = child.stdout.take() {
+        let (w, b) = (watch.clone(), out_buf.clone());
+        readers.push(std::thread::spawn(move || {
+            let mut chunk = [0u8; 16 * 1024];
+            while let Ok(n) = so.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut b) = b.lock() {
+                    // A runaway run must not eat the machine's memory: keep the
+                    // first 4 MB and the most recent 4 MB of output.
+                    const HEAD: usize = 4 * 1024 * 1024;
+                    if b.len() + n > 2 * HEAD {
+                        let excess = b.len() + n - 2 * HEAD;
+                        let end = (HEAD + excess).min(b.len());
+                        b.drain(HEAD..end);
+                    }
+                    b.extend_from_slice(&chunk[..n]);
+                }
+                if let Ok(mut w) = w.lock() {
+                    w.feed(&String::from_utf8_lossy(&chunk[..n]));
+                }
+            }
+        }));
+    }
+    if let Some(mut se) = child.stderr.take() {
+        let (w, b) = (watch.clone(), err_buf.clone());
+        readers.push(std::thread::spawn(move || {
+            let mut chunk = [0u8; 8 * 1024];
+            while let Ok(n) = se.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut b) = b.lock() {
+                    if b.len() < 1024 * 1024 {
+                        b.extend_from_slice(&chunk[..n]);
+                    }
+                }
+                if let Ok(mut w) = w.lock() {
+                    w.last_output = Some(Instant::now());
+                }
+            }
+        }));
+    }
+
+    let started = Instant::now();
+    let mut stopped: Option<(String, String)> = None;
+    let status = loop {
+        if let Some(st) = child.try_wait()? {
+            // cancel() kills the tree from ANOTHER thread: the exit can be
+            // seen here before the flag is. A killed run is not a finished one.
+            if running.cancel.load(Ordering::SeqCst) {
+                stopped = Some(("cancelado".into(), "Compilación detenida por el usuario.".into()));
+            }
+            break Some(st);
+        }
+        if running.cancel.load(Ordering::SeqCst) {
+            stopped = Some(("cancelado".into(), "Compilación detenida por el usuario.".into()));
+        } else if let Ok(w) = watch.lock() {
+            let quiet = w.last_output.map(|t| t.elapsed()).unwrap_or_else(|| started.elapsed());
+            if let Some((key, n)) = w.worst.as_ref().filter(|(_, n)| *n >= limits.loop_repeats) {
+                stopped = Some((
+                    "bucle".into(),
+                    format!(
+                        "LaTeX ha entrado en un bucle: el mismo error se ha repetido {n} veces \
+                         en la misma línea, y no iba a terminar nunca.\n\n! {key}\n\n\
+                         Pyx ha detenido el motor para que la aplicación no se quede bloqueada. \
+                         Corrige esa línea y vuelve a compilar."
+                    ),
+                ));
+            } else if quiet > Duration::from_secs(limits.stall_secs) {
+                stopped = Some((
+                    "sin-progreso".into(),
+                    format!(
+                        "LaTeX llevaba {} s sin dar ninguna señal: casi seguro un bucle \
+                         infinito (una macro que se llama a sí misma, un paquete atascado). \
+                         Pyx ha detenido el motor; las últimas líneas del registro indican \
+                         dónde estaba.",
+                        limits.stall_secs
+                    ),
+                ));
+            } else if started.elapsed() > Duration::from_secs(limits.pass_secs) {
+                stopped = Some((
+                    "tiempo".into(),
+                    format!(
+                        "La pasada superó los {} minutos y Pyx la ha detenido.",
+                        limits.pass_secs / 60
+                    ),
+                ));
+            }
+        }
+        if stopped.is_some() {
+            kill_tree(&running);
+            let _ = child.kill();
+            break child.wait().ok();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    // The readers end when the pipes close (the whole tree is gone by now).
+    for r in readers {
+        let _ = r.join();
+    }
+    if let Ok(mut g) = RUNNING.lock() {
+        if g.as_ref().map(|r| Arc::ptr_eq(r, &running)).unwrap_or(false) {
+            *g = None;
+        }
+    }
+    let stdout = String::from_utf8_lossy(&out_buf.lock().map(|b| b.clone()).unwrap_or_default()).to_string();
+    let stderr = String::from_utf8_lossy(&err_buf.lock().map(|b| b.clone()).unwrap_or_default()).to_string();
+    Ok(Watched {
+        stdout,
+        stderr,
+        success: stopped.is_none() && status.map(|s| s.success()).unwrap_or(false),
+        stopped,
+    })
 }
 
 #[derive(Serialize)]
@@ -328,6 +708,122 @@ fn missing_images(log: &str) -> Vec<String> {
     out
 }
 
+/// Forget what earlier passes left for this job: cross-reference data, lists,
+/// the SyncTeX index (finished or not), the recorder file. The next pass then
+/// starts exactly like a first compile — the PDF, the log and the processed
+/// `.build.tex` copies are kept. Only ever touches the working directory.
+///
+/// Needed after a pass that did not end on its own (stopped, killed, crashed):
+/// whatever it was writing — an `.aux` cut in half, a `.synctex(busy)` — would
+/// otherwise poison the next compile, and an `.aux` cut in half is the classic
+/// "it only works after deleting the temporary files".
+fn clean_intermediates(out_dir: &Path, job: &str) {
+    fn walk(dir: &Path, job_prefix: &str, depth: u32) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                if depth > 0 {
+                    walk(&p, job_prefix, depth - 1);
+                }
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            let lower = name.to_lowercase();
+            let doomed = if let Some(ext) = name.strip_prefix(job_prefix) {
+                let ext = ext.to_lowercase();
+                !(ext == "pdf" || ext == "log" || ext.ends_with("tex"))
+            } else {
+                // \include'd chapters write their own .aux; any interrupted
+                // SyncTeX index too.
+                lower.ends_with(".aux") || lower.contains(".synctex(busy)")
+            };
+            if doomed {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+    walk(out_dir, &format!("{job}."), 3);
+}
+
+/// Did a previous pass of this job die before it finished? Its SyncTeX index
+/// is still marked busy.
+fn interrupted_before(out_dir: &Path, job: &str) -> bool {
+    out_dir.join(format!("{job}.synctex(busy)")).exists()
+}
+
+/// Is the first error of this run one TeX met while reading the job's own
+/// `.aux`? Then the error is in what an earlier run wrote, not in the document,
+/// and the same compile from a clean state is the cure.
+fn aux_poisoned(log: &str, job: &str) -> bool {
+    let Some(first) = log.find("\n! ") else { return false };
+    let before = &log[..first];
+    let aux = format!("{job}.aux");
+    match before.rfind(&aux) {
+        Some(at) => !before[at..].contains(')'),
+        None => false,
+    }
+}
+
+/// Files the engine read that are not part of the TeX installation.
+///
+/// From the recorder list (`-recorder`: every file TeX opened) plus the
+/// graphics the log names — images go to the PDF driver, which the recorder
+/// does not always see. Relative names are resolved against the folder the
+/// engine ran in.
+fn recorded_inputs(out_dir: &Path, job: &str, run_dir: &Path, log: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let out_norm = out_dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    let mut add = |raw: &str, base: &Path| {
+        let raw = raw.trim().trim_matches('"');
+        if raw.is_empty() {
+            return;
+        }
+        let p = Path::new(raw);
+        let abs = if p.is_absolute() { p.to_path_buf() } else { base.join(p) };
+        let s = abs.to_string_lossy().to_string();
+        let k = s.replace('/', "\\").to_lowercase();
+        // The distribution (MiKTeX, TeX Live), system fonts, and the working
+        // directory itself (the .build.tex copies are tracked by content).
+        let installed = k.contains("\\miktex\\") || k.contains("texmf") || k.contains("\\texlive\\")
+            || k.contains("/texlive/") || k.contains("\\windows\\fonts\\")
+            || k.contains("\\fontconfig\\") || k.ends_with(".fmt");
+        if installed || k.starts_with(&out_norm) {
+            return;
+        }
+        if seen.insert(k) {
+            out.push(s);
+        }
+    };
+    if let Ok(fls) = std::fs::read_to_string(out_dir.join(format!("{job}.fls"))) {
+        let mut pwd = run_dir.to_path_buf();
+        for l in fls.lines() {
+            if let Some(d) = l.strip_prefix("PWD ") {
+                pwd = PathBuf::from(d.trim());
+            } else if let Some(f) = l.strip_prefix("INPUT ") {
+                add(f, &pwd);
+            }
+        }
+    }
+    for l in log.lines() {
+        if let Some(rest) = l.strip_prefix("File: ") {
+            if let Some(end) = rest.find(" Graphic file") {
+                add(&rest[..end], run_dir);
+            }
+        }
+    }
+    out
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Recreate the document's subdirectory layout inside the build folder.
 ///
 /// `\include{cap/uno}` makes TeX write `cap/uno.aux` *relative to the output
@@ -375,6 +871,7 @@ pub fn compile(
     passes: u32,
     jobname: Option<String>,
     search_dirs: &[String],
+    clean_first: bool,
 ) -> Result<CompileResult, String> {
     let src = Path::new(path);
     if !src.exists() {
@@ -440,8 +937,19 @@ pub fn compile(
     const MAX_PASSES: u32 = 3;
     let mut log = String::new();
     let mut clean = false;
+    let mut stopped: Option<String> = None;
+    let started_ms = now_ms();
 
-    for i in 0..MAX_PASSES {
+    // A compile from scratch (asked for), or one after a pass that never
+    // finished (its SyncTeX index is still marked busy): nothing an earlier
+    // run left behind may take part in this one.
+    if clean_first || interrupted_before(&out_dir, &out_name) {
+        clean_intermediates(&out_dir, &out_name);
+    }
+    let mut healed = false;
+
+    let mut i = 0;
+    while i < MAX_PASSES {
         let mut cmd = Command::new(&engine_cmd);
         // Like TeXstudio: NO -halt-on-error. In nonstopmode TeX recovers from
         // errors and still emits a PDF when it can; the problems stay visible
@@ -460,34 +968,70 @@ pub fn compile(
         // draft mode the engine skips font loading, image processing and the
         // whole shipout, which is where most of the time in a figure-heavy
         // engineering report goes, and still writes the .aux/.toc the next pass
-        // reads. xelatex has no -draftmode (it shells out to xdvipdfmx), so it
-        // keeps running normally.
+        // reads. xelatex has no -draftmode, but `-no-pdf` skips its PDF driver
+        // (xdvipdfmx) the same way — exactly what latexmk does.
         let final_pass = i + 1 >= passes;
-        if !final_pass && matches!(engine, "pdflatex" | "lualatex") {
-            cmd.arg("-draftmode");
+        if !final_pass {
+            match engine {
+                "pdflatex" | "lualatex" => {
+                    cmd.arg("-draftmode");
+                }
+                _ => {
+                    cmd.arg("-no-pdf");
+                }
+            }
         }
         if let Some(j) = jobname.as_ref().filter(|s| !s.trim().is_empty()) {
             cmd.arg(format!("-jobname={j}"));
         }
+        // Every file the engine opens, for the app's "did anything change?"
+        cmd.arg("-recorder");
         crate::quiet(&mut cmd);
         let listings_before = listings_stamp(&out_dir, &out_name);
-        let output = cmd
-            .arg(&file)
-            .output()
-            .map_err(|e| crate::spawn_error(engine, Some(dir), &e))?;
+        cmd.arg(&file);
+        let run = run_watched(cmd, Limits::default()).map_err(|e| crate::spawn_error(engine, Some(dir), &e))?;
 
         log.push_str(&format!("===== Pasada {} ({}) =====\n", i + 1, engine));
-        let pass_out = String::from_utf8_lossy(&output.stdout).to_string();
+        let pass_out = run.stdout;
         log.push_str(&pass_out);
-        let err = String::from_utf8_lossy(&output.stderr);
-        if !err.trim().is_empty() {
-            log.push_str(&err);
+        if !run.stderr.trim().is_empty() {
+            log.push_str(&run.stderr);
         }
         log.push('\n');
+        if let Some((code, why)) = run.stopped {
+            // Whatever this pass was writing is half-written: the next compile
+            // must not build on it.
+            clean_intermediates(&out_dir, &out_name);
+            log.push_str("===== Pyx: compilación detenida =====\n");
+            log.push_str(&why);
+            log.push('\n');
+            if code != "cancelado" {
+                let tail: Vec<&str> = pass_out.lines().rev().take(12).collect();
+                log.push_str("\nÚltimas líneas antes de detenerlo:\n");
+                for l in tail.into_iter().rev() {
+                    log.push_str("  ");
+                    log.push_str(l);
+                    log.push('\n');
+                }
+            }
+            stopped = Some(code);
+            clean = false;
+            break;
+        }
         // Exit status 0 = no TeX errors at all ("clean"). A nonzero status just
         // means errors were recovered — the pass still ran to completion, so
         // reference-settling reruns are still meaningful.
-        clean = output.status.success();
+        clean = run.success;
+        // The first error came from reading what an EARLIER run wrote (an .aux
+        // cut short, from a version of the document with different macros):
+        // start over from a clean state, once.
+        if !clean && !healed && aux_poisoned(&pass_out, &out_name) {
+            healed = true;
+            clean_intermediates(&out_dir, &out_name);
+            log.push_str("===== Pyx: datos auxiliares de una compilación anterior dañados; \
+                          se repite desde cero =====\n");
+            continue;
+        }
         // Extra passes only when TeX actually needs one: unsettled references
         // ("Rerun to get…"), or a listing whose CONTENT this pass changed —
         // including one that did not exist before it. LaTeX warns when labels
@@ -503,6 +1047,7 @@ pub fn compile(
         if i + 1 >= passes && !needs_rerun {
             break;
         }
+        i += 1;
     }
 
     // Nothing is moved back: the PDF and its SyncTeX index stay in the working
@@ -537,6 +1082,11 @@ pub fn compile(
         }
     }
 
+    let inputs = if stopped.is_none() {
+        recorded_inputs(&out_dir, &out_name, dir, &log)
+    } else {
+        Vec::new()
+    };
     Ok(CompileResult {
         ok: clean && pdf_fresh,
         pdf_path: if pdf_fresh {
@@ -546,6 +1096,9 @@ pub fn compile(
         },
         log,
         engine: engine.to_string(),
+        stopped,
+        inputs,
+        started_ms,
     })
 }
 
@@ -553,6 +1106,13 @@ pub fn compile(
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Engine runs share the process-wide RUNNING slot (cancel() reaches
+    /// "the compile in flight"): tests that run an engine take turns.
+    static ENGINE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn engine_turn() -> std::sync::MutexGuard<'static, ()> {
+        ENGINE.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     const MAIN: &str = r"\documentclass{book}
 \begin{document}
@@ -574,6 +1134,7 @@ Texto del capitulo dos.
     /// machine (or a CI runner) without a LaTeX distribution.
     #[test]
     fn build_leaves_the_project_folder_untouched() {
+        let _turn = engine_turn();
         let engine = match ["pdflatex", "xelatex"].iter().find(|e| engine_works(e)) {
             Some(e) => *e,
             None => return, // no LaTeX here; nothing to assert
@@ -598,6 +1159,7 @@ Texto del capitulo dos.
             2,
             Some("main".to_string()),
             &[],
+            false,
         )
         .expect("la compilacion deberia ejecutarse");
 
@@ -679,6 +1241,7 @@ Texto del capitulo dos.
     /// stay ONE pass when nothing moved, which is the entire point.
     #[test]
     fn one_pass_still_settles_a_changed_table_of_contents() {
+        let _turn = engine_turn();
         let Some(engine) = some_engine() else { return };
         let (base, proj, work) = scratch("toc");
         let main = work.join("main.build.tex");
@@ -686,7 +1249,7 @@ Texto del capitulo dos.
             format!("\\documentclass{{article}}\n\\begin{{document}}\n\\tableofcontents\n{sections}\n\\end{{document}}\n")
         };
         let run = || {
-            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[])
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false)
                 .expect("la compilacion deberia ejecutarse")
         };
 
@@ -712,6 +1275,7 @@ Texto del capitulo dos.
     /// the previous one until compile was pressed again.
     #[test]
     fn a_template_defined_index_is_settled_too() {
+        let _turn = engine_turn();
         let Some(engine) = some_engine() else { return };
         let (base, proj, work) = scratch("tocA");
         let main = work.join("main.build.tex");
@@ -723,7 +1287,7 @@ Texto del capitulo dos.
             )
         };
         let run = || {
-            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[])
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false)
                 .expect("la compilacion deberia ejecutarse")
         };
 
@@ -747,6 +1311,7 @@ Texto del capitulo dos.
     /// ORDER without binary fixtures.
     #[test]
     fn chapter_folders_resolve_without_shadowing_the_project() {
+        let _turn = engine_turn();
         let Some(engine) = some_engine() else { return };
         let (base, proj, work) = scratch("inputs");
         let cap = proj.join("cap");
@@ -768,11 +1333,202 @@ Texto del capitulo dos.
             1,
             Some("main".into()),
             &[cap.to_string_lossy().to_string()],
+            false,
         )
         .expect("la compilacion deberia ejecutarse");
         assert!(res.log.contains("ORIGEN=RAIZ"), "un archivo del capitulo tapo al del proyecto");
         assert!(res.log.contains("SOLO=SOLOCAPITULO"), "no se encontro el archivo junto al capitulo");
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    // ---- the watchdog: a TeX run can never hang the app -----------------------
+
+    fn xelatex() -> Option<String> {
+        resolve_engine("xelatex")
+    }
+
+    fn watch_dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("pyx-watch-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn engine_cmd(exe: &str, dir: &Path, tex: &str) -> Command {
+        let mut c = Command::new(exe);
+        c.current_dir(dir)
+            .arg("-interaction=nonstopmode")
+            .arg(format!("-output-directory={}", dir.display()))
+            .arg(tex);
+        crate::quiet(&mut c);
+        c
+    }
+
+    /// The same error at the same line, again and again, is a loop: TeX's own
+    /// "100 errors" stop never comes, because each round is a new paragraph.
+    #[test]
+    fn a_looping_pass_is_stopped_and_explained() {
+        let _turn = engine_turn();
+        let Some(exe) = xelatex() else { return };
+        let d = watch_dir("loop");
+        fs::write(
+            d.join("t.tex"),
+            "\\documentclass{article}\\begin{document}\n\\loop \\nosuchmacro\\par \\iftrue\\repeat\n\\end{document}\n",
+        )
+        .unwrap();
+        let t = std::time::Instant::now();
+        let limits = Limits { loop_repeats: 50, stall_secs: 60, pass_secs: 120 };
+        let run = run_watched(engine_cmd(&exe, &d, "t.tex"), limits).unwrap();
+        let (code, why) = run.stopped.expect("the loop must be stopped");
+        assert_eq!(code, "bucle", "{why}");
+        assert!(why.contains("nosuchmacro"), "the explanation shows the line: {why}");
+        assert!(t.elapsed().as_secs() < 30, "took {:?}", t.elapsed());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// A loop that prints nothing at all: only the silence gives it away.
+    #[test]
+    fn a_silent_loop_is_stopped() {
+        let _turn = engine_turn();
+        let Some(exe) = xelatex() else { return };
+        let d = watch_dir("stall");
+        fs::write(d.join("t.tex"), "\\def\\a{\\a}\\a\n").unwrap();
+        let limits = Limits { loop_repeats: 400, stall_secs: 3, pass_secs: 120 };
+        let t = std::time::Instant::now();
+        let run = run_watched(engine_cmd(&exe, &d, "t.tex"), limits).unwrap();
+        assert_eq!(run.stopped.map(|s| s.0).as_deref(), Some("sin-progreso"));
+        assert!(t.elapsed().as_secs() < 30, "took {:?}", t.elapsed());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// "Detener compilación": the engine and its PDF driver go at once.
+    #[test]
+    fn a_running_compile_can_be_cancelled() {
+        let _turn = engine_turn();
+        let Some(exe) = xelatex() else { return };
+        let d = watch_dir("cancel");
+        fs::write(d.join("t.tex"), "\\def\\a{\\a}\\a\n").unwrap();
+        let cmd = engine_cmd(&exe, &d, "t.tex");
+        let h = std::thread::spawn(move || run_watched(cmd, Limits::default()).unwrap());
+        // until the engine is registered as running
+        for _ in 0..100 {
+            if RUNNING.lock().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(cancel(), "there was a compile to cancel");
+        let run = h.join().unwrap();
+        assert_eq!(run.stopped.map(|s| s.0).as_deref(), Some("cancelado"));
+        assert!(RUNNING.lock().unwrap().is_none());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// The whole tree goes: xelatex AND the dvipdfmx it started — the process
+    /// that was left running for 40 minutes after Pyx closed.
+    #[cfg(windows)]
+    #[test]
+    fn cancelling_leaves_no_engine_process_behind() {
+        let _turn = engine_turn();
+        let Some(exe) = xelatex() else { return };
+        let d = watch_dir("tree");
+        // A loop that SHIPS pages: the PDF driver is up and busy.
+        fs::write(
+            d.join("t.tex"),
+            "\\documentclass{article}\\begin{document}\n\\loop x\\newpage \\iftrue\\repeat\n\\end{document}\n",
+        )
+        .unwrap();
+        let cmd = engine_cmd(&exe, &d, "t.tex");
+        let h = std::thread::spawn(move || run_watched(cmd, Limits::default()).unwrap());
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let alive = |d: &Path| -> usize {
+            let marker = d.file_name().unwrap().to_string_lossy().to_string();
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "@(Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{marker}*' -and $_.Name -notlike 'powershell*' }}).Count"
+                ),
+            ]);
+            crate::quiet(&mut c);
+            let out = c.output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            out.parse().unwrap_or(0)
+        };
+        assert!(alive(&d) >= 2, "xelatex and its PDF driver should be running");
+        assert!(cancel());
+        let run = h.join().unwrap();
+        assert_eq!(run.stopped.map(|s| s.0).as_deref(), Some("cancelado"));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert_eq!(alive(&d), 0, "no engine process may survive a cancel");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// A normal document is not touched by the watchdog, and the compile
+    /// reports what it read from the project (not the TeX installation).
+    #[test]
+    fn a_normal_compile_reports_its_project_inputs() {
+        let _turn = engine_turn();
+        let Some(_) = xelatex() else { return };
+        let base = watch_dir("inputs");
+        let proj = base.join("proj");
+        let work = base.join("work");
+        fs::create_dir_all(proj.join("img")).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        fs::write(proj.join("cap.tex"), "Capitulo desde el proyecto.\n").unwrap();
+        fs::write(proj.join("mio.sty"), "\\ProvidesPackage{mio}\n").unwrap();
+        fs::write(
+            work.join("main.build.tex"),
+            "\\documentclass{article}\\usepackage{mio}\\begin{document}\n\\input{cap}\n\\end{document}\n",
+        )
+        .unwrap();
+        let res = compile(
+            work.join("main.build.tex").to_str().unwrap(),
+            proj.to_str().unwrap(),
+            "xelatex",
+            1,
+            Some("main".into()),
+            &[],
+            false,
+        )
+        .unwrap();
+        assert!(res.stopped.is_none());
+        assert!(res.pdf_path.is_some(), "{}", res.log);
+        let names: Vec<String> = res.inputs.iter().map(|p| p.replace('\\', "/").to_lowercase()).collect();
+        assert!(names.iter().any(|p| p.ends_with("/cap.tex")), "{names:?}");
+        assert!(names.iter().any(|p| p.ends_with("/mio.sty")), "{names:?}");
+        assert!(!names.iter().any(|p| p.ends_with("article.cls")), "TeX's own files are not inputs: {names:?}");
+        assert!(res.started_ms > 0);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// After a pass that never finished, its half-written state is gone before
+    /// the next one starts; the PDF and the build copies survive.
+    #[test]
+    fn interrupted_state_is_cleaned_before_the_next_pass() {
+        let d = watch_dir("clean");
+        for f in ["main.aux", "main.toc", "main.synctex(busy)", "main.tocA", "main.pdf", "main.log", "main.build.tex", "cap.aux", "cap.build.tex"] {
+            fs::write(d.join(f), "x").unwrap();
+        }
+        assert!(interrupted_before(&d, "main"));
+        clean_intermediates(&d, "main");
+        for gone in ["main.aux", "main.toc", "main.synctex(busy)", "main.tocA", "cap.aux"] {
+            assert!(!d.join(gone).exists(), "{gone} should be gone");
+        }
+        for kept in ["main.pdf", "main.log", "main.build.tex", "cap.build.tex"] {
+            assert!(d.join(kept).exists(), "{kept} must stay");
+        }
+        assert!(!interrupted_before(&d, "main"));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_error_from_a_stale_aux_is_recognised() {
+        let log = "(./main.aux\n! Undefined control sequence.\nl.3 \\foo\n";
+        assert!(aux_poisoned(log, "main"));
+        let log = "(./main.aux) (./cap.tex\n! Undefined control sequence.\nl.3 \\foo\n";
+        assert!(!aux_poisoned(log, "main"), "the aux was closed before the error");
     }
 }

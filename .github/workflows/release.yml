@@ -4,13 +4,25 @@ name: Release
 # etiqueta de versión (por ejemplo `v1.1.0`). Cada sistema se compila en su
 # runner nativo (Tauri no permite compilación cruzada) y los tres suben sus
 # instaladores al MISMO borrador de Release.
+#
+# También se puede lanzar a mano (Actions → Release → Run workflow) indicando
+# la versión: la etiqueta se crea entonces sobre el commit elegido. Antes se
+# podía lanzar a mano sin versión, y la release salía con el nombre de la rama.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Versión a publicar, con la v delante (p. ej. v1.5.0). Debe coincidir con la de package.json.'
+        required: true
 
 permissions:
   contents: write
+
+# La etiqueta de esta publicación, venga de un push o del lanzamiento manual.
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -28,6 +40,18 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+
+      # Una release v1.5.0 que contenga una app que dice ser la 1.4.0 es el
+      # error que nadie ve hasta que un usuario lo reporta: se para aquí.
+      - name: Comprobar que la etiqueta coincide con la versión de la app
+        shell: bash
+        run: |
+          app="v$(node -p "require('./package.json').version")"
+          tauri="v$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [ "$RELEASE_TAG" != "$app" ] || [ "$RELEASE_TAG" != "$tauri" ]; then
+            echo "::error::La etiqueta $RELEASE_TAG no coincide con package.json ($app) / tauri.conf.json ($tauri)."
+            exit 1
+          fi
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
@@ -62,8 +86,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Pyx ${{ github.ref_name }}'
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: 'Pyx ${{ env.RELEASE_TAG }}'
+          # Sobre ESTE commit: lo que se lanzó a mano crea aquí la etiqueta.
+          releaseCommitish: ${{ github.sha }}
           releaseBody: |
             Instaladores adjuntos abajo: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`).
 
@@ -81,7 +107,7 @@ jobs:
   # publicar, que es exactamente lo que debe pasar.
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -90,7 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release edit "${{ github.ref_name }}" \
+          gh release edit "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --draft=false \
             --latest

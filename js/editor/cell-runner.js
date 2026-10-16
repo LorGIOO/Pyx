@@ -266,6 +266,20 @@ export async function evalExpressions(exprs, { cwd, silent } = {}) {
    holds, so switching tabs does not ask twice; it is forgotten whenever the
    process is replaced. */
 const warmed = new Set();
+/** The kernel's variables for the Variables panel (JupyterLab's variable
+ *  inspector): name, type, size and a short value. Read-only and cheap on
+ *  the kernel side; never starts a kernel, and returns null while one is
+ *  busy (the panel keeps what it showed). */
+export async function listVariables() {
+  if (!isTauri() || !started || state.kernelStatus !== 'ready') return null;
+  try {
+    const r = await withKernelLock(() => kernelExec({ id: reqId++, vars: true }));
+    return (r && Array.isArray(r.vars)) ? r.vars : [];
+  } catch (_) {
+    return null;
+  }
+}
+
 export async function prewarmModules(names, cwd) {
   if (!isTauri()) return;
   const todo = [...new Set(names)].filter((n) => n && !warmed.has(n));

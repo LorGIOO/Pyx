@@ -34,14 +34,7 @@ function persist() {
   } catch (_) { /* quota / private mode */ }
 }
 
-export function hasAnnots() { return Object.values(store).some((a) => a && a.length); }
 export function clearPage(n) { delete store[n]; persist(); redraw(n); }
-export function clearAllAnnots() {
-  const pages = Object.keys(store);
-  store = {};
-  persist();
-  for (const n of pages) redraw(+n);
-}
 export function undoLast() {
   // Remove the most recently drawn annotation across the document.
   let last = null;

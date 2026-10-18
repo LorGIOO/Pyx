@@ -368,10 +368,6 @@ export function getViewOfDoc(docId) {
   return null;
 }
 
-export function getPaneView(paneId) {
-  return paneViews.get(paneId) || null;
-}
-
 /** Dispatch a cells-refresh to every pane so shared outputs repaint everywhere. */
 export function broadcastCellRefresh() {
   for (const vw of paneViews.values()) {

@@ -17,7 +17,7 @@ import {
 } from '../editor/cell-runner.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
-import { setBuildMaps, persistBuildMaps } from './build-maps.js';
+import { setBuildMaps, persistBuildMaps, ensureBuildMaps } from './build-maps.js';
 import {
   findPyExprs, resolvePyText, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
   findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
@@ -142,7 +142,8 @@ export async function showSavedPdf() {
     // One of ANOTHER project is not: switching documents while that ran used
     // to leave its PDF on screen, because this returned for any compile.
     if (state.compiling && samePath(compilingRoot, root)) return;
-    const pdf = joinPath(await buildDirFor(root), `${stemOf(root)}.pdf`);
+    const work = await buildDirFor(root);
+    const pdf = joinPath(work, `${stemOf(root)}.pdf`);
     // Already on screen — and this is also the case of a chapter and its root,
     // which share one PDF: nothing to load and nothing to warn about.
     if (samePath(pdf, getPdfPath())) { markPdfForeign(false); return; }
@@ -181,6 +182,10 @@ export async function showSavedPdf() {
     lastPdfPath = pdf;
     state.lastPdfPath = pdf;
     markPdfForeign(false);
+    // The line maps saved next to this PDF (pyx-mapas.json): without them a
+    // Ctrl+click before the first compile of the session opened the internal
+    // .build.tex copy, and forward search found nothing.
+    await ensureBuildMaps(work).catch(() => false);
     await loadPdf(pdf);
   } catch (_) {
     // No saved PDF: the first compile will make one. Until then, say that what

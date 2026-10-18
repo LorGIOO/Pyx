@@ -29,7 +29,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { readBinaryFile, openExternal, synctexEdit, pathExists, emitToWindow } from '../core/platform.js';
 import { baseName } from '../core/paths.js';
-import { buildPathToSource } from '../compile/build-maps.js';
+import { buildPathToSource, sourceOfBuild } from '../compile/build-maps.js';
 import { loupeGeometry } from './loupe-geometry.js';
 import { setAnnotDoc, buildAnnotLayer } from './annotate.js';
 import { general } from '../solid/stores/settingsStore.js';
@@ -714,10 +714,18 @@ async function synctexJump(pageNo, xPt, yPt, word) {
     // numbers shift below every cell: translate through the compiler's map.
     const wasBuild = /\.build\.tex$/i.test(p);
     if (wasBuild) {
-      const back = buildPathToSource(p);
-      const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
-      for (const cand of [stem + '.pltx', stem + '.tex']) {
-        if (await pathExists(cand)) { p = cand; break; }
+      // The compiler's own record of which source each build copy came from
+      // (by its full relative path: two chapters called "intro" in different
+      // folders cannot be confused). Guessing from the name is the fallback.
+      const exact = sourceOfBuild(p);
+      if (exact) {
+        p = exact;
+      } else {
+        const back = buildPathToSource(p);
+        const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
+        for (const cand of [stem + '.pltx', stem + '.tex']) {
+          if (await pathExists(cand)) { p = cand; break; }
+        }
       }
     }
     let line = hit.line || 1;
@@ -1219,7 +1227,6 @@ let tileBusy = false;      // one PDF.js render at a time
 let tileWanted = null;     // last request while a render was in flight
 let lastLoupeEvent = null; // to repaint in place when the zoom changes
 
-export function getLoupeZoom() { return loupeZoom; }
 
 /** Change the magnification (wheel over the loupe). The tile is rendered for a
  *  specific Z, so it has to be thrown away and asked for again. */

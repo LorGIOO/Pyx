@@ -89,3 +89,25 @@ describe('path helpers used to place build files', () => {
     expect(stemOf('C:/a/b/c.build.tex')).toBe('c.build');
   });
 });
+
+describe('sourceOfBuild (Ctrl+clic en el PDF)', () => {
+  it('distingue dos capítulos con el mismo nombre en carpetas distintas', async () => {
+    const { setBuildMaps, sourceOfBuild } = await import('../js/compile/build-maps.js');
+    setBuildMaps({
+      lineMaps: {},
+      work: 'C:/cache/w1',
+      project: 'C:/proj',
+      root: 'main.build.tex',
+      buildToReal: { 'intro.build.tex': 'C:/proj/parte2/intro.pltx' },
+      files: {
+        'parte1/intro.build.tex': 'C:/proj/parte1/intro.pltx',
+        'parte2/intro.build.tex': 'C:/proj/parte2/intro.pltx',
+      },
+    });
+    expect(sourceOfBuild('C:\\cache\\w1\\parte1\\intro.build.tex')).toBe('C:/proj/parte1/intro.pltx');
+    expect(sourceOfBuild('C:/cache/w1/parte2/intro.build.tex')).toBe('C:/proj/parte2/intro.pltx');
+    // A path the engine reported some other way: the name alone still finds one.
+    expect(sourceOfBuild('./intro.build.tex')).toBe('C:/proj/parte2/intro.pltx');
+    expect(sourceOfBuild('C:/otro/nada.tex')).toBe(null);
+  });
+});

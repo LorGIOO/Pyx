@@ -121,11 +121,6 @@ export function setToken(key, patch) {
   applySettings();
 }
 
-export function resetToken(key) {
-  delete settings[key];
-  applySettings();
-}
-
 export function resetAll() {
   for (const k of Object.keys(settings)) delete settings[k];
   applySettings();

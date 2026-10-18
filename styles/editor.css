@@ -227,3 +227,16 @@
   line-height: inherit;
   padding-left: 3px;
 }
+
+/* Formula preview on hover (latex-extras.js). */
+.cm-tooltip.cm-tooltip-hover:has(.cm-math-hover) { padding: 0; border-radius: 6px; }
+.cm-math-hover {
+  max-width: 70vw;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 6px 12px;
+  font-size: 1.15em;
+  color: var(--theme-text);
+  background: var(--theme-surface);
+}
+.cm-math-hover .katex-display { margin: 0.2em 0; }

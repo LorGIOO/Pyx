@@ -6,6 +6,7 @@ import { state as appState } from '../core/state.js';
 import { gv } from '../solid/stores/settingsStore.js';
 import { t } from '../core/i18n.js';
 import { lintLatex } from './latex-lint.js';
+import { compileDiagnostics } from './latex-extras.js';
 import { invoke, isTauri } from '../core/platform.js';
 
 /** LaTeX rules apply to LaTeX: a .bib, a .sty or a .txt is not a document. */
@@ -67,6 +68,7 @@ export function latexLint(docId) {
     const own = gv('latexLint') === false ? [] : lintLatex(view.state.doc.toString(), t)
       .map((d) => ({ from: d.from, to: Math.min(d.to, view.state.doc.length), severity: d.severity, message: d.message, source: 'LaTeX' }))
       .filter((d) => d.from < d.to);
-    return own.concat(await chktexDiagnostics(view));
+    const d = appState.documents.find((x) => x.id === docId);
+    return own.concat(compileDiagnostics(view, d && d.path), await chktexDiagnostics(view));
   }, { delay: 500 });
 }

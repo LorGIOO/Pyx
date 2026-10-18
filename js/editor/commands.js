@@ -331,7 +331,6 @@ export const tblAddCol = () => { const v = getView(); if (v && !tableAddColumn(v
 export const tblDelRow = () => { const v = getView(); if (v) tableDeleteRow(v); };
 export const tblDelCol = () => { const v = getView(); if (v) tableDeleteColumn(v); };
 export const tblHline = () => { const v = getView(); if (v) tableToggleHline(v); };
-export const tblInsert = () => { const v = getView(); if (v) insertTable(v); };
 // Align the current column's text left/center/right (l/c/r) — TeXstudio's
 // "align column" tool; adjusts only the column spec.
 export const tblAlign = (align) => { const v = getView(); if (v) tableSetColumnAlign(v, align); };

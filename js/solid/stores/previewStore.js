@@ -45,4 +45,3 @@ export const getScale = () => scale();
 export const getFitMode = () => fitMode();
 
 // kept for older imports
-export const setPages = setNumPages;

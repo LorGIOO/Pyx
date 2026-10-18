@@ -26,6 +26,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # .pltx container = ZIP (Word-style): source + build artifacts, minus the PDF.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# The SyncTeX index (.synctex.gz) is read directly (synctex.rs).
+flate2 = "1"
 
 [profile.release]
 panic = "abort"

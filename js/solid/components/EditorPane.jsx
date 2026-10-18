@@ -1,4 +1,6 @@
-import { onMount, onCleanup, createEffect, createSignal, createMemo, For, Show } from 'solid-js';
+import { onMount, onCleanup, createEffect, createSignal, createMemo, on, For, Show } from 'solid-js';
+import { forceLinting } from '@codemirror/lint';
+import { setProblemsSource } from '../../editor/latex-extras.js';
 import { state, activeDoc } from '../../core/state.js';
 import { mountPane, unmountPane, showDocInPane } from '../../editor/setup.js';
 import { focusPane, showInPane, splitPane, closePane, isPyxDoc } from '../stores/docStore.js';
@@ -9,7 +11,7 @@ import { parseLatexLog } from '../../compile/log-parser.js';
 import { lineMaps, buildToReal, knownFileSet, rootBuildFile } from '../../compile/build-maps.js';
 import { t } from '../../core/i18n.js';
 import { toc, crumbPath } from '../stores/structureStore.js';
-import { getView, broadcastSpellRefresh } from '../../editor/setup.js';
+import { getView, broadcastSpellRefresh, forEachEditorView } from '../../editor/setup.js';
 import { spellInfoAt, addToUserDict } from '../../editor/spellcheck.js';
 import { showContextMenu } from './ContextMenu.jsx';
 import { icons } from './ribbon/icons.js';
@@ -180,6 +182,10 @@ export default function EditorPane() {
     // numbers back to source lines so clicks land on the right line.
     lineMaps: lineMaps(),
   }));
+  // The same problems underlined on their lines in the editor (TeXstudio's
+  // log markers): the linter reads them, and a new log re-lints every pane.
+  setProblemsSource(problems);
+  createEffect(on(problems, () => forEachEditorView((v) => forceLinting(v)), { defer: true }));
   const sevIcon = (s) => (s === 'error' ? '✕' : s === 'badbox' ? '▭' : '!');
 
   // VSCode-style breadcrumbs: the section path containing the cursor, from the

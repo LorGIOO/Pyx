@@ -1,6 +1,7 @@
 mod kernel;
 mod latex;
 mod pltx;
+mod synctex;
 mod workspace;
 
 use kernel::KernelState;

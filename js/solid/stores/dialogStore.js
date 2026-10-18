@@ -31,10 +31,3 @@ export function closeDialogs() {
   return closed;
 }
 
-/** Is any dialog on screen? */
-export function anyDialogOpen() {
-  for (const d of dialogs) {
-    try { if (d.isOpen()) return true; } catch (_) { /* ignore */ }
-  }
-  return false;
-}

@@ -3,6 +3,40 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar]
+
+### Editor — funciones de TeXstudio
+
+- **Vista previa de fórmulas al pasar el ratón** sobre `$…$`, `\[…\]` o
+  entornos como `equation`/`align`: se dibuja con KaTeX y cada `\py{}`
+  muestra su valor actual.
+- **Ctrl+clic en `\ref`, `\eqref`, `\cref`…** salta a su `\label`, también
+  en otros documentos abiertos.
+- **Renombrar un entorno** cambia `\begin{x}` y su `\end{x}` a la vez; se
+  deshace en un solo paso.
+- **Marcas del registro de compilación** en el propio código; F8 y
+  Mayús+F8 recorren los problemas.
+- Guías de sangría más precisas (resaltan el bloque activo).
+- Las tres primeras se pueden desactivar en Configuración → Editor.
+
+### Visor PDF
+
+- **SyncTeX leído directamente** del índice (`.synctex.gz`) en Rust, sin
+  arrancar el programa `synctex`: el salto código↔PDF es inmediato y ahora
+  también funciona con Tectonic.
+- La capa de texto usa la de PDF.js: al copiar del PDF se conservan los
+  saltos de línea y la selección se ajusta a las letras.
+- El salto desde el PDF elige el archivo exacto aunque dos capítulos se
+  llamen igual en carpetas distintas.
+- Abrir un proyecto con un PDF ya compilado deja SyncTeX listo sin compilar.
+
+### Interno
+
+- Eliminadas nueve funciones sin uso.
+- Nuevo documento `docs/IDEAS-Y-MEJORAS.md` con la hoja de ruta: funciones
+  de TeXstudio pendientes, ideas de Jupyter, marimo, MATLAB, Mathcad y
+  CalcTree, y repositorios útiles.
+
 ## [1.5.0] — 2026-10-16
 
 Compilar casi al instante: el preámbulo ya está cargado cuando compilas,

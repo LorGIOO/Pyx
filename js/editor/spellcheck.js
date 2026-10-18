@@ -86,7 +86,6 @@ export function buildSpeller() {
     return s;
   });
 }
-export function spellerReady() { return !!speller; }
 
 /** Switch proofing language: swap the active dictionary and drop the word
  *  cache (a word correct in one language rarely is in the other).

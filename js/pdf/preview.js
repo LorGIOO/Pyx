@@ -29,7 +29,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { readBinaryFile, openExternal, synctexEdit, pathExists, emitToWindow } from '../core/platform.js';
 import { baseName } from '../core/paths.js';
-import { buildPathToSource } from '../compile/build-maps.js';
+import { buildPathToSource, sourceOfBuild } from '../compile/build-maps.js';
 import { loupeGeometry } from './loupe-geometry.js';
 import { setAnnotDoc, buildAnnotLayer } from './annotate.js';
 import { general } from '../solid/stores/settingsStore.js';
@@ -599,11 +599,15 @@ async function flashWordOnPage(pageN, yPx, word) {
     const layer = wrap && wrap.querySelector('.pdf-textlayer');
     if (layer && layer.childElementCount) {
       // The span vertically closest to the SyncTeX position that has the word.
+      // Measured, not read from the style: PDF.js writes positions as
+      // percentages of the page.
+      const top0 = wrap.getBoundingClientRect().top;
       let best = null, bestD = Infinity;
       for (const s of layer.children) {
+        if (s.tagName !== 'SPAN') continue;
         if (s.textContent.toLowerCase().indexOf(word.toLowerCase()) < 0) continue;
         if (!s.firstChild || s.firstChild.nodeType !== 3) continue;
-        const d = Math.abs(parseFloat(s.style.top || '0') - yPx);
+        const d = Math.abs(s.getBoundingClientRect().top - top0 - yPx);
         if (d < bestD) { bestD = d; best = s; }
       }
       if (!best) return false;
@@ -714,10 +718,18 @@ async function synctexJump(pageNo, xPt, yPt, word) {
     // numbers shift below every cell: translate through the compiler's map.
     const wasBuild = /\.build\.tex$/i.test(p);
     if (wasBuild) {
-      const back = buildPathToSource(p);
-      const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
-      for (const cand of [stem + '.pltx', stem + '.tex']) {
-        if (await pathExists(cand)) { p = cand; break; }
+      // The compiler's own record of which source each build copy came from
+      // (by its full relative path: two chapters called "intro" in different
+      // folders cannot be confused). Guessing from the name is the fallback.
+      const exact = sourceOfBuild(p);
+      if (exact) {
+        p = exact;
+      } else {
+        const back = buildPathToSource(p);
+        const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
+        for (const cand of [stem + '.pltx', stem + '.tex']) {
+          if (await pathExists(cand)) { p = cand; break; }
+        }
       }
     }
     let line = hit.line || 1;
@@ -736,44 +748,25 @@ async function synctexJump(pageNo, xPt, yPt, word) {
   } catch (_) { /* synctex not available or no record at that point */ }
 }
 
-function buildTextLayer(page, vp, wrap) {
-  return page.getTextContent().then((tc) => {
-    const layer = document.createElement('div');
-    layer.className = 'pdf-textlayer';
-    layer.style.width = vp.width + 'px';
-    layer.style.height = vp.height + 'px';
-    for (const item of tc.items) {
-      if (!item.str) continue;
-      const tx = pdfjsLib.Util.transform(vp.transform, item.transform);
-      const h = Math.hypot(tx[2], tx[3]);
-      if (!h) continue;
-      const span = document.createElement('span');
-      span.textContent = item.str;
-      span.style.left = tx[4] + 'px';
-      span.style.top = tx[5] - h + 'px';
-      span.style.fontSize = h + 'px';
-      if (item.width) span.dataset.w = String(item.width * vp.scale);
-      layer.appendChild(span);
-    }
-    wrap.appendChild(layer);
-    // TWO passes: measure everything, then write everything.
-    //
-    // Reading `offsetWidth` forces the browser to flush pending layout. The
-    // old loop read one span and immediately wrote its transform, invalidating
-    // layout again for the next read — a full synchronous reflow per span, and
-    // a dense page has thousands of them. Batching the reads means one layout
-    // pass for the whole page.
-    const spans = [...layer.children];
-    const widths = new Array(spans.length);
-    for (let i = 0; i < spans.length; i++) widths[i] = spans[i].offsetWidth;
-    for (let i = 0; i < spans.length; i++) {
-      const w = parseFloat(spans[i].dataset.w || '0');
-      if (w && widths[i]) {
-        spans[i].style.transform = `scaleX(${w / widths[i]})`;
-        spans[i].style.transformOrigin = 'left top';
-      }
-    }
-  });
+/* The selectable text over each page: PDF.js's own TextLayer.
+ *
+ * It replaced a hand-built layer that positioned one span per text run and
+ * then read every span's width back from the DOM to stretch it — a forced
+ * layout per page — and that dropped the line breaks: copying a paragraph
+ * from the PDF pasted its lines glued together. PDF.js measures with a
+ * canvas (no reflow), places each run with the font's real ascent, handles
+ * rotated text, and puts a <br> at every end of line. */
+async function buildTextLayer(page, vp, content) {
+  const layer = document.createElement('div');
+  layer.className = 'pdf-textlayer';
+  // PDF.js sizes the layer and its runs as multiples of this variable.
+  layer.style.setProperty('--scale-factor', String(vp.scale));
+  content.appendChild(layer);
+  await new pdfjsLib.TextLayer({
+    textContentSource: page.streamTextContent(),
+    container: layer,
+    viewport: vp,
+  }).render();
 }
 
 /* ---------- controls ---------- */
@@ -1219,7 +1212,6 @@ let tileBusy = false;      // one PDF.js render at a time
 let tileWanted = null;     // last request while a render was in flight
 let lastLoupeEvent = null; // to repaint in place when the zoom changes
 
-export function getLoupeZoom() { return loupeZoom; }
 
 /** Change the magnification (wheel over the loupe). The tile is rendered for a
  *  specific Z, so it has to be thrown away and asked for again. */

@@ -606,6 +606,11 @@ pub struct SyncTexLoc {
 /// Returns the first record: page + x/y in PDF points from the page's
 /// top-left corner (the viewer scrolls there and flashes a marker).
 pub fn synctex_view(tex: &str, line: u32, pdf: &str) -> Result<SyncTexLoc, String> {
+    // The index itself first (synctex.rs): no process, and it works where no
+    // `synctex` program exists (Tectonic).
+    if let Some((page, x, y)) = crate::synctex::index_for(pdf).and_then(|i| i.view(tex, line)) {
+        return Ok(SyncTexLoc { page, x, y });
+    }
     let cmd = resolve_engine("synctex")
         .ok_or("No se encontró «synctex» (instala MiKTeX o TeX Live).")?;
     let mut c = Command::new(&cmd);
@@ -651,6 +656,9 @@ pub fn synctex_view(tex: &str, line: u32, pdf: &str) -> Result<SyncTexLoc, Strin
 /// ships with MiKTeX/TeX Live. `x`/`y` are PDF points from the page's
 /// top-left corner — the same coordinate system synctex reports.
 pub fn synctex_edit(pdf: &str, page: u32, x: f64, y: f64) -> Result<SyncTexHit, String> {
+    if let Some((input, line)) = crate::synctex::index_for(pdf).and_then(|i| i.edit(page, x, y)) {
+        return Ok(SyncTexHit { input, line, column: -1 });
+    }
     let cmd = resolve_engine("synctex")
         .ok_or("No se encontró «synctex» (instala MiKTeX o TeX Live).")?;
     let mut c = Command::new(&cmd);

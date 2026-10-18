@@ -16,6 +16,13 @@ import { general } from '../solid/stores/settingsStore.js';
 const cache = new Map();
 const refreshGhost = StateEffect.define();
 
+/** The last live value of a \py{} expression, if it has one (read-only, for
+ *  the math hover preview). */
+export function ghostValue(expr) {
+  const v = cache.get(expr);
+  return v && v.ok ? String(v.value) : null;
+}
+
 /**
  * The \py{…} occurrences inside the VISIBLE part of the document.
  *

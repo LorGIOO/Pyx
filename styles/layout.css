@@ -489,6 +489,12 @@
   top: 0; left: 0;
   overflow: hidden;
   line-height: 1;
+  /* What PDF.js's TextLayer expects of its container (pdf_viewer.css). */
+  text-align: initial;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
   z-index: 2;               /* above the canvas so the selection is visible */
   /* Only the glyph spans are interactive: the layer itself ignores the mouse,
      so selections don't jump across the empty gaps between text runs. */
@@ -502,13 +508,13 @@
    .pdf-word-flash mark) must stay INLINE — the old `span` selector matched
    them too, yanking every mark to its parent's origin where its highlight
    painted in the wrong place (or not visibly at all). */
-.pdf-textlayer > span {
+.pdf-textlayer > :is(span, br) {
   position: absolute;
   color: transparent;
   white-space: pre;
   cursor: text;
   line-height: 1;
-  transform-origin: 0 0;
+  transform-origin: 0% 0%;
   pointer-events: all;
   -webkit-user-select: text;
   user-select: text;
@@ -517,6 +523,10 @@
    enough that the page text stays readable under it. */
 .pdf-textlayer span::selection { background: rgba(0, 120, 215, 0.35); }
 .pdf-textlayer span::-moz-selection { background: rgba(0, 120, 215, 0.35); }
+/* The line breaks PDF.js puts between runs carry no glyph: a selection over
+   them must not paint a bar at the page's corner (pdf_viewer.css does the same). */
+.pdf-textlayer br::selection { background: transparent; }
+.pdf-textlayer br::-moz-selection { background: transparent; }
 
 /* PDF search bar (focus-aware Ctrl+F) + match highlights. */
 .pdf-search {

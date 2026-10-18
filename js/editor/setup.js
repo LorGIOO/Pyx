@@ -49,6 +49,7 @@ import { latexLint } from './latex-lint-ext.js';
 import { latexExtras } from './latex-extras.js';
 import { pySignatures } from './py-signature.js';
 import { pasteTables } from './paste-table.js';
+import { cellControls } from './controls.js';
 import { lintKeymap, previousDiagnostic } from '@codemirror/lint';
 import { latexHighlight } from './latex-highlight.js';
 import { indentGuides } from './indent-guides.js';
@@ -285,6 +286,8 @@ export function createDocState(docId, content) {
       pySignatures,
       // A table copied from Excel or a web page pastes as a tabular.
       pasteTables,
+      // MATLAB-style controls: `x = 5  # @slider(0, 10)` shows a slider.
+      cellControls,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
       // they read the user's bindings from Configuración → Atajos live.
       dynamicKeys,

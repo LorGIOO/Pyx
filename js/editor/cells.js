@@ -411,6 +411,15 @@ function copyText(text) {
   }
 }
 
+/** Run the cell containing `pos` (the controls use it). Resolves when done. */
+export async function runCellAt(view, pos) {
+  const ln = view.state.doc.lineAt(pos).number;
+  if (!cellAtLine(parseCells(view.state), ln)) return;
+  const cells = ensureCellIds(view);
+  const cell = cellAtLine(cells, ln);
+  if (cell) await runOne(view, cell);
+}
+
 export function runCellAtCursor(view) {
   if (!pyxActive()) return false;
   const ln = view.state.doc.lineAt(view.state.selection.main.head).number;
@@ -1197,7 +1206,8 @@ function upstreamStale(cells, docId) {
   cells.forEach((c, i) => {
     const o = getOutput(docId, cellKey(c));
     if (o && !o.running && o.codeHash && o.codeHash !== c.codeHash) changed.add(i);
-    else if (o && !o.running && nsIsStale(execKey(path, docId, c))) out.add(i);
+    // (A cell whose last run failed shows its error; it is not "outdated".)
+    else if (o && !o.running && o.ok !== false && nsIsStale(execKey(path, docId, c))) out.add(i);
   });
   if (changed.size) {
     for (const i of downstreamOf(cells.map((c) => analyzePython(c.code)), changed, nsImmutable())) out.add(i);

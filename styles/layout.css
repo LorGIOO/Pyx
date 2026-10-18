@@ -961,3 +961,14 @@
 .tb-install:hover { background: color-mix(in srgb, var(--theme-accent) 12%, transparent); }
 .status-missing { border: 0; background: transparent; color: var(--theme-warning, #d29922); font: inherit; cursor: pointer; }
 .status-missing:hover { text-decoration: underline; }
+
+/* Parámetros (ParamsPanel.jsx) */
+.params-panel { padding: 4px 0 10px; }
+.params-row { padding: 6px 10px; border-bottom: 1px solid var(--theme-border); }
+.params-head { display: flex; gap: 8px; align-items: baseline; cursor: default; }
+.params-name { font-family: var(--font-mono, monospace); font-weight: 600; font-size: 12px; color: var(--theme-accent); }
+.params-label { font-size: 12px; color: var(--theme-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.params-ctl { margin-top: 4px; }
+.params-ctl .pyx-ctl { margin-left: 0; }
+.params-ctl .pyx-ctl input[type=range] { width: 150px; }
+.params-example { margin: 8px 0 0; padding: 6px 8px; border-radius: 4px; background: var(--theme-bg); font-size: 11px; white-space: pre-wrap; text-align: left; }

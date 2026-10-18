@@ -133,6 +133,22 @@ const FIELDS = () => [
     label: 'Guías de indentación', en: 'Indent guides', after: EDIT,
   },
   {
+    cat: 'editor', sec: ['Ayudas de LaTeX', 'LaTeX helpers'], key: 'mathHover', type: 'check',
+    label: 'Vista previa de la fórmula al pasar el ratón', en: 'Formula preview on hover',
+    hint: ['Como en TeXstudio, pero con cada \\py{} ya sustituido por su valor: ves la fórmula tal como saldrá en el PDF.',
+      'Like TeXstudio, but with every \\py{} already replaced by its value: you see the formula as it will print.'],
+  },
+  {
+    cat: 'editor', sec: ['Ayudas de LaTeX', 'LaTeX helpers'], key: 'envRename', type: 'check',
+    label: 'Al renombrar \\begin{…}, renombrar también su \\end{…}', en: 'Renaming \\begin{…} renames its \\end{…}',
+  },
+  {
+    cat: 'editor', sec: ['Ayudas de LaTeX', 'LaTeX helpers'], key: 'logMarkers', type: 'check',
+    label: 'Subrayar en el editor los errores de la última compilación', en: 'Underline the last compile\'s errors in the editor',
+    hint: ['F8 / Mayús+F8 saltan al siguiente / anterior problema; Ctrl+Mayús+M abre la lista. Ctrl+clic en un \\ref{…} lleva a su \\label.',
+      'F8 / Shift+F8 jump to the next / previous problem; Ctrl+Shift+M opens the list. Ctrl+click a \\ref{…} to go to its \\label.'],
+  },
+  {
     cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'activeLine', type: 'check',
     label: 'Resaltar la línea actual', en: 'Highlight the current line', after: EDIT,
   },

@@ -155,6 +155,10 @@ export const GENERAL_SECTIONS = {
     folding: true,
     minimap: false,
     indentGuidesOn: true,
+    // Typeset preview of the formula under the mouse (latex-extras.js).
+    mathHover: true,
+    // Renaming \begin{x} renames its \end{x}.
+    envRename: true,
     activeLine: true,        // highlight the line the cursor is on
     selectionMatches: true,  // highlight other occurrences of the selection
     smoothScroll: false,
@@ -194,6 +198,8 @@ export const GENERAL_SECTIONS = {
     latexLint: true,
     // …plus ChkTeX's style warnings (needs chktex; off: they are many).
     chktex: false,
+    // Underline the last compile's errors on their lines (TeXstudio markers).
+    logMarkers: true,
   },
   pdf: {
     pdfFit: 'width',

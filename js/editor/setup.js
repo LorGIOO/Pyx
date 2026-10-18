@@ -46,6 +46,8 @@ import { calcCompletions } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
 import { pyLint } from './py-lint.js';
 import { latexLint } from './latex-lint-ext.js';
+import { latexExtras } from './latex-extras.js';
+import { lintKeymap, previousDiagnostic } from '@codemirror/lint';
 import { latexHighlight } from './latex-highlight.js';
 import { indentGuides } from './indent-guides.js';
 import { pyxSearchPanel } from './search-panel.js';
@@ -274,6 +276,9 @@ export function createDocState(docId, content) {
       // Live LaTeX structure checks (texlab-style): braces, environments,
       // labels and references, unclosed $ — before any compile.
       latexLint(docId),
+      // TeXstudio's editor features, Pyx-style: math preview on hover (with
+      // live \py{} values), Ctrl+click \ref → \label, \begin/\end rename.
+      latexExtras,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
       // they read the user's bindings from Configuración → Atajos live.
       dynamicKeys,
@@ -296,6 +301,10 @@ export function createDocState(docId, content) {
         { key: 'F2', run: nextBookmark, preventDefault: true },
         { key: 'Shift-F2', run: prevBookmark, preventDefault: true },
         ...closeBracketsKeymap,
+        // F8 / Shift+F8: next / previous problem (live checks and the last
+        // compile's errors alike); Ctrl+Shift+M: the list of them.
+        ...lintKeymap,
+        { key: 'Shift-F8', run: previousDiagnostic },
         ...defaultKeymap,
         ...searchKeymap,
         ...historyKeymap,
@@ -366,6 +375,13 @@ export function getViewOfDoc(docId) {
     if (did === docId) return paneViews.get(pid) || null;
   }
   return null;
+}
+
+/** Run `fn` on every open editor view (all panes). */
+export function forEachEditorView(fn) {
+  for (const vw of paneViews.values()) {
+    try { fn(vw); } catch (_) { /* a destroyed view */ }
+  }
 }
 
 /** Dispatch a cells-refresh to every pane so shared outputs repaint everywhere. */

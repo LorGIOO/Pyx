@@ -214,6 +214,11 @@ export const kernelSetPython = (path) => invoke('kernel_set_python', { path: pat
 // hard = true → kill the process (for a cell that never yields to Python).
 export const kernelInterrupt = (hard = false) => invoke('kernel_interrupt', { hard });
 export const listPythons = () => invoke('list_pythons');
+// What Pyx sets up by itself (runtime.rs): its own Python (uv) and Tectonic.
+export const runtimeInfo = () => invoke('runtime_info');
+export const installTectonic = () => invoke('install_tectonic');
+export const setupPython = (packages = []) => invoke('setup_python', { packages });
+export const installPackages = (python, packages) => invoke('install_packages', { python, packages });
 export const revealInExplorer = (path) => invoke('reveal_in_explorer', { path });
 export const openExternal = (path) => invoke('open_external', { path });
 export const openViewerWindow = (path) => invoke('open_viewer_window', { path: encodeURIComponent(path) });

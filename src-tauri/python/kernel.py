@@ -2052,6 +2052,9 @@ def _format_cell_tb(exc):
         }
     info = {"type": type(exc).__name__, "msg": msg, "line": line,
             "frames": frames, "syntax": syntax}
+    # A missing library: the app offers to install it ("Instalar …").
+    if isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", None):
+        info["module"] = exc.name.split(".")[0]
     return text, info
 
 
@@ -3120,7 +3123,9 @@ def _prewarm(names):
                     o = os.path.normcase(os.path.abspath(origin))
                     ok = any(o.startswith(r + os.sep) for r in roots)
                 if not ok:
-                    done[mod] = "no instalado en Python"
+                    # Not installed at all (the app offers to install it), or a
+                    # module of the project itself (left for the cell to import).
+                    done[mod] = "no instalado en Python" if spec is None else "local"
                     continue
                 # Through builtins.__import__, NOT importlib: the kernel's
                 # import hook lives there, and it is what adapts IPython,

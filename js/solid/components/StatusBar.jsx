@@ -43,6 +43,13 @@ export default function StatusBar() {
         <span class="label">{t('Motor:', 'Engine:')}</span>
         <span class="value">{state.env.latex || '—'}</span>
       </div>
+      <Show when={state.missingModules.length}>
+        <button class="status-item status-missing" type="button"
+          title={t('El documento importa paquetes que este Python no tiene. Pulsa para instalarlos.', 'The document imports packages this Python lacks. Click to install them.')}
+          onClick={() => import('./SetupDialog.jsx').then((m) => m.openSetup({ packages: state.missingModules.map(m.pypiName) }))}>
+          ⚠ {t('Falta', 'Missing')}: {state.missingModules.join(', ')}
+        </button>
+      </Show>
 
       <div class="status-spacer"></div>
 

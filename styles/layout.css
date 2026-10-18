@@ -929,3 +929,35 @@
 .psearch-ln { flex-shrink: 0; min-width: 22px; text-align: right; color: var(--theme-text-secondary); font-size: 11px; }
 .psearch-text { overflow: hidden; text-overflow: ellipsis; }
 .psearch-text mark { background: color-mix(in srgb, var(--theme-accent) 30%, transparent); color: inherit; border-radius: 2px; }
+
+/* Preparar Pyx (SetupDialog.jsx) */
+.setup-modal { width: min(560px, 92vw); }
+.setup-body { padding: 14px 18px 6px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.setup-lead { margin: 0; color: var(--theme-text-secondary); line-height: 1.45; }
+.setup-opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--theme-border); border-radius: 6px; cursor: default; }
+.setup-opt input { margin-top: 3px; }
+.setup-opt small { display: block; margin-top: 2px; color: var(--theme-text-secondary); }
+.setup-log {
+  max-height: 180px; overflow: auto; padding: 8px 10px; border-radius: 6px;
+  background: var(--theme-bg); border: 1px solid var(--theme-border);
+  font: 11.5px/1.45 var(--font-mono, monospace); white-space: pre-wrap; color: var(--theme-text-secondary);
+}
+.setup-wait { animation: setup-blink 1s steps(2) infinite; }
+@keyframes setup-blink { 50% { opacity: 0; } }
+.setup-error { color: var(--theme-error, #e5534b); white-space: pre-wrap; font-size: 12px; }
+.setup-ok { color: var(--theme-success, #2da44e); font-weight: 600; }
+.setup-actions { display: flex; gap: 8px; align-items: center; padding: 10px 18px 14px; }
+.setup-actions button {
+  height: 28px; padding: 0 14px; border-radius: 5px; border: 1px solid var(--theme-border);
+  background: transparent; color: var(--theme-text); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.setup-actions .setup-primary { background: var(--theme-accent); border-color: var(--theme-accent); color: #fff; }
+.setup-actions .setup-link { border: 0; padding: 0; color: var(--theme-text-secondary); text-decoration: underline; }
+.setup-actions button:disabled { opacity: .55; cursor: default; }
+.tb-install {
+  margin-top: 6px; height: 24px; padding: 0 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--theme-accent); background: transparent; color: var(--theme-accent); font: inherit; font-size: 12px;
+}
+.tb-install:hover { background: color-mix(in srgb, var(--theme-accent) 12%, transparent); }
+.status-missing { border: 0; background: transparent; color: var(--theme-warning, #d29922); font: inherit; cursor: pointer; }
+.status-missing:hover { text-decoration: underline; }

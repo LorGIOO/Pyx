@@ -222,7 +222,11 @@ if (viewerBoot) {
   // Probe the toolchain (Python + LaTeX) and warm up the kernel in the background.
   if (isTauri()) {
     detectEnv()
-      .then((env) => { state.env = env; })
+      .then((env) => {
+        state.env = env;
+        // Nothing to compute with or nothing to typeset with: offer to set it up.
+        import('./solid/components/SetupDialog.jsx').then((m) => m.offerSetupIfMissing(env)).catch(() => {});
+      })
       .catch(() => {});
     ensureKernel().catch(() => {});
     // Anything the OS delivered before the listener above existed (a cold

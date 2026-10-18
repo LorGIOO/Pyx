@@ -117,7 +117,7 @@ export async function ensureKernel() {
     const path = general.pythonPath;
     const res = path ? await kernelSetPython(path) : await kernelStart();
     if (res && res.python) state.env.python = res.python;
-    started = true; warmed.clear();
+    started = true; warmed.clear(); missing.clear(); state.missingModules = [];
     nsReset(undefined);
     state.kernelStatus = 'ready';
   } catch (e) {
@@ -135,7 +135,7 @@ export async function setKernelPython(path) {
   state.kernelStatus = 'starting';
   try {
     const res = await kernelSetPython(path);
-    started = true; warmed.clear();
+    started = true; warmed.clear(); missing.clear(); state.missingModules = [];
     nsReset(undefined);
     state.kernelStatus = 'ready';
     if (res && res.python) state.env.python = res.python;
@@ -182,7 +182,7 @@ export async function interruptKernel() {
   try { await kernelInterrupt(hard); } catch (_) { /* best effort */ }
   if (hard) {
     // The process is gone: the next request respawns an empty kernel.
-    started = false; warmed.clear();
+    started = false; warmed.clear(); missing.clear(); state.missingModules = [];
     nsInvalidate();
     state.kernelStatus = 'ready';
   } else {
@@ -225,7 +225,7 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
       // inside the caller's sequence, keeps the compile's promise — every
       // result comes from the document as it is now.
       await kernelReset();
-      started = true; warmed.clear();
+      started = true; warmed.clear(); missing.clear(); state.missingModules = [];
       lastRestart = res.restart;
       if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd, watch: watch || [] });
       else res = { ...res, restarted: true };
@@ -333,6 +333,11 @@ export async function kernelInspect(code, line, col, cwd) {
   }
 }
 
+// Top-level modules a document imports that the interpreter does not have
+// (the status bar offers to install them). Forgotten when the process changes.
+const missing = new Set();
+export const missingModules = () => [...missing];
+
 export async function prewarmModules(names, cwd) {
   if (!isTauri()) return;
   const todo = [...new Set(names)].filter((n) => n && !warmed.has(n));
@@ -342,7 +347,13 @@ export async function prewarmModules(names, cwd) {
     await ensureKernel();
     // Under the lock: a compile that starts meanwhile simply waits, and finds
     // the imports done.
-    await withKernelLock(() => kernelExec({ id: reqId++, prewarm: todo, cwd }));
+    const r = await withKernelLock(() => kernelExec({ id: reqId++, prewarm: todo, cwd }));
+    const res = (r && r.prewarm) || {};
+    for (const [mod, v] of Object.entries(res)) {
+      const top = mod.split('.')[0];
+      if (v === 'no instalado en Python') missing.add(top); else if (v === true) missing.delete(top);
+    }
+    state.missingModules = [...missing];
   } catch (_) {
     todo.forEach((n) => warmed.delete(n)); // try again next time
   }
@@ -365,14 +376,14 @@ export async function restartKernel() {
     interrupting = true;
     lastInterruptAt = Date.now();
     try { await kernelInterrupt(true); } catch (_) { /* best effort */ }
-    started = false; warmed.clear();
+    started = false; warmed.clear(); missing.clear(); state.missingModules = [];
     nsInvalidate();
   }
   return withKernelLock(async () => {
     state.kernelStatus = 'starting';
     try {
       await kernelReset();
-      started = true; warmed.clear();
+      started = true; warmed.clear(); missing.clear(); state.missingModules = [];
       nsReset(undefined);
       state.kernelStatus = 'ready';
     } catch (e) {

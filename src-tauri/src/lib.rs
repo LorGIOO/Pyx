@@ -1,6 +1,7 @@
 mod kernel;
 mod latex;
 mod pltx;
+mod runtime;
 mod synctex;
 mod workspace;
 
@@ -509,6 +510,45 @@ async fn project_texts(root: String) -> Result<Vec<ProjectText>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Progress of a set-up, as `setup:line` events for the window.
+fn setup_say(app: &tauri::AppHandle) -> impl Fn(String) + Sync {
+    let app = app.clone();
+    move |line: String| {
+        let _ = app.emit("setup:line", line);
+    }
+}
+
+/// What Pyx has set up by itself (runtime.rs): its Python environment, its
+/// Tectonic, and where they live.
+#[tauri::command]
+fn runtime_info() -> runtime::RuntimeInfo {
+    runtime::info()
+}
+
+/// Download Tectonic into Pyx's data folder (no LaTeX installed).
+#[tauri::command]
+async fn install_tectonic(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::install_tectonic(&setup_say(&app)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Create Pyx's own Python environment with the scientific stack (uv).
+#[tauri::command]
+async fn setup_python(app: tauri::AppHandle, packages: Option<Vec<String>>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::setup_python(&setup_say(&app), &packages.unwrap_or_default()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Install packages into the interpreter the kernel runs.
+#[tauri::command]
+async fn install_packages(app: tauri::AppHandle, python: String, packages: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::install_packages(&setup_say(&app), &python, &packages))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn kernel_start(state: tauri::State<'_, KernelState>) -> Result<serde_json::Value, String> {
     let k = state.handle();
@@ -905,6 +945,10 @@ pub fn run() {
             path_exists,
             read_dir,
             project_texts,
+            runtime_info,
+            install_tectonic,
+            setup_python,
+            install_packages,
             file_stamps,
             kernel_start,
             kernel_exec,

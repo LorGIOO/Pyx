@@ -885,6 +885,16 @@ function renderTraceback(err, headerLine, body, view) {
   m.textContent = ': ' + mapMsgLines(err.msg, headerLine);
   last.appendChild(m);
   wrap.appendChild(last);
+  if (err.module) {
+    // A library that is not installed: one click installs it.
+    const b = document.createElement('button');
+    b.className = 'tb-install';
+    b.textContent = `Instalar ${err.module}…`;
+    b.title = 'Instalar el paquete en el Python que usa Pyx';
+    b.onmousedown = (e) => e.preventDefault();
+    b.onclick = () => import('../solid/components/SetupDialog.jsx').then((mod) => mod.offerPackage(err.module));
+    wrap.appendChild(b);
+  }
   body.appendChild(wrap);
 }
 

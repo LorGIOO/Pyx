@@ -680,6 +680,16 @@ export default function ConfigDialog() {
                   {tr('Intérprete en uso', 'Interpreter in use')}: {state.env.python || tr('sin detectar', 'not detected')}
                   {' · '}{tr('Estado del kernel', 'Kernel status')}: {state.kernelStatus}
                 </p>
+                <div class="cfg-row">
+                  <span class="cfg-label">{tr('Python de Pyx', 'Pyx\'s Python')}</span>
+                  <button class="cfg-btn" onClick={() => import('./SetupDialog.jsx').then((m) => m.openSetup({ python: true }))}>
+                    {tr('Preparar o actualizar…', 'Set up or update…')}
+                  </button>
+                </div>
+                <p class="cfg-hint">
+                  {tr('Crea, con uv, un Python propio de Pyx con numpy, scipy, sympy, pandas, matplotlib, handcalcs y pint, sin tocar el sistema. Pasa a ser el intérprete que usa Pyx.',
+                    'Creates, with uv, Pyx\'s own Python with numpy, scipy, sympy, pandas, matplotlib, handcalcs and pint, without touching the system. It becomes the interpreter Pyx uses.')}
+                </p>
               </Show>
 
               <Show when={!searching() && cat() === 'compile'}>
@@ -698,6 +708,14 @@ export default function ConfigDialog() {
                       'No LaTeX found on the system. Install MiKTeX or TeX Live, or Tectonic: a single program that downloads only the packages each document needs.')}
                   {' '}{tr('El motor se aplica al documento activo.', 'The engine applies to the active document.')}
                 </p>
+                <Show when={!(state.env.engines || []).includes('tectonic')}>
+                  <div class="cfg-row">
+                    <span class="cfg-label">Tectonic</span>
+                    <button class="cfg-btn" onClick={() => import('./SetupDialog.jsx').then((m) => m.openSetup({ latex: true }))}>
+                      {tr('Descargar Tectonic…', 'Download Tectonic…')}
+                    </button>
+                  </div>
+                </Show>
               </Show>
 
               {/* The declarative option rows. */}

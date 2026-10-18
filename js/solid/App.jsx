@@ -11,6 +11,7 @@ import ConfigDialog from './components/ConfigDialog.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Wizards from './components/Wizards.jsx';
 import NewDocDialog, { openNewDoc } from './components/NewDocDialog.jsx';
+import SetupDialog from './components/SetupDialog.jsx';
 import { t } from '../core/i18n.js';
 import { openDocument } from './stores/docStore.js';
 
@@ -106,6 +107,7 @@ export default function App() {
       <ContextMenu />
       <Wizards />
       <NewDocDialog />
+      <SetupDialog />
     </>
   );
 }

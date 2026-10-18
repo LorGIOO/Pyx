@@ -184,6 +184,8 @@ export const GENERAL_SECTIONS = {
   },
   cells: {
     pythonPath: '',
+    // "No volver a preguntar" in the Preparar Pyx dialog.
+    setupNeverAsk: false,
     // Mayús+Intro also runs the cells that depend on the one run (marimo).
     reactiveCells: true,
     pyGhost: true,

@@ -482,7 +482,8 @@ fn runs(cmd: &str) -> bool {
 /// processes don't always inherit the user PATH (where a per-user MiKTeX adds
 /// itself), so we scan these as a fallback.
 fn tex_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
+    // The Tectonic Pyx downloads itself when no LaTeX is installed (runtime.rs).
+    let mut dirs = vec![crate::runtime::tectonic_dir()];
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         dirs.push(PathBuf::from(&local).join(r"Programs\MiKTeX\miktex\bin\x64"));
     }

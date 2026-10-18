@@ -11,6 +11,7 @@ describe('local grammar rules', () => {
     expect(msgs('Hola , mundo.')[0][1]).toMatch(/Sobra el espacio/);
     expect(msgs('uno,dos')[0][1]).toMatch(/Falta un espacio/);
     expect(msgs('vale 1,5 kN')).toEqual([]);
+    expect(msgs('dos pilares ,y una viga').map((m) => m[1])).toEqual(['Sobra el espacio antes de «,»', 'Falta un espacio después de «,»']);
   });
   it('capital after a full stop, not after an abbreviation or a number', () => {
     expect(msgs('Fin. empieza otra.')[0][1]).toMatch(/mayúscula/);

@@ -27,13 +27,14 @@ export function grammarHits(masked, lang = 'es') {
     const from = m.index + m[1].length + m[2].length;
     out.push({ from, to: from + m[3].length, message: `Palabra repetida: «${m[3]}»`, fix: '' });
   }
-  // A space before , ; : . ! ?  ("hola ,")
-  const before = /(?<=\p{L}|\p{N}|[)\]])( +)([,;:.!?])(?=\s|$)/gu;
+  // A space before , ; : ! ? ("hola ,", "pilares ,y") — and before a full
+  // stop that ends a sentence ("fin ." but not "a .5").
+  const before = /(?<=\p{L}|\p{N}|[)\]])( +)([,;:!?]|\.(?=\s|$))/gu;
   while ((m = before.exec(masked))) {
     out.push({ from: m.index, to: m.index + m[1].length, message: `Sobra el espacio antes de «${m[2]}»`, fix: '' });
   }
-  // No space after , ; before a letter ("a,b" — but 1,5 or 1.5 are numbers).
-  const after = /(?<=\p{L})([,;])(?=\p{L})/gu;
+  // No space after , ; before a letter ("a,b", "pilares ,y" — but 1,5 is a number).
+  const after = /(?<!\p{N})([,;])(?=\p{L})/gu;
   while ((m = after.exec(masked))) {
     out.push({ from: m.index, to: m.index + 1, message: `Falta un espacio después de «${m[1]}»`, fix: `${m[1]} ` });
   }

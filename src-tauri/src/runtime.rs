@@ -70,6 +70,10 @@ pub fn env_python() -> Option<PathBuf> {
 /// The packages Pyx's environment starts with: what a calculation report uses.
 pub const DEFAULT_PACKAGES: &[&str] = &[
     "numpy", "scipy", "sympy", "pandas", "matplotlib", "openpyxl", "handcalcs", "pint", "jedi",
+    // handcalcs' %%render and %%tex are IPython magics: without IPython they cannot exist.
+    "ipython",
+    // pandas' to_latex (pyx.tex / pyx.tabletex on a DataFrame) goes through jinja2.
+    "jinja2",
 ];
 
 const TECTONIC: &str = "0.15.0";

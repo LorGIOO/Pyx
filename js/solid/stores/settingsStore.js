@@ -184,6 +184,8 @@ export const GENERAL_SECTIONS = {
   },
   cells: {
     pythonPath: '',
+    // Mayús+Intro also runs the cells that depend on the one run (marimo).
+    reactiveCells: true,
     pyGhost: true,
     saveOutputs: true,
   },

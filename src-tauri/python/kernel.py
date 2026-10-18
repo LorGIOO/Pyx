@@ -12,6 +12,10 @@ Requests (one JSON object per line):
     {"id": 2, "evals": ["x", "x*2-3/2"], "cwd": "C:/docs"}     # for \\py{...}
     {"id": 3, "lint": ["cell code", ...]}                        # squiggles
     {"id": 4, "prewarm": ["numpy", "scipy.optimize"], "cwd": ...}
+    {"id": 5, "forget": ["a", "b"]}                              # dependency graph
+    A cell request may carry "watch": [names]; its response then lists the
+    watched names whose value did not change ("unchanged") and every name bound
+    to an immutable value ("immutable").
 
 Control messages (handled while a cell is still running):
     {"type": "interrupt"}     raise KeyboardInterrupt in the running cell
@@ -3314,6 +3318,94 @@ def _lint(cells):
     return found
 
 
+# ---------------------------------------------------------------------------
+# dependency graph support (js/editor/dep-plan.js)
+# ---------------------------------------------------------------------------
+# The app re-runs only the cells a change reaches. Two facts only the kernel
+# has make that sharper:
+#   * which names hold IMMUTABLE values: an int handed to a function cannot be
+#     modified by it, so that call does not make the cell a writer of the int;
+#   * which names a cell left with the SAME value ("early cutoff"): re-running
+#     `g = 9.81` gives 9.81 again, and nothing that reads g has to run.
+_IMMUTABLE_TYPES = (int, float, complex, bool, str, bytes, type(None), range,
+                    frozenset, types.FunctionType, types.BuiltinFunctionType)
+
+
+def _is_immutable(v, depth=0):
+    if isinstance(v, _IMMUTABLE_TYPES):
+        return True
+    if isinstance(v, tuple):
+        return depth < 3 and len(v) <= 64 and all(_is_immutable(x, depth + 1) for x in v)
+    t = type(v)
+    mod = getattr(t, "__module__", "") or ""
+    name = t.__name__
+    np_mod = sys.modules.get("numpy")
+    if np_mod is not None and isinstance(v, np_mod.generic):
+        return True  # numpy scalars (np.float64…), not arrays
+    if mod.startswith("sympy"):
+        return not hasattr(v, "__setitem__")  # expressions are immutable; matrices are not
+    if mod in ("fractions", "decimal", "datetime") or name in ("Fraction", "Decimal"):
+        return True
+    return False
+
+
+def _immutable_names():
+    out = []
+    try:
+        for k, v in list(NS.items()):
+            if k.startswith("_") or isinstance(v, types.ModuleType):
+                continue
+            try:
+                if _is_immutable(v):
+                    out.append(k)
+            except Exception:
+                pass
+            if len(out) >= 5000:
+                break
+    except Exception:
+        pass
+    return out
+
+
+def _same_value(a, b):
+    """True when a name still holds what it held: the same immutable object,
+    or an equal immutable of the same type. A mutable object, even the very
+    same one, may have been modified in place — never 'the same'."""
+    try:
+        if not _is_immutable(a):
+            return False
+        if a is b:
+            return True
+        if type(a) is not type(b) or not _is_immutable(b):
+            return False
+        if isinstance(a, types.FunctionType):
+            # Re-running an unchanged `def` makes a new function that does the
+            # same thing: same code, same immutable defaults, no closure.
+            return (a.__code__ == b.__code__ and a.__closure__ is None and b.__closure__ is None
+                    and a.__globals__ is b.__globals__
+                    and _is_immutable(a.__defaults__) and a.__defaults__ == b.__defaults__
+                    and not a.__kwdefaults__ and not b.__kwdefaults__
+                    and not getattr(a, "__dict__", None) and not getattr(b, "__dict__", None))
+        eq = a == b
+        # numpy answers with its own bool type; anything else (an array) is "no".
+        return eq is True or (type(eq).__name__ == "bool_" and bool(eq))
+    except Exception:
+        return False
+
+
+def _forget(names):
+    """Delete names a removed or edited cell no longer defines."""
+    gone = []
+    for n in names or []:
+        if isinstance(n, str) and not n.startswith("__") and n in NS:
+            try:
+                del NS[n]
+                gone.append(n)
+            except Exception:
+                pass
+    return gone
+
+
 def _run_request(req):
     """Execute one cell and collect everything it produced."""
     global _USER_CWD
@@ -3332,6 +3424,9 @@ def _run_request(req):
             pass
     code = req.get("code", "")
     ok, result, render_latex, error = True, None, None, None
+    # The values of the names the app asked about, before the cell runs.
+    watch = [n for n in (req.get("watch") or []) if isinstance(n, str)]
+    before = {n: NS[n] for n in watch if n in NS}
     info = _exec_info(code)
     exc_obj = None
     _READS.clear()
@@ -3413,6 +3508,9 @@ def _run_request(req):
         "images": images,
         # Data files the cell read: [path, mtime ms, size] (see _pyx_open).
         "reads": [[p, m, s] for p, (m, s) in list(_READS.items())[:_READS_MAX]],
+        # Watched names the cell left exactly as they were (early cutoff).
+        "unchanged": [n for n in watch if n in before and n in NS and _same_value(before[n], NS[n])],
+        "immutable": _immutable_names() if req.get("watch") is not None else None,
     }
 
 
@@ -3513,6 +3611,8 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, "lint": _lint(req.get("lint"))}
     if req.get("vars"):
         return {"id": req.get("id"), "ok": True, "vars": _vars()}
+    if "forget" in req:
+        return {"id": req.get("id"), "ok": True, "forgot": _forget(req.get("forget"))}
     return _run_request(req)
 
 

@@ -265,6 +265,13 @@ const FIELDS = () => [
       'Mathcad-style: the result appears greyed next to the expression, without touching the document.'],
   },
   {
+    cat: 'cells', sec: ['Ejecución', 'Execution'], key: 'reactiveCells', type: 'check',
+    label: 'Ejecución reactiva: al ejecutar una celda, ejecutar también las que dependen de ella',
+    en: 'Reactive execution: running a cell also runs the cells that depend on it',
+    hint: ['Como marimo: Pyx sabe qué variables define y usa cada celda. Al ejecutar una (Mayús+Intro) se ejecutan también las que usan lo que ha cambiado, y solo esas. Desactivado, se ejecuta solo esa celda (como en Jupyter) y las que dependen de ella se marcan como desactualizadas. La compilación siempre ejecuta únicamente lo necesario.',
+      'Like marimo: Pyx knows which variables each cell defines and uses. Running one (Shift+Enter) also runs the cells that use what changed, and only those. Off, only that cell runs (as in Jupyter) and the ones that depend on it are marked out of date. Compiling always runs only what is needed.'],
+  },
+  {
     cat: 'cells', sec: ['Resultados', 'Results'], key: 'saveOutputs', type: 'check',
     label: 'Guardar los resultados dentro del documento', en: 'Store results inside the document',
     hint: ['Los resultados viajan dentro del .pltx: al reabrir el informe se ven los números, las tablas y las figuras sin volver a ejecutar nada (ni hace falta Python). Un resultado cuya celda haya cambiado se descarta y la celda se marca como desactualizada.',

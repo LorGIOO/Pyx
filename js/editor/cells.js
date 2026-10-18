@@ -36,9 +36,12 @@ import {
   CELL_OPEN, CELL_CLOSE, cellKey, parseCells, cellAtLine,
 } from './cell-parse.js';
 import {
-  runCellCode, withKernelLock, interruptKernel, nsRecord, nsPrefix, nsInvalidate, recordRender,
-  takeRestartReason,
+  runCellCode, withKernelLock, interruptKernel, recordRender, takeRestartReason,
+  nsRecord, nsFail, nsMarkStale, nsIsStale, nsPlan, nsImmutable, execKey, programOf, forgetNames,
 } from './cell-runner.js';
+import { analyzePython } from './py-deps.js';
+import { executePlan, downstreamOf } from './dep-plan.js';
+import { general } from '../solid/stores/settingsStore.js';
 import { broadcastCellRefresh } from './setup.js';
 import { getOutput, setOutput, deleteOutput, clearDoc, gcDoc } from './cell-outputs.js';
 import { createRichFrame, sanitizeFragment, needsIsolation, guardLinks } from './rich-frame.js';
@@ -161,23 +164,40 @@ export function ensureCellIds(view) {
 }
 
 /* ---------- run / edit actions ---------- */
+// The path a document is saved at (cells of unsaved documents are keyed by id).
+function docPath(docId) {
+  const d = appState.documents.find((x) => x.id === docId);
+  return d ? d.path : undefined;
+}
+
+/** This document's cells as a planner program, and the keys they run under. */
+function docProgram(docId, cells) {
+  const path = docPath(docId);
+  const entries = cells.map((cell) => ({ key: execKey(path, docId, cell), cell }));
+  const prefix = `${path || `doc:${docId}`}::`;
+  return { entries, program: programOf(entries), owned: (k) => k.startsWith(prefix) };
+}
+
 // Internal executor — callers must hold the kernel lock. The lock keeps a cell
 // run from slipping INTO another sequence (e.g. between the compile's kernel
 // reset and its import cells), which produced phantom NameErrors (plt, np…).
-async function execCell(docId, cell, cwd) {
+// `meta`: the key it runs under, what it defines (D) and the names whose
+// value the kernel should report as unchanged (early cutoff).
+async function execCell(docId, cell, cwd, meta = {}) {
   const key = cellKey(cell);
   const prev = getOutput(docId, key) || {};
   setOutput(docId, key, { ...prev, running: true, codeHash: cell.codeHash });
   broadcastCellRefresh();
   const t0 = performance.now();
-  const res = await runCellCode(cell.code, { cwd });
+  const res = await runCellCode(cell.code, { cwd, watch: meta.watch });
   const ms = performance.now() - t0;
   const count = res.ok ? ++execCounter : prev.count || null;
   setOutput(docId, key, { ...res, running: false, count, ms, codeHash: cell.codeHash });
   // What this cell puts in the document, for a compile that later skips it.
   recordRender(cell.codeHash, cell.code, res);
-  if (res.ok) nsRecord(cell.codeHash, cwd, res.reads);
-  else nsInvalidate();
+  const nsKey = meta.key || execKey(docPath(docId), docId, cell);
+  if (res.ok) nsRecord(nsKey, cell.codeHash, cwd, res.reads, meta.D);
+  else nsFail(nsKey, meta.D);
   broadcastCellRefresh();
   return res;
 }
@@ -198,11 +218,48 @@ function scheduleHandcalcsCompile() {
   hcTimer = setTimeout(fire, 120);
 }
 
+/**
+ * Mayús+Intro. Reactive by default, like marimo: the cell runs, and so does
+ * every cell that depends on what it defines — only those, and only if what
+ * they read actually changed. A cell it needs that has never run runs first.
+ * With "Ejecución reactiva" off it is Jupyter's: this cell alone, and the
+ * cells that depend on it are marked outdated.
+ */
 async function runOne(view, cell) {
   const docId = docIdOf(view.state);
   const cwd = await activeCwd();
-  const res = await withKernelLock(() => execCell(docId, cell, cwd));
-  if (res && res.ok && res.render) scheduleHandcalcsCompile();
+  let render = false;
+  await withKernelLock(async () => {
+    const cells = parseCells(view.state);
+    const me = cells.findIndex((c) => cellKey(c) === cellKey(cell));
+    if (me < 0) return;
+    const { entries, program, owned } = docProgram(docId, cells);
+    const plan = nsPlan(program, { dir: cwd, forced: [entries[me].key], interactive: true, owned });
+    const meta = (i, watch) => ({ key: entries[i].key, D: plan.effects[i].D, watch });
+    if (plan.mode !== 'graph' || general.reactiveCells === false) {
+      const res = await execCell(docId, cells[me], cwd, meta(me));
+      render = !!(res && res.ok && res.render);
+      if (plan.mode === 'graph') {
+        // What depends on this cell now holds results from its old version.
+        nsMarkStale(plan.run.filter((i) => i > me).map((i) => entries[i].key));
+        // It needed a fresher input than the namespace had: its own result
+        // is not reproducible until the cells above run again.
+        if (plan.run.some((i) => i < me)) nsMarkStale([entries[me].key]);
+        broadcastCellRefresh();
+      }
+      return;
+    }
+    const out = await executePlan(plan, {
+      forget: forgetNames,
+      run: async (i, watch) => {
+        const res = await execCell(docId, cells[i], cwd, meta(i, watch));
+        if (res && res.ok && res.render) render = true;
+        return res;
+      },
+    });
+    if (!out.ok) { nsMarkStale(out.notRun.map((i) => entries[i].key)); broadcastCellRefresh(); }
+  });
+  if (render) scheduleHandcalcsCompile();
 }
 
 function findByKey(view, key) {
@@ -234,19 +291,26 @@ function deleteCellByKey(view, key) {
    the rest. They all go through the kernel lock, because a half-run sequence
    leaves the namespace describing a document that never existed. */
 
-/** Run cells[from…to) in order, stopping at the first failure. */
+/** Run cells[from…to) in order, stopping at the first failure. The cells
+ *  below the range that depend on it are marked outdated. */
 async function runRange(view, from, to) {
   const docId = docIdOf(view.state);
   const cwd = await activeCwd();
   let render = false;
   await withKernelLock(async () => {
     const cells = parseCells(view.state);
-    for (let i = from; i < Math.min(to, cells.length); i++) {
-      const res = await execCell(docId, cells[i], cwd);
-      if (res && res.ok === false) break; // a failed cell poisons what follows
+    const end = Math.min(to, cells.length);
+    const { entries, program, owned } = docProgram(docId, cells);
+    const keys = entries.slice(from, end).map((e) => e.key);
+    const plan = nsPlan(program, { dir: cwd, forced: keys, interactive: true, owned });
+    for (let i = from; i < end; i++) {
+      const res = await execCell(docId, cells[i], cwd, { key: entries[i].key, D: plan.effects[i].D });
+      if (res && res.ok === false) { nsMarkStale(entries.slice(i + 1, end).map((e) => e.key)); break; }
       if (res && res.render) render = true;
     }
+    if (plan.mode === 'graph') nsMarkStale(plan.run.filter((i) => i >= end).map((i) => entries[i].key));
   });
+  broadcastCellRefresh();
   if (render) scheduleHandcalcsCompile();
 }
 
@@ -390,24 +454,22 @@ export function runCellAndAdvance(view) {
  * open (inline outputs update) or directly against the kernel otherwise. Used
  * by the multi-file compiler. Callers must hold the kernel lock.
  */
-export async function execCellFor(view, docId, cell, cwd) {
-  if (view && docId != null) return execCell(docId, cell, cwd);
-  const res = await runCellCode(cell.code, { cwd });
+export async function execCellFor(view, docId, cell, cwd, meta = {}) {
+  if (view && docId != null) return execCell(docId, cell, cwd, meta);
+  const res = await runCellCode(cell.code, { cwd, watch: meta.watch });
   recordRender(cell.codeHash, cell.code, res);
-  if (res.ok) nsRecord(cell.codeHash, cwd, res.reads);
-  else nsInvalidate();
+  if (res.ok) nsRecord(meta.key, cell.codeHash, cwd, res.reads, meta.D);
+  else nsFail(meta.key, meta.D);
   return res;
 }
 
 /**
  * Run every cell of the document.
  *
- * INCREMENTAL BY DEFAULT. The kernel remembers the exact ordered list of cell
- * bodies it has executed since its last reset (see cell-runner). When that
- * list is a prefix of what we are about to run — the usual case while writing,
- * where only the last cells changed — the namespace is already correct for
- * that prefix and only the tail needs to run. Nothing is skipped that could
- * change the result: a divergence anywhere forces a full reset and re-run.
+ * INCREMENTAL BY DEFAULT: the dependency graph (dep-plan.js) runs only the
+ * cells whose code changed and what they reach, with early cutoff. Anything
+ * it cannot follow falls back to the exact rule — run from the first cell
+ * that differs, or reset and run everything.
  *
  * `force` (the "Run all" button) always resets: it is the ground truth.
  */
@@ -417,15 +479,18 @@ async function runAllCellsHeld(view, { force = false, cwd } = {}) {
   const cells = parseCells(view.state);
   if (!cells.length) return;
   const dir = cwd !== undefined ? cwd : await activeCwd();
-  const start = force ? 0 : nsPrefix(cells.map((c) => c.codeHash), dir);
-  if (start === 0) {
+  const { entries, program } = docProgram(docId, cells);
+  let plan = force ? null : nsPlan(program, { dir });
+  if (!plan || plan.mode === 'full') {
     await runCellCode('', { cwd: dir, reset: true });
     takeRestartReason(); // reported by compiles only
+    plan = nsPlan(program, { dir });
   }
-  for (let i = start; i < cells.length; i++) {
-    const res = await execCell(docId, cells[i], dir);
-    if (res && res.ok === false) break; // a failed cell poisons everything below
-  }
+  const out = await executePlan(plan, {
+    forget: forgetNames,
+    run: (i, watch) => execCell(docId, cells[i], dir, { key: entries[i].key, D: plan.effects[i].D, watch }),
+  });
+  if (!out.ok) nsMarkStale(out.notRun.map((i) => entries[i].key));
 }
 
 export async function runAllCells(view, { force = true } = {}) {
@@ -626,8 +691,15 @@ class CellToolbar extends WidgetType {
       // number pass for a current one.
       const status = document.createElement('span');
       status.className = 'cell-status stale';
-      status.textContent = '⟳ resultado desactualizado';
-      status.title = 'La celda ha cambiado desde la última ejecución. Vuelve a ejecutarla.';
+      if (this.stale === 'upstream') {
+        // Its own code is unchanged, but something it depends on is not.
+        status.textContent = '⟳ desactualizada: depende de una celda modificada';
+        status.title = 'Una celda de la que depende ha cambiado. Ejecuta esa celda (Mayús+Intro) '
+          + 'y Pyx volverá a ejecutar esta automáticamente, o compila.';
+      } else {
+        status.textContent = '⟳ resultado desactualizado';
+        status.title = 'La celda ha cambiado desde la última ejecución. Vuelve a ejecutarla.';
+      }
       left.appendChild(status);
     }
     bar.appendChild(left);
@@ -1105,9 +1177,28 @@ function buildDecorations(state) {
   }
 }
 
+/** Cells whose own code is unchanged but that depend on one that changed
+ *  (or that the last run left outdated): the cascade marimo shows. */
+function upstreamStale(cells, docId) {
+  const out = new Set();
+  if (!cells.length) return out;
+  const changed = new Set();
+  const path = docPath(docId);
+  cells.forEach((c, i) => {
+    const o = getOutput(docId, cellKey(c));
+    if (o && !o.running && o.codeHash && o.codeHash !== c.codeHash) changed.add(i);
+    else if (o && !o.running && nsIsStale(execKey(path, docId, c))) out.add(i);
+  });
+  if (changed.size) {
+    for (const i of downstreamOf(cells.map((c) => analyzePython(c.code)), changed, nsImmutable())) out.add(i);
+  }
+  return out;
+}
+
 function buildDecorationsUnsafe(state) {
   const cells = parseCells(state);
   const docId = docIdOf(state);
+  const outdated = upstreamStale(cells, docId);
   const collapsed = state.field(collapsedCells);
   const outCollapsed = state.field(collapsedOutputs);
   const hidden = state.field(hideOutputsState);
@@ -1119,8 +1210,10 @@ function buildDecorationsUnsafe(state) {
     const key = cellKey(cell);
     const output = getOutput(docId, key);
     // A result produced by DIFFERENT code than the cell currently holds.
-    const stale = !!(output && !output.running && output.codeHash
+    const ownStale = !!(output && !output.running && output.codeHash
       && output.codeHash !== cell.codeHash);
+    const stale = ownStale ? true
+      : (output && !output.running && outdated.has(cell.index) ? 'upstream' : false);
     const isCollapsed = collapsed.has(key);
     const isActive = key === active;
     const header = doc.line(cell.headerLine);

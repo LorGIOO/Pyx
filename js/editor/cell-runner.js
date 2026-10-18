@@ -4,7 +4,9 @@ import {
   kernelExec, kernelStart, kernelReset, kernelSetPython, kernelInterrupt, isTauri,
 } from '../core/platform.js';
 import { general, setGeneral } from '../solid/stores/settingsStore.js';
-import { createLedger } from './ns-ledger.js';
+import { createExecState } from './exec-state.js';
+import { analyzePython } from './py-deps.js';
+import { cellKey } from './cell-parse.js';
 
 let reqId = 1;
 let started = false;
@@ -38,22 +40,44 @@ export function withKernelLock(fn) {
   return run;
 }
 
-/* ---------------- namespace ledger (incremental execution) ----------------
-   Which cell bodies built the kernel's current namespace, in order. See
-   ns-ledger.js for why a prefix may be skipped and why that is never wrong. */
-const ledger = createLedger();
+/* ---------------- what the namespace holds (incremental execution) ----------------
+   Which version of each cell the kernel's namespace reflects, and what it
+   defined: the dependency graph (dep-plan.js) re-runs only the cells a change
+   reaches, and early cutoff skips those whose inputs came out equal. See
+   exec-state.js for the bookkeeping and why an unknown namespace is never
+   reused. */
+const ns = createExecState();
 
 /** The kernel was just reset: the namespace is empty and we know it exactly. */
-export const nsReset = (cwd) => ledger.reset(cwd);
-/** The namespace changed in a way we cannot describe (error, crash, restart). */
-export const nsInvalidate = () => ledger.invalidate();
-/** Record that a cell body ran successfully against the current namespace,
- *  with the data files it read (the kernel's `reads`). */
-export const nsRecord = (hash, cwd, reads) => ledger.record(hash, cwd, reads);
-/** How many leading cells of `hashes` the kernel has already executed. */
-export const nsPrefix = (hashes, cwd) => ledger.prefix(hashes, cwd);
-/** The data files the first `n` executed cells read. */
-export const nsReads = (n) => ledger.reads(n);
+export const nsReset = (cwd) => ns.reset(cwd);
+/** The namespace changed in a way we cannot describe (crash, restart). */
+export const nsInvalidate = () => ns.invalidate();
+/** A cell ran to completion: `D` is what it defines (the plan's effects). */
+export const nsRecord = (key, hash, cwd, reads, D) => ns.record(key, hash, cwd, reads, D);
+/** A cell failed or was interrupted. */
+export const nsFail = (key, D) => ns.fail(key, D);
+/** These cells' results were computed from inputs that have since changed. */
+export const nsMarkStale = (keys) => ns.markStale(keys);
+export const nsIsStale = (key) => ns.isStale(key);
+/** The data files the given cells read, to check against the disk. */
+export const nsReads = (keys) => ns.reads(keys);
+/** Names bound to immutable values, as the kernel last reported them. */
+export const nsImmutable = () => ns.state().immutable;
+/** What to run for a program ([{key, hash, info}]). */
+export const nsPlan = (program, opts) => ns.plan(program, opts);
+
+/** The key a cell's run is filed under: unique across a project's files. */
+export const execKey = (path, docId, cell) => `${path || `doc:${docId}`}::${cellKey(cell)}`;
+/** A planner program from [{key, cell}]. */
+export const programOf = (entries) => entries.map(({ key, cell }) => ({
+  key, hash: cell.codeHash, info: analyzePython(cell.code),
+}));
+
+/** Delete names from the namespace (a removed cell's, before its readers re-run). */
+export async function forgetNames(names) {
+  if (!isTauri() || !names.length) return;
+  await kernelExec({ id: reqId++, forget: names });
+}
 
 /* ---------------- handcalcs output, whichever way a cell ran ----------------
    A cell may inject LaTeX into the document ONLY when it declares one of the
@@ -177,9 +201,10 @@ export async function interruptKernel() {
 /**
  * Run a block of Python in the kernel.
  * @param {string} code
- * @param {{cwd?: string, reset?: boolean}} opts
+ * @param {{cwd?: string, reset?: boolean, watch?: string[]}} opts  `watch`: names
+ *   whose value the response should say came out unchanged (early cutoff)
  */
-export async function runCellCode(code, { cwd, reset } = {}) {
+export async function runCellCode(code, { cwd, reset, watch } = {}) {
   if (!isTauri()) {
     return {
       ok: false,
@@ -192,7 +217,7 @@ export async function runCellCode(code, { cwd, reset } = {}) {
   await ensureKernel();
   state.kernelStatus = 'busy';
   try {
-    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset });
+    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset, watch: watch || [] });
     if (reset && res && Array.isArray(res.restart) && res.restart.length) {
       // The document modified a library in the running process
       // (`scipy.constants.g = 10`, `math.pi = …`): no in-process reset can
@@ -202,10 +227,11 @@ export async function runCellCode(code, { cwd, reset } = {}) {
       await kernelReset();
       started = true; warmed.clear();
       lastRestart = res.restart;
-      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd });
+      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd, watch: watch || [] });
       else res = { ...res, restarted: true };
     }
     if (reset) nsReset(cwd);
+    if (res && Array.isArray(res.immutable)) ns.setImmutable(res.immutable);
     state.kernelStatus = res.ok ? 'ready' : 'error';
     return res;
   } catch (e) {

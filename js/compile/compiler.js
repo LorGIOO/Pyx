@@ -12,9 +12,11 @@ import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
 import { docIdOf } from '../editor/doc-id.js';
 import {
-  runCellCode, evalExpressions, withKernelLock, nsPrefix, nsReads, interruptKernel,
+  runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
+  execKey, programOf, forgetNames,
 } from '../editor/cell-runner.js';
+import { executePlan } from '../editor/dep-plan.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
 import { setBuildMaps, persistBuildMaps, ensureBuildMaps } from './build-maps.js';
@@ -656,7 +658,7 @@ let lastReal = { ok: null, log: '' };
  *   references. That is "Recompilar desde cero" — the escape hatch, never the
  *   default. Forcing it on every "Compilar" (as 1.4.x did) made each press pay
  *   for every import, dataset and simulation again plus two or three full
- *   xelatex passes, although the ledger (cells) and the rerun detection in
+ *   xelatex passes, although the dependency graph (cells) and the rerun detection in
  *   latex.rs (references, lists) already guarantee the same result
  *   incrementally — and fall back to a full run on any doubt.
  */
@@ -798,80 +800,90 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       const hashes = runOrder.map((e) => e.cell.codeHash);
       phase.total = runOrder.length;
 
-      /* Run the cells the kernel does not already hold.
+      /* Run only the cells a change reaches.
        *
-       * The kernel keeps a ledger of exactly which cell bodies built its
-       * current namespace (cell-runner). When that ledger is a prefix of what
-       * we are about to run — the normal case when a background compile fires
-       * because you edited a paragraph, or changed only the last cell — those
-       * cells need not run again. A divergence anywhere, a different working
-       * directory, or an unknown namespace forces a reset and a full re-run,
-       * so a skip can never produce a value that a full run would not.
+       * The dependency graph (dep-plan.js) knows what each cell defines and
+       * reads, and what version of each cell the kernel's namespace reflects.
+       * A compile runs the cells whose code changed, the cells that depend on
+       * them — each only if what it reads really came out different (early
+       * cutoff) — and nothing else. Editing the plot at the end of a report no
+       * longer re-runs the simulation above it; editing a paragraph runs no
+       * Python at all.
        *
-       * "Compilar y ver" used to force a reset, on the reasoning that a manual
-       * compile is the ground truth. It cost a full re-run — every import,
-       * every dataset, every simulation — on EVERY press, which is most of the
-       * 10-50 s a compile used to take. The ledger already provides that
-       * guarantee: it skips a prefix only when it is exactly a prefix, and any
-       * doubt at all falls back to a reset. Forcing one on top bought nothing
-       * and charged for it every time. A full re-run is still available, and
-       * still explicit: "Reiniciar el kernel". */
-      // Returns where it started: 0 = everything ran, from a clean namespace.
+       * Whatever the graph cannot follow (exec, `global`, IPython magics…)
+       * falls back to the exact rule: reuse the namespace only when the
+       * kernel ran exactly the first cells of this document, otherwise reset
+       * and run everything. An unknown namespace is never reused, and "Recompilar
+       * desde cero" always starts from an empty one. */
+      const program = programOf(runOrder.map((e) => ({ key: execKey(e.path, null, e.cell), cell: e.cell })));
+      // Says whether everything ran from a clean namespace, and whether a cell failed.
       const runTree = async (force) => {
         problems = '';
-        let start = force ? 0 : nsPrefix(hashes, cwd);
-        // A handcalcs cell the ledger lets us skip must have its typeset block
-        // on hand, or the PDF would silently lose the calculation. Every run
-        // fills the cache, so this only fires after an eviction — and then a
-        // full re-run is the right answer.
-        if (runOrder.slice(0, start).some((e) => HANDCALCS_MAGIC.test(e.cell.code)
-          && !renderKnown(e.cell.codeHash))) start = 0;
-        // A cell is only "already run" if what it READ is still the same: a
-        // spreadsheet or CSV edited since gives different numbers with the
-        // same code. One changed file and the run starts over, from a clean
-        // namespace.
-        if (start > 0) {
-          const deps = nsReads(start);
+        let plan = force ? null : nsPlan(program, { dir: cwd });
+        if (plan && plan.mode !== 'full') {
+          const mustRun = (i) => (plan.seeds ? plan.seeds.has(i) : plan.run.includes(i));
+          const forced = [];
+          // A handcalcs cell that is skipped must have its typeset block on
+          // hand, or the PDF would silently lose the calculation. Every run
+          // fills the cache; this only fires after an eviction.
+          program.forEach((p, i) => {
+            if (!mustRun(i) && HANDCALCS_MAGIC.test(runOrder[i].cell.code) && !renderKnown(p.hash)) forced.push(p.key);
+          });
+          // A cell is only "already run" if what it READ is still the same: a
+          // spreadsheet or CSV edited since gives different numbers with the
+          // same code. That cell runs again, with what depends on it.
+          const deps = nsReads(program.filter((_, i) => !mustRun(i)).map((p) => p.key));
           if (deps.length) {
             try {
               const st = await fileStamps(deps.map((d) => d.path));
-              if (st.some((x, i) => !x || x.mtime !== deps[i].mtime || x.size !== deps[i].size)) start = 0;
+              st.forEach((x, i) => {
+                if (!x || x.mtime !== deps[i].mtime || x.size !== deps[i].size) forced.push(deps[i].key);
+              });
             } catch (_) {
-              start = 0;
+              plan = null;
             }
           }
+          if (plan && forced.length) plan = nsPlan(program, { dir: cwd, forced });
         }
-        if (start === 0) {
+        let fromScratch = false;
+        if (!plan || plan.mode === 'full') {
           await runCellCode('', { cwd, reset: true });
           const why = takeRestartReason();
           if (why) pythonNote = `proceso nuevo: el documento modificaba ${why.join(', ')}`;
+          plan = nsPlan(program, { dir: cwd });
+          fromScratch = true;
         }
-        for (let i = start; i < runOrder.length; i++) {
-          if (cancelRequested) break; // "Detener": not one more cell
-          phase.ran++;
-          const { path, cell, nth } = runOrder[i];
-          const od = state.documents.find((d) => !d.kind && samePath(d.path, path));
-          const view = od ? getViewOfDoc(od.id) : null;
-          const res = await execCellFor(view, view ? docIdOf(view.state) : null, cell, cwd);
-          // execCellFor recorded the cell's typeset block (recordRender, where
-          // the HARD RULE lives: only a cell that EXPLICITLY declares
-          // %%render / %%tex may put anything into the PDF).
-          if (res && res.ok === false) {
-            // Absolute document line of the failure (VSCode-style precision).
-            const el = res.error && res.error.line != null ? cell.headerLn + res.error.line : null;
-            // The traceback is structured (colored in the cell): the problem
-            // message comes from it, with lines mapped to the document.
-            const emsg = res.error
-              ? `${res.error.type}: ${String(res.error.msg || '').replace(
-                  /\b(line|línea)\s+(\d+)/gi, (a, w, m2) => `${w} ${cell.headerLn + +m2}`)}`
-              : res.stderr;
-            cellProblem(`${baseName(path)} · celda ${nth}`, emsg, el);
-            // Everything below a failed cell would run against a namespace we
-            // can no longer describe: stop rather than produce numbers that
-            // look right and are not.
-            break;
-          }
-        }
+        const out = await executePlan(plan, {
+          stop: () => cancelRequested, // "Detener": not one more cell
+          forget: forgetNames,
+          run: async (i, watch) => {
+            phase.ran++;
+            const { path, cell, nth } = runOrder[i];
+            const od = state.documents.find((d) => !d.kind && samePath(d.path, path));
+            const view = od ? getViewOfDoc(od.id) : null;
+            const res = await execCellFor(view, view ? docIdOf(view.state) : null, cell, cwd,
+              { key: program[i].key, D: plan.effects[i].D, watch });
+            // execCellFor recorded the cell's typeset block (recordRender, where
+            // the HARD RULE lives: only a cell that EXPLICITLY declares
+            // %%render / %%tex may put anything into the PDF).
+            if (res && res.ok === false) {
+              // Absolute document line of the failure (VSCode-style precision).
+              const el = res.error && res.error.line != null ? cell.headerLn + res.error.line : null;
+              // The traceback is structured (colored in the cell): the problem
+              // message comes from it, with lines mapped to the document.
+              const emsg = res.error
+                ? `${res.error.type}: ${String(res.error.msg || '').replace(
+                    /\b(line|línea)\s+(\d+)/gi, (a, w, m2) => `${w} ${cell.headerLn + +m2}`)}`
+                : res.stderr;
+              cellProblem(`${baseName(path)} · celda ${nth}`, emsg, el);
+            }
+            return res;
+          },
+        });
+        // Everything a failed cell feeds would run against a namespace we can
+        // no longer describe: it stops there, and what did not run is marked
+        // outdated so the next compile runs it.
+        if (!out.ok) nsMarkStale(out.notRun.map((i) => program[i].key));
         // Every cell contributes its typeset block, skipped ones included:
         // their code is unchanged, so the cached render is exactly current.
         for (const f of files.values()) f.renders = {};
@@ -879,7 +891,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           const latex = cachedRender(cell.codeHash);
           if (latex) file.renders[cellKey(cell)] = latex;
         }
-        return start;
+        return { fromScratch, failed: out.failedAt !== undefined };
       };
 
       // ONE lock for the whole sequence: reset + every cell + \py{} evaluation
@@ -889,8 +901,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       state.compilePhase = 'python';
       await withKernelLock(async () => {
         // Only "Recompilar desde cero" discards what the kernel holds; any
-        // other compile reuses the ledger-verified prefix (see runTree).
-        const ranFrom = await runTree(fresh);
+        // other compile reuses what the dependency graph proves current.
+        const { fromScratch, failed } = await runTree(fresh);
 
         // 2) Resolve \py{...} expressions against that exact namespace.
         if (exprs.length && !cancelRequested) valueMap = await evalExpressions(exprs, { cwd });
@@ -914,8 +926,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // interrupted 30-second cell into sixty), and the log said "2
         // ejecutadas de 1".
         // Never after "Detener": the stop interrupted a cell, and healing
-        // would re-run every cell the user just asked to stop.
-        if (!cancelRequested && ranFrom > 0 && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
+        // would re-run every cell the user just asked to stop. Nor after a
+        // cell failed: the values it should have produced are missing because
+        // of that cell, and running everything again cannot change it.
+        if (!cancelRequested && !fromScratch && !failed && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
           await runTree(true);
           if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
         }

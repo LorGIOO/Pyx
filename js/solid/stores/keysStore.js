@@ -16,6 +16,7 @@ export const KEY_ACTIONS = [
   { id: 'file.close', group: 'Archivo', label: 'Cerrar pestaña', en: 'Close tab', def: 'Ctrl+W' },
 
   { id: 'edit.find', group: 'Edición', label: 'Buscar (editor o PDF, según el foco)', en: 'Find (editor or PDF, depending on focus)', def: 'Ctrl+F' },
+  { id: 'edit.findProject', group: 'Edición', label: 'Buscar en todo el proyecto', en: 'Search the whole project', def: 'Ctrl+Shift+F' },
 
   { id: 'calc.runCell', group: 'Cálculo', label: 'Ejecutar la celda actual', en: 'Run the current cell', def: 'Ctrl+Enter' },
   { id: 'calc.runAdvance', group: 'Cálculo', label: 'Ejecutar celda y avanzar', en: 'Run cell and advance', def: 'Shift+Enter' },

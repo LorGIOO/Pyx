@@ -122,6 +122,11 @@ if (viewerBoot) {
     'file.open': () => { openDocument(); },
     'file.save': () => { saveActive(); },
     'file.close': () => { closeActive(); },
+    'edit.findProject': () => {
+      // Already open: re-open it, so it takes the new selection and the focus.
+      if (state.sidePanelTab === 'search') { state.sidePanelTab = null; setTimeout(() => { state.sidePanelTab = 'search'; }, 0); }
+      else state.sidePanelTab = 'search';
+    },
     'compile.run': () => { compileActive(); },
     'compile.fresh': () => { compileActive(true, { fresh: true }); },
     'compile.stop': () => { cancelCompile(); },

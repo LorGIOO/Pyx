@@ -442,6 +442,73 @@ async fn read_dir(path: String) -> Result<Vec<DirItem>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// One searchable file of a project: its path and its text.
+#[derive(serde::Serialize)]
+struct ProjectText {
+    path: String,
+    text: String,
+}
+
+/// The text of every source file under `root`, for "Buscar en el proyecto".
+///
+/// LaTeX and Python sources, bibliographies, styles and notes; a .pltx gives
+/// its document source. Hidden folders, build folders and anything larger
+/// than 4 MB are skipped, and the walk stops at 3000 files and 12 levels, so a
+/// project opened from the wrong folder (a whole home directory) cannot hang
+/// the search.
+#[tauri::command]
+async fn project_texts(root: String) -> Result<Vec<ProjectText>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        const EXTS: &[&str] = &[
+            "tex", "ltx", "sty", "cls", "bib", "bbx", "cbx", "dtx", "ins", "cfg", "py", "md", "txt",
+        ];
+        const SKIP: &[&str] = &["node_modules", "__pycache__", "target", "build", "dist"];
+        let mut out = Vec::new();
+        let mut stack = vec![(std::path::PathBuf::from(&root), 0usize)];
+        let mut files = 0usize;
+        while let Some((dir, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                let Ok(meta) = entry.metadata() else { continue };
+                let path = entry.path();
+                if meta.is_dir() {
+                    if depth < 12 && !SKIP.contains(&name.as_str()) && !name.ends_with("_calc_figs") {
+                        stack.push((path, depth + 1));
+                    }
+                    continue;
+                }
+                if meta.len() > 4 * 1024 * 1024 {
+                    continue;
+                }
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let p = path.to_string_lossy().to_string();
+                let text = if ext == "pltx" {
+                    pltx::read(&p, false).ok().and_then(|r| r.source)
+                } else if EXTS.contains(&ext.as_str()) && !name.contains(".build.") {
+                    std::fs::read(&path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+                } else {
+                    None
+                };
+                if let Some(text) = text {
+                    out.push(ProjectText { path: p, text });
+                    files += 1;
+                    if files >= 3000 {
+                        return Ok(out);
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn kernel_start(state: tauri::State<'_, KernelState>) -> Result<serde_json::Value, String> {
     let k = state.handle();
@@ -837,6 +904,7 @@ pub fn run() {
             write_bytes,
             path_exists,
             read_dir,
+            project_texts,
             file_stamps,
             kernel_start,
             kernel_exec,

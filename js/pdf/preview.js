@@ -794,6 +794,37 @@ export function setFit(mode) {
   renderVisible();
 }
 export function rerender() { recomputeGeometry(); renderVisible(); }
+
+/* ---------- bookmarks (the PDF's outline) ---------- */
+/** The PDF's bookmarks as a tree: [{title, dest, items}] ([] if it has none —
+ *  a LaTeX PDF has them when the document loads hyperref). */
+export async function pdfOutline() {
+  if (!pdfDoc) return [];
+  let raw;
+  try { raw = await pdfDoc.getOutline(); } catch (_) { return []; }
+  const conv = (items) => (items || []).map((it) => ({ title: it.title, dest: it.dest, items: conv(it.items) }));
+  return conv(raw);
+}
+
+/** Scroll to a bookmark's destination, its top near the top of the viewer. */
+export async function goToOutline(dest) {
+  if (!pdfDoc || !container) return;
+  let d = dest;
+  try {
+    if (typeof d === 'string') d = await pdfDoc.getDestination(d);
+    if (!Array.isArray(d)) return;
+    const idx = typeof d[0] === 'number' ? d[0] : await pdfDoc.getPageIndex(d[0]);
+    const pageH = baseH[idx] || 1;
+    // XYZ / FitH / FitBH give the top in PDF units, measured from the BOTTOM.
+    const name = d[1] && d[1].name;
+    const top = name === 'XYZ' ? d[3] : (name === 'FitH' || name === 'FitBH') ? d[2] : null;
+    const y = typeof top === 'number' ? Math.max(0, pageH - top) : 0;
+    const yDoc = padTop + tops[idx] + Math.min(1, y / pageH) * pageHpx(idx);
+    container.scrollTop = Math.max(0, yDoc - 24);
+    setCurrentPage(idx + 1);
+    scheduleVisible();
+  } catch (_) { /* a broken destination: stay where we are */ }
+}
 export function hasPdf() { return !!pdfDoc; }
 
 // Anchor = which page is under the cursor + the fractional position inside it.

@@ -10,6 +10,7 @@ import FileTree from './FileTree.jsx';
 import VariablesPanel from './VariablesPanel.jsx';
 import ProjectSearch from './ProjectSearch.jsx';
 import ParamsPanel from './ParamsPanel.jsx';
+import HistoryPanel from './HistoryPanel.jsx';
 
 // Side-strip icons, same hand as the ribbon (16x16, 1.2px strokes). The
 // codicon each one is modelled on is named in the comment.
@@ -25,6 +26,8 @@ const I = {
   files: `<svg ${S}><path d="M5.5 1.5h4L12.5 4.5v8a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M9.5 1.5v3h3"/><path d="M2.5 4.2v9.3a1 1 0 0 0 1 1H10"/></svg>`,
   // codicon: settings (sliders)
   params: `<svg ${S}><path d="M2.5 4h7M12.5 4h1M2.5 8h2M7.5 8h6M2.5 12h5M10.5 12h3"/><circle cx="11" cy="4" r="1.5"/><circle cx="6" cy="8" r="1.5"/><circle cx="9" cy="12" r="1.5"/></svg>`,
+  // codicon: history
+  history: `<svg ${S}><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8"/><path d="M2.4 2.6v2.6H5"/><path d="M8 5v3.2l2.2 1.4"/></svg>`,
   // codicon: search
   search: `<svg ${S}><circle cx="6.8" cy="6.8" r="4.3"/><path d="m10 10 4 4"/></svg>`,
   // codicon: symbol-variable
@@ -38,6 +41,7 @@ const TABS = [
   { id: 'search', label: 'Buscar en el proyecto', icon: I.search },
   { id: 'vars', label: 'Variables', icon: I.vars },
   { id: 'params', label: 'Parámetros', icon: I.params },
+  { id: 'history', label: 'Historial', icon: I.history },
 ];
 const KIND_SHORT = {
   part: 'P', chapter: 'C', section: 'S', subsection: 'ss',
@@ -154,6 +158,11 @@ export default function SidePanel() {
             {/* Parámetros: the document's controls (# @slider …), CalcTree-style */}
             <Show when={tab() === 'params'}>
               <ParamsPanel />
+            </Show>
+
+            {/* Historial: saved versions and Git */}
+            <Show when={tab() === 'history'}>
+              <HistoryPanel />
             </Show>
 
             {/* Buscar en el proyecto (Ctrl+Mayús+F) */}

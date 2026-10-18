@@ -217,6 +217,8 @@ export const GENERAL_SECTIONS = {
   lang: {
     spellCheck: true,
     grammarCheck: true,
+    // LanguageTool server ('' = off): grammar.js, latex-lint-ext.js.
+    languageTool: '',
   },
   syntax: {
     // 'classic' = the palette Pyx has always shipped; '2026' = VS Code's new

@@ -50,6 +50,8 @@ import { latexExtras } from './latex-extras.js';
 import { pySignatures } from './py-signature.js';
 import { pasteTables } from './paste-table.js';
 import { cellControls } from './controls.js';
+import { cursorHistory, historyBack, historyForward } from './cursor-history.js';
+import { runMacroIndex } from './macros.js';
 import { lintKeymap, previousDiagnostic } from '@codemirror/lint';
 import { latexHighlight } from './latex-highlight.js';
 import { indentGuides } from './indent-guides.js';
@@ -288,6 +290,8 @@ export function createDocState(docId, content) {
       pasteTables,
       // MATLAB-style controls: `x = 5  # @slider(0, 10)` shows a slider.
       cellControls,
+      // Alt+← / Alt+→: back and forward through the places you jumped from.
+      cursorHistory,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
       // they read the user's bindings from Configuración → Atajos live.
       dynamicKeys,
@@ -305,6 +309,10 @@ export function createDocState(docId, content) {
         // Jupyter-style cell reorder (whole cell moves; plain lines otherwise).
         { key: 'Alt-ArrowUp', run: moveCellOrLineUp, preventDefault: true },
         { key: 'Alt-ArrowDown', run: moveCellOrLineDown, preventDefault: true },
+        // Alt+Shift+1…9: the user's Python macros.
+        ...Array.from({ length: 9 }, (_, i) => ({ key: `Alt-Shift-${i + 1}`, run: () => runMacroIndex(i), preventDefault: true })),
+        { key: 'Alt-ArrowLeft', run: historyBack, preventDefault: true },
+        { key: 'Alt-ArrowRight', run: historyForward, preventDefault: true },
         // TeXstudio-style bookmarks.
         { key: 'Ctrl-F2', run: toggleBookmarkAtCursor, preventDefault: true },
         { key: 'F2', run: nextBookmark, preventDefault: true },

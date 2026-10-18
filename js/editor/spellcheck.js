@@ -14,6 +14,7 @@ import { parseCells } from './cells.js';
 import { general, setGeneral } from '../solid/stores/settingsStore.js';
 import { lang } from '../core/i18n.js';
 import Nspell from 'nspell';
+import { grammarHits } from './grammar.js';
 import { WORD, isAcronym, maskLine } from './spell-mask.js';
 
 // Dispatched to force a re-scan (dictionary finished loading, or a setting
@@ -255,7 +256,6 @@ export function spellInfoAt(view, pos) {
 
 /* ---------------- decorations ---------------- */
 const SPELL = Decoration.mark({ class: 'cm-spell-bad' });
-const GRAMMAR = Decoration.mark({ class: 'cm-grammar-bad' });
 
 function buildDecos(view) {
   const spell = general.spellCheck !== false && speller;
@@ -284,12 +284,12 @@ function buildDecos(view) {
         }
       }
       if (grammar) {
-        // Repeated word ("el el") — Word-style blue underline on the second one.
-        const rep = /\b(\p{L}{3,})(\s+)(\1)\b/giu;
-        let g;
-        while ((g = rep.exec(masked))) {
-          const from = line.from + g.index + g[1].length + g[2].length;
-          marks.push({ from, to: from + g[3].length, deco: GRAMMAR });
+        // grammar.js: repeated words, punctuation spacing, capitals, «a el»…
+        // — blue, Word-style, the reason on hover.
+        for (const h of grammarHits(masked, spellLang())) {
+          const from = line.from + h.from;
+          if (inSkip(skips, from)) continue;
+          marks.push({ from, to: line.from + h.to, deco: Decoration.mark({ class: 'cm-grammar-bad', attributes: { title: h.message } }) });
         }
       }
     }

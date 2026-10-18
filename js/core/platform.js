@@ -216,6 +216,14 @@ export const kernelInterrupt = (hard = false) => invoke('kernel_interrupt', { ha
 export const listPythons = () => invoke('list_pythons');
 // What Pyx sets up by itself (runtime.rs): its own Python (uv) and Tectonic.
 export const runtimeInfo = () => invoke('runtime_info');
+// Version history of documents and Git (history.rs).
+export const historySave = (path, content) => invoke('history_save', { path, content });
+export const historyList = (path) => invoke('history_list', { path });
+export const historyRead = (path, id) => invoke('history_read', { path, id });
+export const gitStatus = (dir) => invoke('git_status', { dir });
+export const gitInit = (dir) => invoke('git_init', { dir });
+export const gitCommit = (dir, message) => invoke('git_commit', { dir, message });
+export const gitShow = (dir, rev, file) => invoke('git_show', { dir, rev, file });
 export const installTectonic = () => invoke('install_tectonic');
 export const setupPython = (packages = []) => invoke('setup_python', { packages });
 export const installPackages = (python, packages) => invoke('install_packages', { python, packages });

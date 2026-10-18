@@ -972,3 +972,66 @@
 .params-ctl .pyx-ctl { margin-left: 0; }
 .params-ctl .pyx-ctl input[type=range] { width: 150px; }
 .params-example { margin: 8px 0 0; padding: 6px 8px; border-radius: 4px; background: var(--theme-bg); font-size: 11px; white-space: pre-wrap; text-align: left; }
+
+/* PDF bookmarks (PdfOutline.jsx) */
+.preview-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.preview-body > .preview-scroll { min-width: 0; }
+.pdfo {
+  width: 200px; flex-shrink: 0; overflow: auto; padding-bottom: 8px;
+  background: var(--theme-surface); border-right: 1px solid var(--theme-border);
+  font-size: 12px; color: var(--theme-text);
+}
+.pdfo-title { padding: 8px 10px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--theme-text-secondary); }
+.pdfo-row { padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.pdfo-row:hover { background: var(--theme-hover); }
+.pdfo-empty { padding: 8px 10px; color: var(--theme-text-secondary); }
+
+/* Macros (MacrosDialog.jsx) */
+.macros-modal { width: min(820px, 94vw); }
+.macros-body { display: flex; min-height: 360px; }
+.macros-list { width: 230px; flex-shrink: 0; border-right: 1px solid var(--theme-border); padding: 6px 0; display: flex; flex-direction: column; }
+.macros-item { display: flex; flex-direction: column; padding: 5px 12px; cursor: default; font-size: 12.5px; }
+.macros-item.active { background: var(--theme-hover); box-shadow: inset 2px 0 var(--theme-accent); }
+.macros-key { font-size: 10px; color: var(--theme-text-secondary); }
+.macros-list-actions { margin-top: auto; display: flex; gap: 6px; padding: 8px 10px 4px; }
+.macros-list-actions button, .macros-actions button {
+  height: 26px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--theme-border);
+  background: transparent; color: var(--theme-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.macros-actions .setup-primary { background: var(--theme-accent); border-color: var(--theme-accent); color: #fff; }
+.macros-actions .danger { color: var(--theme-error, #e5534b); }
+.macros-edit { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; min-width: 0; }
+.macros-name { width: 100%; }
+.macros-code {
+  flex: 1; min-height: 200px; resize: vertical; padding: 8px; border-radius: 4px;
+  border: 1px solid var(--theme-border); background: var(--theme-bg); color: var(--theme-text);
+  font: 12.5px/1.5 var(--font-mono, monospace); tab-size: 4; white-space: pre;
+}
+.macros-actions { display: flex; gap: 8px; align-items: center; }
+
+/* Historial (HistoryPanel.jsx) */
+.hist { padding: 4px 0 12px; }
+.hist .sym-cat-name { padding: 6px 10px 2px; }
+.hist-row { display: flex; gap: 8px; justify-content: space-between; padding: 4px 10px; font-size: 12px; cursor: default; }
+.hist-row:hover { background: var(--theme-hover); }
+.hist-size { color: var(--theme-text-secondary); font-size: 11px; white-space: nowrap; }
+.hist-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-btn {
+  height: 24px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--theme-border);
+  background: transparent; color: var(--theme-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.hist-btn.primary { background: var(--theme-accent); border-color: var(--theme-accent); color: #fff; }
+.hist-btn:disabled { opacity: .5; cursor: default; }
+.hist-git { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px; }
+.hist-git .hist-row { padding: 4px 0; }
+.hist-branch { font-size: 12px; color: var(--theme-text-secondary); }
+.hist-changes { max-height: 120px; overflow: auto; font: 11px var(--font-mono, monospace); color: var(--theme-text-secondary); }
+.hist-msg { resize: vertical; padding: 4px 6px; border-radius: 4px; border: 1px solid var(--theme-border); background: var(--theme-bg); color: var(--theme-text); font: inherit; font-size: 12px; }
+.hist-note { padding: 6px 10px; font-size: 11px; color: var(--theme-text-secondary); white-space: pre-wrap; }
+.hist-compare { margin: 0 6px 8px; border: 1px solid var(--theme-border); border-radius: 6px; overflow: hidden; }
+.hist-compare-bar { display: flex; gap: 6px; align-items: center; padding: 4px 6px; background: var(--theme-hover); font-size: 12px; }
+.hist-diff { max-height: 320px; overflow: auto; font: 11px/1.45 var(--font-mono, monospace); }
+.hist-line { padding: 0 6px; white-space: pre-wrap; word-break: break-all; }
+.hist-line.tdel { background: color-mix(in srgb, #e5534b 18%, transparent); }
+.hist-line.tadd { background: color-mix(in srgb, #2da44e 18%, transparent); }
+.hist-line.tgap { color: var(--theme-text-secondary); text-align: center; }

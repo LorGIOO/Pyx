@@ -1,3 +1,4 @@
+mod history;
 mod kernel;
 mod latex;
 mod pltx;
@@ -549,6 +550,70 @@ async fn install_packages(app: tauri::AppHandle, python: String, packages: Vec<S
         .map_err(|e| e.to_string())?
 }
 
+/// Grammar check with a LanguageTool server (grammar.js): `server` is its base
+/// URL. Through the system's curl, like the other downloads; the text goes on
+/// stdin, never on a command line.
+#[tauri::command]
+async fn languagetool_check(server: String, language: String, text: String, disabled: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let base = server.trim().trim_end_matches('/');
+        if !(base.starts_with("http://") || base.starts_with("https://")) {
+            return Err("La dirección del servidor debe empezar por http:// o https://".into());
+        }
+        let url = if base.ends_with("/v2/check") { base.to_string() } else { format!("{base}/v2/check") };
+        let mut cmd = Command::new("curl");
+        cmd.args(["-s", "--max-time", "20", "-X", "POST", &url,
+                  "--data-urlencode", &format!("language={language}"),
+                  "--data-urlencode", &format!("disabledRules={disabled}"),
+                  "--data-urlencode", "text@-"])
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        quiet(&mut cmd);
+        let mut child = cmd.spawn().map_err(|e| format!("No se pudo ejecutar curl: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err("LanguageTool no respondió.".into());
+        }
+        serde_json::from_slice(&out.stdout).map_err(|_| "Respuesta de LanguageTool no válida.".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/* ---------- version history and Git (history.rs) ---------- */
+#[tauri::command]
+async fn history_save(path: String, content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || history::save(&path, &content)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn history_list(path: String) -> Vec<history::Version> {
+    tauri::async_runtime::spawn_blocking(move || history::list(&path)).await.unwrap_or_default()
+}
+#[tauri::command]
+async fn history_read(path: String, id: u64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || history::read(&path, id)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_status(dir: String) -> Result<history::GitStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || history::status(&dir)).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn git_init(dir: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || history::init(&dir)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_commit(dir: String, message: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || history::commit(&dir, &message)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_show(dir: String, rev: String, file: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || history::show(&dir, &rev, &file)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn kernel_start(state: tauri::State<'_, KernelState>) -> Result<serde_json::Value, String> {
     let k = state.handle();
@@ -945,6 +1010,14 @@ pub fn run() {
             path_exists,
             read_dir,
             project_texts,
+            history_save,
+            history_list,
+            history_read,
+            git_status,
+            git_init,
+            git_commit,
+            git_show,
+            languagetool_check,
             runtime_info,
             install_tectonic,
             setup_python,

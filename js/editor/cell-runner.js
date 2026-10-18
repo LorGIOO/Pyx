@@ -338,6 +338,13 @@ export async function kernelInspect(code, line, col, cwd) {
 const missing = new Set();
 export const missingModules = () => [...missing];
 
+/** Run a user macro in the kernel (its own namespace). */
+export async function kernelMacro(code, { selection, document, line, cwd } = {}) {
+  if (!isTauri()) return { error: 'Las macros necesitan la app de escritorio.' };
+  await ensureKernel();
+  return withKernelLock(() => kernelExec({ id: reqId++, macro: code, selection, document, line, cwd }));
+}
+
 export async function prewarmModules(names, cwd) {
   if (!isTauri()) return;
   const todo = [...new Set(names)].filter((n) => n && !warmed.has(n));

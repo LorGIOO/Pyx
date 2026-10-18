@@ -184,6 +184,25 @@ const reRef = new RegExp(`\\\\(?:${REF_CMDS})\\{([^}]*)$`);
 const reCite = new RegExp(`\\\\(?:${CITE_CMDS})\\{([^}]*)$`);
 const reEnv = /\\(begin|end)\{([a-zA-Z*]*)$/;
 const rePy = /\\py\{([\w.]*)$/; // \py{ → live kernel variable names
+const reGls = /\\(?:gls|Gls|GLS|glspl|Glspl|GLSpl|glsdesc|glssymbol|glsname|glstext|acrshort|acrlong|acrfull|Acrshort|Acrlong|Acrfull|ac|Ac|acs|acl|acf|acp|acsp|aclp|acfp)\{([^}]*)$/;
+
+// Glossary entries and acronyms defined in the open documents (and .tex/.bib
+// glossary files they open), for \gls{…}.
+function glossaryOptions() {
+  const text = allOpenText();
+  const out = new Map();
+  let m;
+  const reEntry = /\\newglossaryentry\s*\{([^}]+)\}\s*\{([^]*?)\}\s*$/gm;
+  while ((m = reEntry.exec(text))) {
+    const name = (/name\s*=\s*\{?([^,}]+)/.exec(m[2]) || [])[1];
+    out.set(m[1].trim(), name ? `glosario: ${name.trim()}` : 'glosario');
+  }
+  const reSimple = /\\newglossaryentry\s*\{([^}]+)\}/g;
+  while ((m = reSimple.exec(text))) if (!out.has(m[1].trim())) out.set(m[1].trim(), 'glosario');
+  const reAcr = /\\(?:newacronym|DeclareAcronym)\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}\s*(?:\{([^}]*)\})?/g;
+  while ((m = reAcr.exec(text))) out.set(m[1].trim(), m[2] ? `sigla: ${m[2]}` : 'sigla');
+  return [...out].map(([label, detail]) => ({ label, detail, type: 'constant' }));
+}
 
 
 // All open text documents joined (master + children), so labels/bib defined in
@@ -370,6 +389,9 @@ export async function calcCompletions(context) {
   let m;
   if ((m = before.match(reRef))) {
     return { from: context.pos - m[1].length, options: labelOptions(), validFor: /^[^}]*$/ };
+  }
+  if ((m = before.match(reGls))) {
+    return { from: context.pos - m[1].length, options: glossaryOptions(), validFor: /^[^}]*$/ };
   }
   if ((m = before.match(reCite))) {
     const frag = m[1].split(',').pop(); // complete the key after the last comma

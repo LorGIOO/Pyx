@@ -383,8 +383,14 @@ const FIELDS = () => [
     cat: 'lang', sec: ['Gramática y estructura', 'Grammar and structure'], key: 'grammarCheck', type: 'check',
     label: 'Subrayar problemas de estructura (azul)', en: 'Underline structure problems (blue)',
     after: () => broadcastSpellRefresh(),
-    hint: ['Detecta palabras repetidas seguidas («el el»), al estilo de Word.',
-      'Detects consecutive repeated words ("the the"), Word-style.'],
+    hint: ['Sin conexión: palabras repetidas («el el»), espacios antes de la puntuación o que faltan después, mayúscula tras un punto, «a el»/«de el» y los signos de apertura ¿ ¡ que faltan. Pasa el ratón por el subrayado para ver el motivo.',
+      'Offline: repeated words ("the the"), spaces before punctuation or missing after it, a capital after a full stop. Hover over the underline to see why.'],
+  },
+  {
+    cat: 'lang', sec: ['Gramática y estructura', 'Grammar and structure'], key: 'languageTool', type: 'text',
+    label: 'Servidor de LanguageTool', en: 'LanguageTool server', placeholder: 'http://localhost:8081',
+    hint: ['Opcional: la revisión gramatical completa de LanguageTool (el motor de LibreOffice). Escribe la dirección de tu servidor (java -jar languagetool-server.jar --port 8081 → http://localhost:8081) o https://api.languagetool.org para el servidor público, que recibe el texto del documento. Vacío = desactivado. Sus avisos aparecen como diagnósticos (F8), con las correcciones propuestas.',
+      'Optional: LanguageTool\'s full grammar check (LibreOffice\'s engine). Enter your server\'s address (java -jar languagetool-server.jar --port 8081 → http://localhost:8081) or https://api.languagetool.org for the public server, which receives the document\'s text. Empty = off. Its findings show as diagnostics (F8), with the proposed fixes.'],
   },
 ];
 
@@ -532,6 +538,10 @@ export default function ConfigDialog() {
                 {(o) => <option value={o[0]}>{o[1]}</option>}
               </For>
             </select>
+          </Show>
+          <Show when={f.type === 'text'}>
+            <input class="cfg-select cfg-wide" type="text" spellcheck={false} value={fValue(f) || ''}
+              placeholder={f.placeholder || ''} disabled={off()} onChange={(e) => fSet(f, e.target.value.trim())} />
           </Show>
           <Show when={f.type === 'range'}>
             <input type="range" min={f.min} max={f.max} step={f.step} value={fValue(f)} disabled={off()}

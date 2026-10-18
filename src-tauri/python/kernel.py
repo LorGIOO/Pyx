@@ -15,6 +15,7 @@ Requests (one JSON object per line):
     {"id": 5, "forget": ["a", "b"]}                              # dependency graph
     {"id": 6, "complete": "code", "line": 3, "col": 4, "cwd": ...} # completion (jedi)
     {"id": 7, "inspect": "code", "line": 3, "col": 4}             # signature + doc
+    {"id": 8, "macro": "resultado = seleccion.upper()", "selection": "…"}
     A cell request may carry "watch": [names]; its response then lists the
     watched names whose value did not change ("unchanged") and every name bound
     to an immutable value ("immutable").
@@ -3552,6 +3553,37 @@ def _inspect(req):
         _STDERR.point_to(_BG_ERR)
 
 
+# ---------------------------------------------------------------------------
+# macros (TeXstudio's macros, in Python)
+# ---------------------------------------------------------------------------
+def _macro(req):
+    """Run one of the user's macros: Python that reads the editor's selection
+    and puts a result in its place. It runs in a namespace of its own — the
+    document's variables are readable as `variables`, never replaced."""
+    code = req.get("macro") or ""
+    env = {
+        "__name__": "__pyx_macro__",
+        "seleccion": req.get("selection") or "",
+        "texto": req.get("document") or "",
+        "linea": int(req.get("line") or 1),
+        "resultado": None,
+        "variables": NS,
+    }
+    out = _CellIO()
+    _STDOUT.point_to(out)
+    _STDERR.point_to(out)
+    try:
+        with _USER_CODE:
+            exec(compile(code, "<macro>", "exec"), env)
+    except BaseException as e:
+        return {"error": "%s: %s" % (type(e).__name__, _safe_str(e)), "stdout": _clip_text(out.getvalue(), 20000)}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+    res = env.get("resultado")
+    return {"result": None if res is None else _safe_str(res), "stdout": _clip_text(out.getvalue(), 20000)}
+
+
 def _run_request(req):
     """Execute one cell and collect everything it produced."""
     global _USER_CWD
@@ -3763,6 +3795,8 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, **_complete(req)}
     if "inspect" in req:
         return {"id": req.get("id"), "ok": True, "inspect": _inspect(req)}
+    if "macro" in req:
+        return {"id": req.get("id"), "ok": True, **_macro(req)}
     return _run_request(req)
 
 

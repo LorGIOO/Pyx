@@ -179,4 +179,14 @@ describe.skipIf(!python)('kernel protocol guarantees', { timeout: 60000 }, () =>
     expect((await k.send({ forget: ['g', 'nope'] })).forgot).toEqual(['g']);
     expect((await k.evals(["'g' in dir()"]))["'g' in dir()"].value).toBe('False');
   });
+
+  it('runs a macro in its own namespace, reading the document\'s variables', async () => {
+    await k.run('', { reset: true });
+    await k.run('carga = 12.5');
+    const r = await k.send({ macro: 'resultado = seleccion.upper() + str(variables["carga"])\nprint("hecho")', selection: 'viga ' });
+    expect(r.result).toBe('VIGA 12.5');
+    expect(r.stdout).toContain('hecho');
+    expect((await k.evals(["'resultado' in dir()"]))["'resultado' in dir()"].value).toBe('False');
+    expect((await k.send({ macro: '1/0' })).error).toMatch(/ZeroDivisionError/);
+  });
 });

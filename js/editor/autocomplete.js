@@ -2,7 +2,8 @@
 // Accepting a LaTeX command that takes an argument inserts the braces ready to
 // type inside (\subsection → \subsection{▮}), TeXstudio/VSCode-style, via
 // CodeMirror snippet completions (${} marks where the cursor lands).
-import { snippetCompletion } from '@codemirror/autocomplete';
+import { snippetCompletion, snippet } from '@codemirror/autocomplete';
+import LATEX_DATA from '../data/latex-completions.json';
 import { parseCells } from './cell-parse.js';
 import { analyzePython } from './py-deps.js';
 import { kernelComplete } from './cell-runner.js';
@@ -11,43 +12,83 @@ import { dirOf, joinPath } from '../core/paths.js';
 import { getDocContent } from './setup.js';
 import { readTextFile } from '../core/platform.js';
 
-// Commands that wrap ONE argument in braces → \cmd{▮}.
-const ARG1 = [
-  'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph', 'chapter', 'part',
-  'title', 'author', 'date',
-  'textbf', 'textit', 'texttt', 'emph', 'underline', 'textsc', 'textsf', 'textrm', 'textnormal',
-  'textsuperscript', 'textsubscript', 'sout', 'uline',
-  'label', 'ref', 'eqref', 'pageref', 'autoref', 'cref', 'cite', 'footnote', 'caption', 'index',
-  'input', 'include', 'mathbf', 'mathrm', 'mathit', 'mathcal', 'mathbb', 'mathfrak', 'mathsf',
-  'text', 'sqrt', 'py', 'pyfile', 'url', 'hat', 'bar', 'vec', 'tilde', 'dot', 'overline',
-  'bibliography', 'bibliographystyle', 'pagestyle', 'thispagestyle', 'hspace', 'vspace', 'color',
-];
-// Commands with TWO arguments → \cmd{▮}{}.
-const ARG2 = ['frac', 'dfrac', 'tfrac', 'binom', 'stackrel', 'overset', 'underset', 'newcommand', 'renewcommand'];
-// Commands with an optional [..] then a brace → \cmd[▮]{}.
-const OPT1 = ['usepackage', 'documentclass', 'includegraphics', 'href'];
-// Plain commands (no argument).
-const NOARG = [
-  'maketitle', 'tableofcontents', 'centering', 'newpage', 'clearpage', 'item', 'hline',
-  'toprule', 'midrule', 'bottomrule', 'textbackslash', 'sum', 'prod', 'int', 'lim', 'infty',
-  'partial', 'nabla', 'cdot', 'times', 'leq', 'geq', 'neq', 'approx', 'rightarrow', 'Rightarrow',
-  'left', 'right', 'quad', 'qquad', 'noindent', 'par', 'bigskip', 'medskip', 'smallskip',
-  'alpha', 'beta', 'gamma', 'delta', 'theta', 'lambda', 'mu', 'pi', 'sigma', 'omega', 'phi',
-];
-const LATEX_ENVS = ['document', 'itemize', 'enumerate', 'figure', 'table', 'tabular', 'equation',
-  'align', 'center', 'verbatim', 'quote', 'cases', 'matrix', 'pmatrix', 'bmatrix'];
+/* ---------- LaTeX commands and environments: from DATA ----------
+   js/data/latex-completions.json lists every command and environment the
+   editor offers: its arguments as a snippet (${1:marcador} — Tab jumps to the
+   next), the package it comes from and a description. Adding a line there is
+   all it takes. A command from a package the document does not load yet is
+   still offered, after the others — and accepting it adds the \usepackage to
+   the preamble (TeXstudio only lists what is loaded; you would have to know
+   which package to load first). */
+const BASE_PACKAGES = new Set(['']);
 
-function latexCmd(name) {
-  const lbl = '\\' + name;
-  if (ARG2.includes(name)) return snippetCompletion(`${lbl}{\${}}{}`, { label: lbl, type: 'function' });
-  if (OPT1.includes(name)) return snippetCompletion(`${lbl}{\${}}`, { label: lbl, type: 'keyword' });
-  if (ARG1.includes(name)) return snippetCompletion(`${lbl}{\${}}`, { label: lbl, type: 'keyword' });
-  return { label: lbl, type: 'keyword' };
+/** Packages loaded by the open documents (\usepackage, \RequirePackage, beamer). */
+function loadedPackages(text) {
+  const set = new Set(BASE_PACKAGES);
+  const re = /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(text))) for (const p of m[1].split(',')) set.add(p.trim());
+  if (/\\documentclass\s*(?:\[[^\]]*\])?\s*\{beamer\}/.test(text)) set.add('beamer');
+  // What other packages already bring along.
+  if (set.has('mathtools')) set.add('amsmath');
+  if (set.has('amssymb')) set.add('amsfonts');
+  if (set.has('pgfplots')) set.add('tikz');
+  if (set.has('beamer')) { set.add('graphicx'); set.add('xcolor'); set.add('hyperref'); set.add('amsmath'); }
+  return set;
 }
-function latexEnv(env) {
-  // \begin{env} expands the whole environment with the cursor inside.
-  return snippetCompletion(`\\begin{${env}}\n\t\${}\n\\end{${env}}`, {
-    label: '\\begin{' + env + '}', type: 'class',
+
+/** Where `\usepackage{pkg}` goes in this document, or -1 (no preamble here). */
+function preambleSlot(doc) {
+  const text = doc.toString();
+  const begin = text.indexOf('\\begin{document}');
+  const cls = text.search(/\\documentclass/);
+  if (begin < 0 || cls < 0 || cls > begin) return -1;
+  const head = text.slice(0, begin);
+  const re = /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\}[^\n]*\n?/g;
+  let last = -1, m;
+  while ((m = re.exec(head))) last = m.index + m[0].length;
+  if (last >= 0) return last;
+  const nl = text.indexOf('\n', cls);
+  return nl < 0 ? -1 : nl + 1;
+}
+
+/** A completion that also loads its package if the document lacks it. */
+function withPackage(template, pkg, info) {
+  const base = snippet(template);
+  return {
+    ...info,
+    apply: (view, completion, from, to) => {
+      base(view, completion, from, to);
+      if (!pkg || loadedPackages(view.state.doc.toString()).has(pkg)) return;
+      const at = preambleSlot(view.state.doc);
+      if (at < 0 || at > from) return;
+      view.dispatch({ changes: { from: at, insert: `\\usepackage{${pkg}}\n` } });
+    },
+  };
+}
+
+function commandOption([name, args, pkg, detail], loaded) {
+  const label = '\\' + name;
+  const known = loaded.has(pkg);
+  const info = {
+    label,
+    type: args ? 'function' : 'keyword',
+    detail: pkg ? `${detail} · ${pkg}${known ? '' : ' (se añade \\usepackage)'}` : detail,
+    boost: known ? 0 : -20,
+  };
+  if (!args && (known || !pkg)) return info;
+  return withPackage(label.replace(/\[\]$/, '') + args, known ? '' : pkg, info);
+}
+
+function envTemplate([name, args, , , body], indent = '') {
+  return `\\begin{${name}}${args}\n${indent}${body}\n${indent}\\end{${name}}`;
+}
+function envOption(row, loaded) {
+  const [name, , pkg, detail] = row;
+  const known = loaded.has(pkg);
+  return withPackage(envTemplate(row), known ? '' : pkg, {
+    label: `\\begin{${name}}`, type: 'class', boost: known ? -5 : -25,
+    detail: pkg ? `${detail} · ${pkg}${known ? '' : ' (se añade \\usepackage)'}` : detail,
   });
 }
 
@@ -57,11 +98,42 @@ function latexEnv(env) {
 const beginGeneric = snippetCompletion('\\begin{${1:entorno}}\n\t${2}\n\\end{${1}}', {
   label: '\\begin{ }', detail: 'entorno personalizado (escribe el nombre)', type: 'class', boost: 60,
 });
-const latexOptions = [
-  beginGeneric,
-  ...[...ARG1, ...ARG2, ...OPT1, ...NOARG].map(latexCmd),
-  ...LATEX_ENVS.map(latexEnv),
-];
+
+/** Commands the documents define themselves (\newcommand, \DeclareMathOperator, \def). */
+function userCommands(text) {
+  const out = new Map();
+  const re = /\\(?:re)?newcommand\*?\s*\{?\\([A-Za-z@]+)\}?\s*(?:\[(\d)\])?(?:\[[^\]]*\])?/g;
+  let m;
+  while ((m = re.exec(text))) out.set(m[1], +(m[2] || 0));
+  const reOp = /\\DeclareMathOperator\*?\s*\{\\([A-Za-z]+)\}/g;
+  while ((m = reOp.exec(text))) out.set(m[1], 0);
+  const reDef = /\\def\\([A-Za-z@]+)(#\d)*/g;
+  while ((m = reDef.exec(text))) if (!out.has(m[1])) out.set(m[1], (m[0].match(/#\d/g) || []).length);
+  return out;
+}
+
+let latexCache = { sig: '', opts: [] };
+function latexOptions() {
+  const text = allOpenText();
+  const loaded = loadedPackages(text);
+  const user = userCommands(text);
+  const sig = [...loaded].join(',') + '|' + [...user].map(([k, v]) => k + v).join(',');
+  if (latexCache.sig === sig) return latexCache.opts;
+  const known = new Set(LATEX_DATA.commands.map((c) => c[0]));
+  const opts = [
+    beginGeneric,
+    ...LATEX_DATA.commands.map((c) => commandOption(c, loaded)),
+    ...LATEX_DATA.environments.map((e) => envOption(e, loaded)),
+  ];
+  for (const [name, n] of user) {
+    if (known.has(name)) continue;
+    const args = Array.from({ length: n }, (_, i) => `{\${${i + 1}}}`).join('');
+    const info = { label: '\\' + name, type: n ? 'function' : 'keyword', detail: 'definido en el documento', boost: 10 };
+    opts.push(n ? snippetCompletion('\\' + name + args, info) : info);
+  }
+  latexCache = { sig, opts };
+  return opts;
+}
 
 // A function completion that inserts `name()` and drops the caret INSIDE the
 // parens (VSCode/Jupyter behaviour), so calling is one keypress.
@@ -173,35 +245,28 @@ async function bibOptions() {
   return bibCache.opts;
 }
 
-const COMMON_ENVS = ['itemize', 'enumerate', 'description', 'figure', 'figure*', 'table', 'table*',
-  'tabular', 'tabularx', 'equation', 'equation*', 'align', 'align*', 'gather', 'multline', 'center',
-  'flushleft', 'flushright', 'quote', 'quotation', 'verbatim', 'lstlisting', 'minipage', 'cases',
-  'matrix', 'pmatrix', 'bmatrix', 'vmatrix', 'array', 'theorem', 'lemma', 'proof', 'definition',
-  'abstract', 'thebibliography', 'frame'];
 function envNames() {
-  const set = new Set(COMMON_ENVS);
-  const re = /\\begin\{([a-zA-Z*]+)\}/g;
+  const set = new Set(LATEX_DATA.environments.map((e) => e[0]));
+  const re = /\\(?:begin|newenvironment|newtheorem)\{([a-zA-Z*]+)\}/g;
   const text = allOpenText();
   let m;
   while ((m = re.exec(text))) set.add(m[1]);
   return [...set];
 }
+const ENV_ROWS = new Map(LATEX_DATA.environments.map((e) => [e[0], e]));
 // The editor auto-closes the brace; if a `}` follows the cursor, consume it so
 // the completion doesn't leave a double `}`.
 function consumeBrace(view, to) {
   return view.state.doc.sliceString(to, to + 1) === '}' ? to + 1 : to;
 }
-// Picking a predefined \begin{NAME} also opens the body and adds \end{NAME}.
+// Picking a \begin{NAME} also opens the body and adds \end{NAME} — with the
+// arguments and body the data file gives it (a table's column spec, a
+// figure's \includegraphics and \caption…), Tab moving between them.
 function beginApply(env) {
-  return (view, c, from, to) => {
-    const end = consumeBrace(view, to);
-    const line = view.state.doc.lineAt(from);
-    const indent = (line.text.match(/^[ \t]*/) || [''])[0];
-    const head = `${env}}`;
-    const body = `\n${indent}\t`;
-    const insert = head + body + `\n${indent}\\end{${env}}`;
-    view.dispatch({ changes: { from, to: end, insert }, selection: { anchor: from + head.length + body.length } });
-  };
+  const row = ENV_ROWS.get(env) || [env, '', '', '', '\t${}'];
+  const tpl = envTemplate(row).slice('\\begin{'.length);
+  const base = snippet(tpl);
+  return (view, c, from, to) => base(view, c, from, consumeBrace(view, to));
 }
 function endApply(env) {
   return (view, c, from, to) => {
@@ -312,7 +377,8 @@ export async function calcCompletions(context) {
   }
   if ((m = before.match(reEnv))) {
     const partial = m[2];
-    const opts = m[1] === 'begin' ? beginEnvOptions() : endEnvOptions();
+    // (The name being typed is in the text too, closed by the auto-brace: not a suggestion.)
+    const opts = (m[1] === 'begin' ? beginEnvOptions() : endEnvOptions()).filter((o) => !partial || o.label !== partial);
     return { from: context.pos - partial.length, options: opts, validFor: /^[a-zA-Z*]*$/ };
   }
   if ((m = before.match(rePy))) {
@@ -329,5 +395,5 @@ export async function calcCompletions(context) {
   // Otherwise: complete a command after a backslash.
   const cmd = context.matchBefore(/\\[a-zA-Z]*/);
   if (!cmd) return null;
-  return { from: cmd.from, options: latexOptions, validFor: /^\\[a-zA-Z]*$/ };
+  return { from: cmd.from, options: latexOptions(), validFor: /^\\[a-zA-Z]*$/ };
 }

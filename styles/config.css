@@ -300,6 +300,9 @@
   height: auto;
   max-height: 92vh;
 }
+/* Preparar Pyx and the macro editor: the same chrome, sized to their content. */
+.setup-modal { width: 600px; height: auto; }
+.macros-modal { width: 840px; height: auto; }
 .newdoc-body {
   display: flex;
   gap: 14px;

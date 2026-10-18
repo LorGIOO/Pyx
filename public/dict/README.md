@@ -24,14 +24,11 @@ comparten exactamente la misma tabla de afijos, así que sus listas de palabras
 se pueden unir sin tocar las reglas: el resultado acepta las dos ortografías y
 sigue rechazando las erratas de verdad.
 
-Quien quiera regenerar los archivos:
-
-```bash
-node tools/build-dicts.mjs
-```
-
-El script comprueba antes de fusionar que las tablas de afijos siguen siendo
-idénticas, y se niega a hacerlo si algún día dejan de serlo.
+Los archivos se generaron una vez a partir de los paquetes `dictionary-en`,
+`dictionary-en-gb` y `dictionary-es` de npm (el script que lo hacía,
+`tools/build-dicts.mjs`, sigue en el historial de Git, versión 1.5.0); la app
+solo necesita los archivos de esta carpeta. Antes de fusionar se comprobó que
+las dos tablas de afijos son idénticas.
 
 ## Los suplementos `*.extra.txt`
 

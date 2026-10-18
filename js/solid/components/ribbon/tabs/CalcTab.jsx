@@ -11,6 +11,9 @@ import {
 import { restartKernel, setKernelPython, interruptKernel } from '../../../../editor/cell-runner.js';
 import { listPythons, openExeDialog } from '../../../../core/platform.js';
 import { comboOf } from '../../../stores/keysStore.js';
+import { getMacros, runMacro, showMacroResult } from '../../../../editor/macros.js';
+import { openMacros } from '../../MacrosDialog.jsx';
+import { general } from '../../../stores/settingsStore.js';
 
 const kb = (id) => (comboOf(id) ? ` (${comboOf(id)})` : '');
 
@@ -103,6 +106,17 @@ export default function CalcTab() {
           <RibbonButton size="small" icon={icons.eyeOff} label={t('Ocultar salidas', 'Hide outputs')} active={state.hideOutputs}
             title={t('Oculta las salidas (los cálculos siguen ejecutándose y compilándose en el documento)', 'Hides the outputs (calculations still run and compile into the document)')}
             onClick={toggleHideOutputs} />
+        </div>
+      </RibbonGroup>
+
+      <RibbonGroup label={t('Macros', 'Macros')}>
+        <div class="ribbon-dd-stack">
+          <RibbonDropdown caption={t('Macro', 'Macro')} memKey="macro" icon={icons.python}
+            placeholder={t('Elegir…', 'Choose…')}
+            title={t('Ejecutar una macro de Python sobre la selección (Alt+Mayús+1…9)', 'Run a Python macro on the selection (Alt+Shift+1…9)')}
+            items={(void general.macros, [...getMacros().map((m, i) => ({ label: m.name, sym: i < 9 ? String(i + 1) : '•', macro: m })),
+              { label: t('Editar macros…', 'Edit macros…'), sym: '✎', edit: true }])}
+            onPick={(it) => (it.edit ? openMacros() : runMacro(it.macro).then(showMacroResult))} />
         </div>
       </RibbonGroup>
 

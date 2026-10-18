@@ -214,10 +214,25 @@ export const kernelSetPython = (path) => invoke('kernel_set_python', { path: pat
 // hard = true → kill the process (for a cell that never yields to Python).
 export const kernelInterrupt = (hard = false) => invoke('kernel_interrupt', { hard });
 export const listPythons = () => invoke('list_pythons');
+// What Pyx sets up by itself (runtime.rs): its own Python (uv) and Tectonic.
+export const runtimeInfo = () => invoke('runtime_info');
+// Version history of documents and Git (history.rs).
+export const historySave = (path, content) => invoke('history_save', { path, content });
+export const historyList = (path) => invoke('history_list', { path });
+export const historyRead = (path, id) => invoke('history_read', { path, id });
+export const gitStatus = (dir) => invoke('git_status', { dir });
+export const gitInit = (dir) => invoke('git_init', { dir });
+export const gitCommit = (dir, message) => invoke('git_commit', { dir, message });
+export const gitShow = (dir, rev, file) => invoke('git_show', { dir, rev, file });
+export const installTectonic = () => invoke('install_tectonic');
+export const setupPython = (packages = []) => invoke('setup_python', { packages });
+export const installPackages = (python, packages) => invoke('install_packages', { python, packages });
 export const revealInExplorer = (path) => invoke('reveal_in_explorer', { path });
 export const openExternal = (path) => invoke('open_external', { path });
 export const openViewerWindow = (path) => invoke('open_viewer_window', { path: encodeURIComponent(path) });
 export const readDir = (path) => invoke('read_dir', { path });
+// Every source file under a folder, with its text (.pltx: its document source).
+export const projectTexts = (root) => invoke('project_texts', { root });
 // Batched {mtime, size} for several files — lets the compiler skip re-reading
 // \input'ed chapters that haven't changed on disk.
 export const fileStamps = (paths) => invoke('file_stamps', { paths });

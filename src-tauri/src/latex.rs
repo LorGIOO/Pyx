@@ -482,7 +482,8 @@ fn runs(cmd: &str) -> bool {
 /// processes don't always inherit the user PATH (where a per-user MiKTeX adds
 /// itself), so we scan these as a fallback.
 fn tex_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
+    // The Tectonic Pyx downloads itself when no LaTeX is installed (runtime.rs).
+    let mut dirs = vec![crate::runtime::tectonic_dir()];
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         dirs.push(PathBuf::from(&local).join(r"Programs\MiKTeX\miktex\bin\x64"));
     }
@@ -1385,7 +1386,7 @@ fn run_tool(name: &str, args: &[String], cwd: &Path, envs: &[(&str, String)], lo
     }
 }
 
-/// After a pass: run BibTeX / Biber / makeindex when their input changed.
+/// After a pass: run BibTeX / Biber / makeindex / the glossaries when their input changed.
 /// True when one of them produced output that the next pass must read.
 fn run_aux_tools(dir: &Path, out_dir: &Path, job: &str, search_dirs: &[String], log: &mut String) -> bool {
     let stamp_file = out_dir.join(format!("{job}.pyxtools"));
@@ -1440,6 +1441,36 @@ fn run_aux_tools(dir: &Path, out_dir: &Path, job: &str, search_dirs: &[String], 
             }
         }
         new_lines.push(format!("makeindex={fp}"));
+    }
+
+    // glossaries: each list LaTeX wrote (.glo main, .acn acronyms, .slo
+    // symbols…) is sorted with makeindex and the style the package wrote
+    // (<job>.ist) — what makeglossaries does, without needing Perl. A
+    // document set up for xindy (no .ist) goes to makeglossaries itself.
+    let ist = out_dir.join(format!("{job}.ist"));
+    for (input, output, logx) in [("glo", "gls", "glg"), ("acn", "acr", "alg"), ("slo", "sls", "slg"), ("nlo", "nls", "nlg")] {
+        let path = out_dir.join(format!("{job}.{input}"));
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let key = format!("glossary-{input}");
+        let fp = fingerprint(&text);
+        if fp != old_of(&key) || out_of(output).is_none() {
+            let before = out_of(output);
+            let ran = if ist.exists() {
+                let args = vec![
+                    "-s".to_string(), format!("{job}.ist"),
+                    "-t".to_string(), format!("{job}.{logx}"),
+                    "-o".to_string(), format!("{job}.{output}"),
+                    format!("{job}.{input}"),
+                ];
+                run_tool("makeindex", &args, out_dir, &[], log)
+            } else {
+                run_tool("makeglossaries", &[job.to_string()], out_dir, &[], log)
+            };
+            if ran.is_some() {
+                rerun |= out_of(output) != before;
+            }
+        }
+        new_lines.push(format!("{key}={fp}"));
     }
 
     if !new_lines.is_empty() || !old.is_empty() {
@@ -2248,6 +2279,39 @@ Texto del capitulo dos.
         let again = run();
         assert!(!again.log.contains("===== Pyx: bibtex ====="), "{}", again.log);
         assert!(!again.log.contains("===== Pyx: makeindex ====="));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The glossaries package: its lists are sorted between passes (what
+    /// makeglossaries does), so \\gls resolves and \\printglossaries prints.
+    #[test]
+    fn glossaries_are_sorted_between_passes() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        if resolve_engine("makeindex").is_none() {
+            return;
+        }
+        let (base, proj, work) = scratch("glo");
+        let main = work.join("main.build.tex");
+        fs::write(
+            &main,
+            "\\documentclass{article}\n\\usepackage[acronym]{glossaries}\\makeglossaries\n\
+             \\newglossaryentry{viga}{name={viga},description={elemento lineal que trabaja a flexión}}\n\
+             \\newacronym{elu}{ELU}{estado límite último}\n\
+             \\begin{document}\nUna \\gls{viga} en \\gls{elu}.\n\\printglossaries\n\\end{document}\n",
+        )
+        .unwrap();
+        let run = || {
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        let first = run();
+        assert!(first.log.contains("===== Pyx: makeindex ====="), "{}", first.log);
+        let gls = fs::read_to_string(work.join("main.gls")).unwrap();
+        assert!(gls.contains("viga"), "{gls}");
+        assert!(work.join("main.acr").exists());
+        let again = run();
+        assert!(!again.log.contains("===== Pyx: makeindex ====="), "{}", again.log);
         let _ = fs::remove_dir_all(&base);
     }
 

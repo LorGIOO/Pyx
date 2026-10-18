@@ -47,6 +47,12 @@ import { pyGhost } from './py-ghost.js';
 import { pyLint } from './py-lint.js';
 import { latexLint } from './latex-lint-ext.js';
 import { latexExtras } from './latex-extras.js';
+import { pySignatures } from './py-signature.js';
+import { parseCells as parseCellsFor, cellAtLine } from './cell-parse.js';
+import { pasteTables } from './paste-table.js';
+import { cellControls } from './controls.js';
+import { cursorHistory, historyBack, historyForward } from './cursor-history.js';
+import { runMacroIndex } from './macros.js';
 import { lintKeymap, previousDiagnostic } from '@codemirror/lint';
 import { latexHighlight } from './latex-highlight.js';
 import { indentGuides } from './indent-guides.js';
@@ -60,6 +66,19 @@ import { gv } from '../solid/stores/settingsStore.js';
 
 // Marks transactions that were forwarded from a sibling pane (prevents loops).
 const syncAnnotation = Annotation.define();
+
+/** Wrap the selection (or leave the caret inside) — outside Python cells. */
+function latexWrap(view, before, after) {
+  const sel = view.state.selection.main;
+  const ln = view.state.doc.lineAt(sel.head).number;
+  if (cellAtLine(parseCellsFor(view.state), ln)) return false;
+  const text = view.state.sliceDoc(sel.from, sel.to);
+  view.dispatch({
+    changes: { from: sel.from, to: sel.to, insert: before + text + after },
+    selection: { anchor: sel.from + before.length, head: sel.from + before.length + text.length },
+  });
+  return true;
+}
 
 /* ---------- minimap (VSCode-style), toggleable from Configuración ---------- */
 const minimapCompartment = new Compartment();
@@ -279,6 +298,14 @@ export function createDocState(docId, content) {
       // TeXstudio's editor features, Pyx-style: math preview on hover (with
       // live \py{} values), Ctrl+click \ref → \label, \begin/\end rename.
       latexExtras,
+      // Python cells: signatures while typing a call, docs on hover (jedi).
+      pySignatures,
+      // A table copied from Excel or a web page pastes as a tabular.
+      pasteTables,
+      // MATLAB-style controls: `x = 5  # @slider(0, 10)` shows a slider.
+      cellControls,
+      // Alt+← / Alt+→: back and forward through the places you jumped from.
+      cursorHistory,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
       // they read the user's bindings from Configuración → Atajos live.
       dynamicKeys,
@@ -296,6 +323,13 @@ export function createDocState(docId, content) {
         // Jupyter-style cell reorder (whole cell moves; plain lines otherwise).
         { key: 'Alt-ArrowUp', run: moveCellOrLineUp, preventDefault: true },
         { key: 'Alt-ArrowDown', run: moveCellOrLineDown, preventDefault: true },
+        // TeXstudio's formatting shortcuts (in LaTeX; inside a cell they are Python's).
+        { key: 'Mod-b', run: (v) => latexWrap(v, '\\textbf{', '}'), preventDefault: true },
+        { key: 'Mod-i', run: (v) => latexWrap(v, '\\textit{', '}'), preventDefault: true },
+        // Alt+Shift+1…9: the user's Python macros.
+        ...Array.from({ length: 9 }, (_, i) => ({ key: `Alt-Shift-${i + 1}`, run: () => runMacroIndex(i), preventDefault: true })),
+        { key: 'Alt-ArrowLeft', run: historyBack, preventDefault: true },
+        { key: 'Alt-ArrowRight', run: historyForward, preventDefault: true },
         // TeXstudio-style bookmarks.
         { key: 'Ctrl-F2', run: toggleBookmarkAtCursor, preventDefault: true },
         { key: 'F2', run: nextBookmark, preventDefault: true },

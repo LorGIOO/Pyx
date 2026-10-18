@@ -184,6 +184,10 @@ export const GENERAL_SECTIONS = {
   },
   cells: {
     pythonPath: '',
+    // "No volver a preguntar" in the Preparar Pyx dialog.
+    setupNeverAsk: false,
+    // Mayús+Intro also runs the cells that depend on the one run (marimo).
+    reactiveCells: true,
     pyGhost: true,
     saveOutputs: true,
   },
@@ -213,6 +217,8 @@ export const GENERAL_SECTIONS = {
   lang: {
     spellCheck: true,
     grammarCheck: true,
+    // LanguageTool server ('' = off): grammar.js, latex-lint-ext.js.
+    languageTool: '',
   },
   syntax: {
     // 'classic' = the palette Pyx has always shipped; '2026' = VS Code's new

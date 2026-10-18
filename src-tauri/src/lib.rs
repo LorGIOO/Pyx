@@ -1,6 +1,8 @@
+mod history;
 mod kernel;
 mod latex;
 mod pltx;
+mod runtime;
 mod synctex;
 mod workspace;
 
@@ -442,6 +444,176 @@ async fn read_dir(path: String) -> Result<Vec<DirItem>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// One searchable file of a project: its path and its text.
+#[derive(serde::Serialize)]
+struct ProjectText {
+    path: String,
+    text: String,
+}
+
+/// The text of every source file under `root`, for "Buscar en el proyecto".
+///
+/// LaTeX and Python sources, bibliographies, styles and notes; a .pltx gives
+/// its document source. Hidden folders, build folders and anything larger
+/// than 4 MB are skipped, and the walk stops at 3000 files and 12 levels, so a
+/// project opened from the wrong folder (a whole home directory) cannot hang
+/// the search.
+#[tauri::command]
+async fn project_texts(root: String) -> Result<Vec<ProjectText>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        const EXTS: &[&str] = &[
+            "tex", "ltx", "sty", "cls", "bib", "bbx", "cbx", "dtx", "ins", "cfg", "py", "md", "txt",
+        ];
+        const SKIP: &[&str] = &["node_modules", "__pycache__", "target", "build", "dist"];
+        let mut out = Vec::new();
+        let mut stack = vec![(std::path::PathBuf::from(&root), 0usize)];
+        let mut files = 0usize;
+        while let Some((dir, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                let Ok(meta) = entry.metadata() else { continue };
+                let path = entry.path();
+                if meta.is_dir() {
+                    if depth < 12 && !SKIP.contains(&name.as_str()) && !name.ends_with("_calc_figs") {
+                        stack.push((path, depth + 1));
+                    }
+                    continue;
+                }
+                if meta.len() > 4 * 1024 * 1024 {
+                    continue;
+                }
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let p = path.to_string_lossy().to_string();
+                let text = if ext == "pltx" {
+                    pltx::read(&p, false).ok().and_then(|r| r.source)
+                } else if EXTS.contains(&ext.as_str()) && !name.contains(".build.") {
+                    std::fs::read(&path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+                } else {
+                    None
+                };
+                if let Some(text) = text {
+                    out.push(ProjectText { path: p, text });
+                    files += 1;
+                    if files >= 3000 {
+                        return Ok(out);
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Progress of a set-up, as `setup:line` events for the window.
+fn setup_say(app: &tauri::AppHandle) -> impl Fn(String) + Sync {
+    let app = app.clone();
+    move |line: String| {
+        let _ = app.emit("setup:line", line);
+    }
+}
+
+/// What Pyx has set up by itself (runtime.rs): its Python environment, its
+/// Tectonic, and where they live.
+#[tauri::command]
+fn runtime_info() -> runtime::RuntimeInfo {
+    runtime::info()
+}
+
+/// Download Tectonic into Pyx's data folder (no LaTeX installed).
+#[tauri::command]
+async fn install_tectonic(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::install_tectonic(&setup_say(&app)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Create Pyx's own Python environment with the scientific stack (uv).
+#[tauri::command]
+async fn setup_python(app: tauri::AppHandle, packages: Option<Vec<String>>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::setup_python(&setup_say(&app), &packages.unwrap_or_default()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Install packages into the interpreter the kernel runs.
+#[tauri::command]
+async fn install_packages(app: tauri::AppHandle, python: String, packages: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::install_packages(&setup_say(&app), &python, &packages))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Grammar check with a LanguageTool server (grammar.js): `server` is its base
+/// URL. Through the system's curl, like the other downloads; the text goes on
+/// stdin, never on a command line.
+#[tauri::command]
+async fn languagetool_check(server: String, language: String, text: String, disabled: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let base = server.trim().trim_end_matches('/');
+        if !(base.starts_with("http://") || base.starts_with("https://")) {
+            return Err("La dirección del servidor debe empezar por http:// o https://".into());
+        }
+        let url = if base.ends_with("/v2/check") { base.to_string() } else { format!("{base}/v2/check") };
+        let mut cmd = Command::new("curl");
+        cmd.args(["-s", "--max-time", "20", "-X", "POST", &url,
+                  "--data-urlencode", &format!("language={language}"),
+                  "--data-urlencode", &format!("disabledRules={disabled}"),
+                  "--data-urlencode", "text@-"])
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        quiet(&mut cmd);
+        let mut child = cmd.spawn().map_err(|e| format!("No se pudo ejecutar curl: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err("LanguageTool no respondió.".into());
+        }
+        serde_json::from_slice(&out.stdout).map_err(|_| "Respuesta de LanguageTool no válida.".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/* ---------- version history and Git (history.rs) ---------- */
+#[tauri::command]
+async fn history_save(path: String, content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || history::save(&path, &content)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn history_list(path: String) -> Vec<history::Version> {
+    tauri::async_runtime::spawn_blocking(move || history::list(&path)).await.unwrap_or_default()
+}
+#[tauri::command]
+async fn history_read(path: String, id: u64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || history::read(&path, id)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_status(dir: String) -> Result<history::GitStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || history::status(&dir)).await.map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn git_init(dir: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || history::init(&dir)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_commit(dir: String, message: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || history::commit(&dir, &message)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_show(dir: String, rev: String, file: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || history::show(&dir, &rev, &file)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn kernel_start(state: tauri::State<'_, KernelState>) -> Result<serde_json::Value, String> {
     let k = state.handle();
@@ -837,6 +1009,19 @@ pub fn run() {
             write_bytes,
             path_exists,
             read_dir,
+            project_texts,
+            history_save,
+            history_list,
+            history_read,
+            git_status,
+            git_init,
+            git_commit,
+            git_show,
+            languagetool_check,
+            runtime_info,
+            install_tectonic,
+            setup_python,
+            install_packages,
             file_stamps,
             kernel_start,
             kernel_exec,

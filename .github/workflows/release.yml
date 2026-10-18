@@ -95,7 +95,7 @@ jobs:
 
             Novedades de esta versión en el [CHANGELOG](https://github.com/LorGIOO/Pyx/blob/main/CHANGELOG.md).
 
-            Requiere **Python 3** y una distribución **LaTeX** (MiKTeX, MacTeX, TeX Live o Tectonic) instalados aparte.
+            No hace falta instalar nada más: si el equipo no tiene Python o LaTeX, Pyx ofrece prepararlos al arrancar (Python con uv, LaTeX con Tectonic), dentro de su propia carpeta. Si ya tienes Python, MiKTeX, MacTeX o TeX Live, Pyx los usa.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

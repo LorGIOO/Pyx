@@ -4,8 +4,8 @@
 
 ## Entorno de desarrollo
 
-Necesitas **Node.js 18+**, **Rust**, **Python 3** en el PATH y una distribución **LaTeX**
-(MiKTeX o TeX Live) con `xelatex`.
+Necesitas **Node.js 18+** y **Rust**. Python y LaTeX: los del sistema si los hay; si no,
+Pyx ofrece prepararlos al arrancar (Python con uv, LaTeX con Tectonic).
 
 ```bash
 npm install
@@ -23,7 +23,9 @@ js/            Frontend: editor (CodeMirror), celdas, visor PDF, cinta, stores (
 src-tauri/     Backend Rust: kernel de Python, compilación LaTeX, comandos del sistema
   python/      kernel.py — el REPL persistente embebido en el binario
 styles/        CSS temático (variables claro/oscuro/azul)
-examples/      Documentos de ejemplo (.tex/.pltx)
+public/dict/   Diccionarios del corrector ortográfico
+test/          Pruebas (npm test; las de Rust con cargo test)
+Manual de usuario/  El manual (Manual de usuario.pltx, hecho con Pyx) y su PDF
 ```
 
 ## Antes de abrir un Pull Request

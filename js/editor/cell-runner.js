@@ -4,7 +4,9 @@ import {
   kernelExec, kernelStart, kernelReset, kernelSetPython, kernelInterrupt, isTauri,
 } from '../core/platform.js';
 import { general, setGeneral } from '../solid/stores/settingsStore.js';
-import { createLedger } from './ns-ledger.js';
+import { createExecState } from './exec-state.js';
+import { analyzePython } from './py-deps.js';
+import { cellKey } from './cell-parse.js';
 
 let reqId = 1;
 let started = false;
@@ -38,22 +40,44 @@ export function withKernelLock(fn) {
   return run;
 }
 
-/* ---------------- namespace ledger (incremental execution) ----------------
-   Which cell bodies built the kernel's current namespace, in order. See
-   ns-ledger.js for why a prefix may be skipped and why that is never wrong. */
-const ledger = createLedger();
+/* ---------------- what the namespace holds (incremental execution) ----------------
+   Which version of each cell the kernel's namespace reflects, and what it
+   defined: the dependency graph (dep-plan.js) re-runs only the cells a change
+   reaches, and early cutoff skips those whose inputs came out equal. See
+   exec-state.js for the bookkeeping and why an unknown namespace is never
+   reused. */
+const ns = createExecState();
 
 /** The kernel was just reset: the namespace is empty and we know it exactly. */
-export const nsReset = (cwd) => ledger.reset(cwd);
-/** The namespace changed in a way we cannot describe (error, crash, restart). */
-export const nsInvalidate = () => ledger.invalidate();
-/** Record that a cell body ran successfully against the current namespace,
- *  with the data files it read (the kernel's `reads`). */
-export const nsRecord = (hash, cwd, reads) => ledger.record(hash, cwd, reads);
-/** How many leading cells of `hashes` the kernel has already executed. */
-export const nsPrefix = (hashes, cwd) => ledger.prefix(hashes, cwd);
-/** The data files the first `n` executed cells read. */
-export const nsReads = (n) => ledger.reads(n);
+export const nsReset = (cwd) => ns.reset(cwd);
+/** The namespace changed in a way we cannot describe (crash, restart). */
+export const nsInvalidate = () => ns.invalidate();
+/** A cell ran to completion: `D` is what it defines (the plan's effects). */
+export const nsRecord = (key, hash, cwd, reads, D) => ns.record(key, hash, cwd, reads, D);
+/** A cell failed or was interrupted. */
+export const nsFail = (key, D) => ns.fail(key, D);
+/** These cells' results were computed from inputs that have since changed. */
+export const nsMarkStale = (keys) => ns.markStale(keys);
+export const nsIsStale = (key) => ns.isStale(key);
+/** The data files the given cells read, to check against the disk. */
+export const nsReads = (keys) => ns.reads(keys);
+/** Names bound to immutable values, as the kernel last reported them. */
+export const nsImmutable = () => ns.state().immutable;
+/** What to run for a program ([{key, hash, info}]). */
+export const nsPlan = (program, opts) => ns.plan(program, opts);
+
+/** The key a cell's run is filed under: unique across a project's files. */
+export const execKey = (path, docId, cell) => `${path || `doc:${docId}`}::${cellKey(cell)}`;
+/** A planner program from [{key, cell}]. */
+export const programOf = (entries) => entries.map(({ key, cell }) => ({
+  key, hash: cell.codeHash, info: analyzePython(cell.code),
+}));
+
+/** Delete names from the namespace (a removed cell's, before its readers re-run). */
+export async function forgetNames(names) {
+  if (!isTauri() || !names.length) return;
+  await kernelExec({ id: reqId++, forget: names });
+}
 
 /* ---------------- handcalcs output, whichever way a cell ran ----------------
    A cell may inject LaTeX into the document ONLY when it declares one of the
@@ -93,7 +117,7 @@ export async function ensureKernel() {
     const path = general.pythonPath;
     const res = path ? await kernelSetPython(path) : await kernelStart();
     if (res && res.python) state.env.python = res.python;
-    started = true; warmed.clear();
+    started = true; warmed.clear(); missing.clear(); state.missingModules = [];
     nsReset(undefined);
     state.kernelStatus = 'ready';
   } catch (e) {
@@ -111,7 +135,7 @@ export async function setKernelPython(path) {
   state.kernelStatus = 'starting';
   try {
     const res = await kernelSetPython(path);
-    started = true; warmed.clear();
+    started = true; warmed.clear(); missing.clear(); state.missingModules = [];
     nsReset(undefined);
     state.kernelStatus = 'ready';
     if (res && res.python) state.env.python = res.python;
@@ -158,7 +182,7 @@ export async function interruptKernel() {
   try { await kernelInterrupt(hard); } catch (_) { /* best effort */ }
   if (hard) {
     // The process is gone: the next request respawns an empty kernel.
-    started = false; warmed.clear();
+    started = false; warmed.clear(); missing.clear(); state.missingModules = [];
     nsInvalidate();
     state.kernelStatus = 'ready';
   } else {
@@ -177,9 +201,10 @@ export async function interruptKernel() {
 /**
  * Run a block of Python in the kernel.
  * @param {string} code
- * @param {{cwd?: string, reset?: boolean}} opts
+ * @param {{cwd?: string, reset?: boolean, watch?: string[]}} opts  `watch`: names
+ *   whose value the response should say came out unchanged (early cutoff)
  */
-export async function runCellCode(code, { cwd, reset } = {}) {
+export async function runCellCode(code, { cwd, reset, watch } = {}) {
   if (!isTauri()) {
     return {
       ok: false,
@@ -192,7 +217,7 @@ export async function runCellCode(code, { cwd, reset } = {}) {
   await ensureKernel();
   state.kernelStatus = 'busy';
   try {
-    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset });
+    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset, watch: watch || [] });
     if (reset && res && Array.isArray(res.restart) && res.restart.length) {
       // The document modified a library in the running process
       // (`scipy.constants.g = 10`, `math.pi = …`): no in-process reset can
@@ -200,12 +225,13 @@ export async function runCellCode(code, { cwd, reset } = {}) {
       // inside the caller's sequence, keeps the compile's promise — every
       // result comes from the document as it is now.
       await kernelReset();
-      started = true; warmed.clear();
+      started = true; warmed.clear(); missing.clear(); state.missingModules = [];
       lastRestart = res.restart;
-      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd });
+      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd, watch: watch || [] });
       else res = { ...res, restarted: true };
     }
     if (reset) nsReset(cwd);
+    if (res && Array.isArray(res.immutable)) ns.setImmutable(res.immutable);
     state.kernelStatus = res.ok ? 'ready' : 'error';
     return res;
   } catch (e) {
@@ -280,6 +306,45 @@ export async function listVariables() {
   }
 }
 
+/* ---------------- completion and signatures (jedi) ----------------
+   Read-only questions about the live namespace. They never start a kernel,
+   never wait behind a running cell (the answer would come too late to be of
+   any use) and never flip the status indicator. null = no answer: the editor
+   falls back to what it knows statically. */
+function kernelIdle() {
+  return isTauri() && started && state.kernelStatus === 'ready' && !kernelSequenceActive();
+}
+export async function kernelComplete(code, line, col, cwd) {
+  if (!kernelIdle()) return null;
+  try {
+    const r = await kernelExec({ id: reqId++, complete: code, line, col, cwd });
+    return r && Array.isArray(r.items) ? r : null;
+  } catch (_) {
+    return null;
+  }
+}
+export async function kernelInspect(code, line, col, cwd) {
+  if (!kernelIdle()) return null;
+  try {
+    const r = await kernelExec({ id: reqId++, inspect: code, line, col, cwd });
+    return r && r.inspect && (r.inspect.signature || r.inspect.doc) ? r.inspect : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Top-level modules a document imports that the interpreter does not have
+// (the status bar offers to install them). Forgotten when the process changes.
+const missing = new Set();
+export const missingModules = () => [...missing];
+
+/** Run a user macro in the kernel (its own namespace). */
+export async function kernelMacro(code, { selection, document, line, cwd } = {}) {
+  if (!isTauri()) return { error: 'Las macros necesitan la app de escritorio.' };
+  await ensureKernel();
+  return withKernelLock(() => kernelExec({ id: reqId++, macro: code, selection, document, line, cwd }));
+}
+
 export async function prewarmModules(names, cwd) {
   if (!isTauri()) return;
   const todo = [...new Set(names)].filter((n) => n && !warmed.has(n));
@@ -289,7 +354,13 @@ export async function prewarmModules(names, cwd) {
     await ensureKernel();
     // Under the lock: a compile that starts meanwhile simply waits, and finds
     // the imports done.
-    await withKernelLock(() => kernelExec({ id: reqId++, prewarm: todo, cwd }));
+    const r = await withKernelLock(() => kernelExec({ id: reqId++, prewarm: todo, cwd }));
+    const res = (r && r.prewarm) || {};
+    for (const [mod, v] of Object.entries(res)) {
+      const top = mod.split('.')[0];
+      if (v === 'no instalado en Python') missing.add(top); else if (v === true) missing.delete(top);
+    }
+    state.missingModules = [...missing];
   } catch (_) {
     todo.forEach((n) => warmed.delete(n)); // try again next time
   }
@@ -312,14 +383,14 @@ export async function restartKernel() {
     interrupting = true;
     lastInterruptAt = Date.now();
     try { await kernelInterrupt(true); } catch (_) { /* best effort */ }
-    started = false; warmed.clear();
+    started = false; warmed.clear(); missing.clear(); state.missingModules = [];
     nsInvalidate();
   }
   return withKernelLock(async () => {
     state.kernelStatus = 'starting';
     try {
       await kernelReset();
-      started = true; warmed.clear();
+      started = true; warmed.clear(); missing.clear(); state.missingModules = [];
       nsReset(undefined);
       state.kernelStatus = 'ready';
     } catch (e) {

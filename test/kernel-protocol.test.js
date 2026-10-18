@@ -156,4 +156,37 @@ describe.skipIf(!python)('kernel protocol guarantees', { timeout: 60000 }, () =>
     const r = await k.run('', { reset: true });
     expect(r.restart).toEqual(['math.pi']);
   });
+
+  it('completes against the live namespace, and describes what is at the cursor', async () => {
+    await k.run('', { reset: true });
+    await k.run('import math\nlongitud_viga = 6.0\ndef area(b, h):\n    """Área de un rectángulo."""\n    return b * h');
+    const names = async (code) => (await k.send({ complete: code, line: 1, col: code.length })).items.map((i) => i.name);
+    expect(await names('longitud_v')).toContain('longitud_viga');
+    expect(await names('math.sq')).toContain('sqrt');
+    const ins = (await k.send({ inspect: 'area(2, ', line: 1, col: 8 })).inspect;
+    expect(ins.signature).toContain('area(b, h)');
+    expect(ins.doc).toContain('Área');
+  });
+
+  it('dependency graph support: forget names, report unchanged and immutable values', async () => {
+    await k.run('', { reset: true });
+    const first = await k.run('g = 9.81\nlst = [1]\nname = "x"', { watch: [] });
+    expect(first.immutable).toEqual(expect.arrayContaining(['g', 'name']));
+    expect(first.immutable).not.toContain('lst');
+    const again = await k.run('g = 9.81\nlst = lst\nname = "y"', { watch: ['g', 'lst', 'name'] });
+    // g came out equal; a list may have changed in place; name changed.
+    expect(again.unchanged).toEqual(['g']);
+    expect((await k.send({ forget: ['g', 'nope'] })).forgot).toEqual(['g']);
+    expect((await k.evals(["'g' in dir()"]))["'g' in dir()"].value).toBe('False');
+  });
+
+  it('runs a macro in its own namespace, reading the document\'s variables', async () => {
+    await k.run('', { reset: true });
+    await k.run('carga = 12.5');
+    const r = await k.send({ macro: 'resultado = seleccion.upper() + str(variables["carga"])\nprint("hecho")', selection: 'viga ' });
+    expect(r.result).toBe('VIGA 12.5');
+    expect(r.stdout).toContain('hecho');
+    expect((await k.evals(["'resultado' in dir()"]))["'resultado' in dir()"].value).toBe('False');
+    expect((await k.send({ macro: '1/0' })).error).toMatch(/ZeroDivisionError/);
+  });
 });

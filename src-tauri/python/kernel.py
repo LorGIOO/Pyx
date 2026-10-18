@@ -12,6 +12,13 @@ Requests (one JSON object per line):
     {"id": 2, "evals": ["x", "x*2-3/2"], "cwd": "C:/docs"}     # for \\py{...}
     {"id": 3, "lint": ["cell code", ...]}                        # squiggles
     {"id": 4, "prewarm": ["numpy", "scipy.optimize"], "cwd": ...}
+    {"id": 5, "forget": ["a", "b"]}                              # dependency graph
+    {"id": 6, "complete": "code", "line": 3, "col": 4, "cwd": ...} # completion (jedi)
+    {"id": 7, "inspect": "code", "line": 3, "col": 4}             # signature + doc
+    {"id": 8, "macro": "resultado = seleccion.upper()", "selection": "…"}
+    A cell request may carry "watch": [names]; its response then lists the
+    watched names whose value did not change ("unchanged") and every name bound
+    to an immutable value ("immutable").
 
 Control messages (handled while a cell is still running):
     {"type": "interrupt"}     raise KeyboardInterrupt in the running cell
@@ -2046,6 +2053,9 @@ def _format_cell_tb(exc):
         }
     info = {"type": type(exc).__name__, "msg": msg, "line": line,
             "frames": frames, "syntax": syntax}
+    # A missing library: the app offers to install it ("Instalar …").
+    if isinstance(exc, ModuleNotFoundError) and getattr(exc, "name", None):
+        info["module"] = exc.name.split(".")[0]
     return text, info
 
 
@@ -3114,7 +3124,9 @@ def _prewarm(names):
                     o = os.path.normcase(os.path.abspath(origin))
                     ok = any(o.startswith(r + os.sep) for r in roots)
                 if not ok:
-                    done[mod] = "no instalado en Python"
+                    # Not installed at all (the app offers to install it), or a
+                    # module of the project itself (left for the cell to import).
+                    done[mod] = "no instalado en Python" if spec is None else "local"
                     continue
                 # Through builtins.__import__, NOT importlib: the kernel's
                 # import hook lives there, and it is what adapts IPython,
@@ -3314,6 +3326,264 @@ def _lint(cells):
     return found
 
 
+# ---------------------------------------------------------------------------
+# dependency graph support (js/editor/dep-plan.js)
+# ---------------------------------------------------------------------------
+# The app re-runs only the cells a change reaches. Two facts only the kernel
+# has make that sharper:
+#   * which names hold IMMUTABLE values: an int handed to a function cannot be
+#     modified by it, so that call does not make the cell a writer of the int;
+#   * which names a cell left with the SAME value ("early cutoff"): re-running
+#     `g = 9.81` gives 9.81 again, and nothing that reads g has to run.
+_IMMUTABLE_TYPES = (int, float, complex, bool, str, bytes, type(None), range,
+                    frozenset, types.FunctionType, types.BuiltinFunctionType)
+
+
+def _is_immutable(v, depth=0):
+    if isinstance(v, _IMMUTABLE_TYPES):
+        return True
+    if isinstance(v, tuple):
+        return depth < 3 and len(v) <= 64 and all(_is_immutable(x, depth + 1) for x in v)
+    t = type(v)
+    mod = getattr(t, "__module__", "") or ""
+    name = t.__name__
+    np_mod = sys.modules.get("numpy")
+    if np_mod is not None and isinstance(v, np_mod.generic):
+        return True  # numpy scalars (np.float64…), not arrays
+    if mod.startswith("sympy"):
+        return not hasattr(v, "__setitem__")  # expressions are immutable; matrices are not
+    if mod in ("fractions", "decimal", "datetime") or name in ("Fraction", "Decimal"):
+        return True
+    return False
+
+
+def _immutable_names():
+    out = []
+    try:
+        for k, v in list(NS.items()):
+            if k.startswith("_") or isinstance(v, types.ModuleType):
+                continue
+            try:
+                if _is_immutable(v):
+                    out.append(k)
+            except Exception:
+                pass
+            if len(out) >= 5000:
+                break
+    except Exception:
+        pass
+    return out
+
+
+def _same_value(a, b):
+    """True when a name still holds what it held: the same immutable object,
+    or an equal immutable of the same type. A mutable object, even the very
+    same one, may have been modified in place — never 'the same'."""
+    try:
+        if not _is_immutable(a):
+            return False
+        if a is b:
+            return True
+        if type(a) is not type(b) or not _is_immutable(b):
+            return False
+        if isinstance(a, types.FunctionType):
+            # Re-running an unchanged `def` makes a new function that does the
+            # same thing: same code, same immutable defaults, no closure.
+            return (a.__code__ == b.__code__ and a.__closure__ is None and b.__closure__ is None
+                    and a.__globals__ is b.__globals__
+                    and _is_immutable(a.__defaults__) and a.__defaults__ == b.__defaults__
+                    and not a.__kwdefaults__ and not b.__kwdefaults__
+                    and not getattr(a, "__dict__", None) and not getattr(b, "__dict__", None))
+        eq = a == b
+        # numpy answers with its own bool type; anything else (an array) is "no".
+        return eq is True or (type(eq).__name__ == "bool_" and bool(eq))
+    except Exception:
+        return False
+
+
+def _forget(names):
+    """Delete names a removed or edited cell no longer defines."""
+    gone = []
+    for n in names or []:
+        if isinstance(n, str) and not n.startswith("__") and n in NS:
+            try:
+                del NS[n]
+                gone.append(n)
+            except Exception:
+                pass
+    return gone
+
+
+# ---------------------------------------------------------------------------
+# completion (jedi, like IPython and JupyterLab)
+# ---------------------------------------------------------------------------
+# jedi.Interpreter completes against the LIVE namespace: `df.` lists the
+# columns' methods of the DataFrame the document built, `np.linalg.` the real
+# submodule, a string being typed in `read_csv("…` the files of the project.
+# Without jedi, a plain fallback lists names and attributes (no code runs:
+# attributes are looked up on objects that already exist).
+_COMPLETE_MAX = 300
+_JEDI_TYPES = {"module": "namespace", "class": "class", "function": "function",
+               "instance": "variable", "statement": "variable", "param": "variable",
+               "keyword": "keyword", "property": "property", "path": "text"}
+
+
+def _complete(req):
+    code = req.get("complete") or ""
+    line = int(req.get("line") or 1)
+    col = int(req.get("col") or 0)
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        try:
+            import jedi  # noqa: F401
+        except Exception:
+            return {"engine": "basic", "items": _complete_basic(code, line, col)}
+        try:
+            with _USER_CODE:
+                script = jedi.Interpreter(code, [NS])
+                comps = script.complete(line, col)
+        except Exception:
+            return {"engine": "basic", "items": _complete_basic(code, line, col)}
+        items = []
+        for c in comps[:_COMPLETE_MAX]:
+            try:
+                items.append({"name": c.name, "type": _JEDI_TYPES.get(c.type, "variable"),
+                              "complete": c.complete, "module": c.module_name or ""})
+            except Exception:
+                continue
+        return {"engine": "jedi", "items": items}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+
+
+def _complete_basic(code, line, col):
+    lines = code.split("\n")
+    text = lines[line - 1][:col] if 0 < line <= len(lines) else ""
+    m = re.search(r"([A-Za-z_][\w.]*)$", text)
+    if not m:
+        return []
+    expr = m.group(1)
+    parts = expr.split(".")
+    prefix = parts[-1]
+    out = []
+    if len(parts) == 1:
+        import builtins
+        import keyword
+        names = set(NS) | set(dir(builtins)) | set(keyword.kwlist)
+        for n in sorted(names):
+            if n.startswith(prefix) and not n.startswith("__"):
+                v = NS.get(n, getattr(builtins, n, None))
+                kind = ("keyword" if keyword.iskeyword(n) else "namespace" if isinstance(v, types.ModuleType)
+                        else "class" if isinstance(v, type) else "function" if callable(v) else "variable")
+                out.append({"name": n, "type": kind, "complete": n[len(prefix):], "module": ""})
+        return out[:_COMPLETE_MAX]
+    obj = NS.get(parts[0])
+    if obj is None:
+        return []
+    try:
+        for p in parts[1:-1]:
+            obj = getattr(obj, p)
+        names = dir(obj)
+    except Exception:
+        return []
+    for n in names:
+        if n.startswith(prefix) and (prefix.startswith("_") or not n.startswith("_")):
+            try:
+                v = getattr(obj, n)
+                kind = ("namespace" if isinstance(v, types.ModuleType) else "class" if isinstance(v, type)
+                        else "function" if callable(v) else "property")
+            except Exception:
+                kind = "property"
+            out.append({"name": n, "type": kind, "complete": n[len(prefix):], "module": ""})
+    return out[:_COMPLETE_MAX]
+
+
+def _inspect(req):
+    """Signature and documentation of what is at the cursor (Mayús+Tab in
+    Jupyter): jedi when available, otherwise inspect on the live object."""
+    code = req.get("inspect") or ""
+    line = int(req.get("line") or 1)
+    col = int(req.get("col") or 0)
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        try:
+            import jedi
+            with _USER_CODE:
+                script = jedi.Interpreter(code, [NS])
+                sigs = script.get_signatures(line, col)
+                if sigs:
+                    s = sigs[0]
+                    return {"name": s.name, "signature": s.to_string(), "doc": _clip_text(s.docstring(raw=True) or "", 4000),
+                            "param": s.index}
+                names = script.infer(line, col) or script.help(line, col)
+                if names:
+                    d = names[0]
+                    return {"name": d.name, "signature": "", "doc": _clip_text(d.docstring() or "", 4000), "param": None}
+        except ImportError:
+            pass
+        except Exception:
+            return {}
+        lines = code.split("\n")
+        text = lines[line - 1][:col] if 0 < line <= len(lines) else ""
+        m = re.search(r"([A-Za-z_][\w.]*)\(?[^()]*$", text)
+        if not m:
+            return {}
+        obj = NS.get(m.group(1).split(".")[0])
+        try:
+            for p in m.group(1).split(".")[1:]:
+                obj = getattr(obj, p)
+        except Exception:
+            return {}
+        if obj is None:
+            return {}
+        import inspect as _insp
+        try:
+            sig = str(_insp.signature(obj))
+        except Exception:
+            sig = ""
+        return {"name": m.group(1), "signature": m.group(1).split(".")[-1] + sig,
+                "doc": _clip_text(_insp.getdoc(obj) or "", 4000), "param": None}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+
+
+# ---------------------------------------------------------------------------
+# macros (TeXstudio's macros, in Python)
+# ---------------------------------------------------------------------------
+def _macro(req):
+    """Run one of the user's macros: Python that reads the editor's selection
+    and puts a result in its place. It runs in a namespace of its own — the
+    document's variables are readable as `variables`, never replaced."""
+    code = req.get("macro") or ""
+    env = {
+        "__name__": "__pyx_macro__",
+        "seleccion": req.get("selection") or "",
+        "texto": req.get("document") or "",
+        "linea": int(req.get("line") or 1),
+        "resultado": None,
+        "variables": NS,
+    }
+    out = _CellIO()
+    _STDOUT.point_to(out)
+    _STDERR.point_to(out)
+    try:
+        with _USER_CODE:
+            exec(compile(code, "<macro>", "exec"), env)
+    except BaseException as e:
+        return {"error": "%s: %s" % (type(e).__name__, _safe_str(e)), "stdout": _clip_text(out.getvalue(), 20000)}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+    res = env.get("resultado")
+    return {"result": None if res is None else _safe_str(res), "stdout": _clip_text(out.getvalue(), 20000)}
+
+
 def _run_request(req):
     """Execute one cell and collect everything it produced."""
     global _USER_CWD
@@ -3332,6 +3602,9 @@ def _run_request(req):
             pass
     code = req.get("code", "")
     ok, result, render_latex, error = True, None, None, None
+    # The values of the names the app asked about, before the cell runs.
+    watch = [n for n in (req.get("watch") or []) if isinstance(n, str)]
+    before = {n: NS[n] for n in watch if n in NS}
     info = _exec_info(code)
     exc_obj = None
     _READS.clear()
@@ -3413,6 +3686,9 @@ def _run_request(req):
         "images": images,
         # Data files the cell read: [path, mtime ms, size] (see _pyx_open).
         "reads": [[p, m, s] for p, (m, s) in list(_READS.items())[:_READS_MAX]],
+        # Watched names the cell left exactly as they were (early cutoff).
+        "unchanged": [n for n in watch if n in before and n in NS and _same_value(before[n], NS[n])],
+        "immutable": _immutable_names() if req.get("watch") is not None else None,
     }
 
 
@@ -3513,6 +3789,14 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, "lint": _lint(req.get("lint"))}
     if req.get("vars"):
         return {"id": req.get("id"), "ok": True, "vars": _vars()}
+    if "forget" in req:
+        return {"id": req.get("id"), "ok": True, "forgot": _forget(req.get("forget"))}
+    if "complete" in req:
+        return {"id": req.get("id"), "ok": True, **_complete(req)}
+    if "inspect" in req:
+        return {"id": req.get("id"), "ok": True, "inspect": _inspect(req)}
+    if "macro" in req:
+        return {"id": req.get("id"), "ok": True, **_macro(req)}
     return _run_request(req)
 
 

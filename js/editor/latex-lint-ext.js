@@ -8,6 +8,46 @@ import { t } from '../core/i18n.js';
 import { lintLatex } from './latex-lint.js';
 import { compileDiagnostics } from './latex-extras.js';
 import { invoke, isTauri } from '../core/platform.js';
+import { maskLine } from './spell-mask.js';
+import { ltDiagnostics, ltLanguage, LT_DISABLED } from './grammar.js';
+import { spellLang } from './spellcheck.js';
+
+/** LanguageTool's findings on the prose around what is on screen (opt-in:
+ *  Configuración → Idioma → Servidor de LanguageTool). Cells, the preamble,
+ *  math and commands are blanked at the same offsets, so every finding lands
+ *  on the right word. At most ~15 000 characters per check. */
+async function languageToolDiagnostics(view) {
+  const server = gv('languageTool');
+  if (!server || !isTauri()) return [];
+  const doc = view.state.doc;
+  const vis = view.visibleRanges.length ? view.visibleRanges : [{ from: 0, to: Math.min(doc.length, 8000) }];
+  let first = doc.lineAt(vis[0].from).number;
+  let last = doc.lineAt(vis[vis.length - 1].to).number;
+  first = Math.max(1, first - 40);
+  last = Math.min(doc.lines, last + 40);
+  const text = latexOnly(doc.toString()).split('\n');
+  const bodyStart = text.findIndex((l) => /\\begin\s*\{document\}/.test(l));
+  const lines = [];
+  let size = 0;
+  for (let ln = first; ln <= last; ln++) {
+    const raw = text[ln - 1] || '';
+    const prose = bodyStart >= 0 && ln - 1 <= bodyStart ? ' '.repeat(raw.length) : maskLine(raw);
+    lines.push(prose);
+    size += prose.length + 1;
+    if (size > 15000) { last = ln; break; }
+  }
+  const base = doc.line(first).from;
+  let res;
+  try {
+    res = await invoke('languagetool_check', {
+      server, language: ltLanguage(spellLang()), text: lines.join('\n'), disabled: LT_DISABLED.join(','),
+    });
+  } catch (_) {
+    return [];
+  }
+  if (view.state.doc !== doc) return [];
+  return ltDiagnostics(res && res.matches, base).filter((d) => d.to <= doc.length);
+}
 
 /** LaTeX rules apply to LaTeX: a .bib, a .sty or a .txt is not a document. */
 function isLatexDoc(docId) {
@@ -69,6 +109,7 @@ export function latexLint(docId) {
       .map((d) => ({ from: d.from, to: Math.min(d.to, view.state.doc.length), severity: d.severity, message: d.message, source: 'LaTeX' }))
       .filter((d) => d.from < d.to);
     const d = appState.documents.find((x) => x.id === docId);
-    return own.concat(compileDiagnostics(view, d && d.path), await chktexDiagnostics(view));
+    const [chk, lt] = await Promise.all([chktexDiagnostics(view), languageToolDiagnostics(view)]);
+    return own.concat(compileDiagnostics(view, d && d.path), chk, lt);
   }, { delay: 500 });
 }

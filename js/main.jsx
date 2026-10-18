@@ -122,6 +122,11 @@ if (viewerBoot) {
     'file.open': () => { openDocument(); },
     'file.save': () => { saveActive(); },
     'file.close': () => { closeActive(); },
+    'edit.findProject': () => {
+      // Already open: re-open it, so it takes the new selection and the focus.
+      if (state.sidePanelTab === 'search') { state.sidePanelTab = null; setTimeout(() => { state.sidePanelTab = 'search'; }, 0); }
+      else state.sidePanelTab = 'search';
+    },
     'compile.run': () => { compileActive(); },
     'compile.fresh': () => { compileActive(true, { fresh: true }); },
     'compile.stop': () => { cancelCompile(); },
@@ -217,7 +222,11 @@ if (viewerBoot) {
   // Probe the toolchain (Python + LaTeX) and warm up the kernel in the background.
   if (isTauri()) {
     detectEnv()
-      .then((env) => { state.env = env; })
+      .then((env) => {
+        state.env = env;
+        // Nothing to compute with or nothing to typeset with: offer to set it up.
+        import('./solid/components/SetupDialog.jsx').then((m) => m.offerSetupIfMissing(env)).catch(() => {});
+      })
       .catch(() => {});
     ensureKernel().catch(() => {});
     // Anything the OS delivered before the listener above existed (a cold

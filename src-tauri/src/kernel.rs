@@ -177,8 +177,13 @@ fn probe_python(cmd: &std::path::Path) -> Option<PyProbe> {
 /// install dirs are scanned as a fallback. Shared by `find_python` and
 /// `list_interpreters` so the discovery logic lives in ONE place.
 fn candidate_pythons() -> Vec<std::path::PathBuf> {
-    let mut cands: Vec<std::path::PathBuf> =
-        ["python", "python3", "py"].iter().map(std::path::PathBuf::from).collect();
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    // The environment Pyx prepared itself (runtime.rs) comes first: the user
+    // asked for it, and it has the scientific stack by construction.
+    if let Some(p) = crate::runtime::env_python() {
+        cands.push(p);
+    }
+    cands.extend(["python", "python3", "py"].iter().map(std::path::PathBuf::from));
     // macOS: Finder-launched apps get a MINIMAL PATH that misses Homebrew —
     // try the canonical absolute locations too. Linux: distro python3.
     #[cfg(target_os = "macos")]

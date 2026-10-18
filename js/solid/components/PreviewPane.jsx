@@ -15,6 +15,7 @@ import {
   openExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
 } from '../../core/platform.js';
 import { icons as ICO } from './ribbon/icons.js';
+import PdfOutline from './PdfOutline.jsx';
 
 // Viewer toolbar icons — same hand as the ribbon and the notebook cells:
 // a 16x16 box, 1.2px strokes, no fills unless the shape IS a solid. The
@@ -49,7 +50,9 @@ const ic = {
   eraser: `<svg ${S}><path d="m5.6 13.2-2.8-2.8 6-6 2.8 2.8-6 6zM7.8 13.2h5.6"/></svg>`,
   undo: `<svg ${S}><path d="M2.5 6.4h7a3.8 3.8 0 0 1 0 7.6H6"/><path d="M5.6 3.3 2.5 6.4l3.1 3.1"/></svg>`, // codicon: discard
   trashAll: `<svg ${S}><path d="M3 4h10M6 4V2.7h4V4M5 4l.7 9h4.6L11 4z"/></svg>`,         // codicon: trash
+  outline: `<svg ${S}><path d="M4.5 2.5h7v11l-3.5-2.6-3.5 2.6z"/></svg>`,                // codicon: bookmark
 };
+const [outlineOpen, setOutlineOpen] = createSignal(false);
 
 const ANNOT_TOOLS = [
   { id: 'pen', icon: 'pen', title: 'Lápiz (dibujo libre)' },
@@ -234,6 +237,8 @@ export default function PreviewPane() {
         {/* La lupa ya no es un botón: se activa con doble clic sobre el PDF. */}
 
         <div class="pv-sep"></div>
+        <Btn icon={ic.outline} title="Marcadores: ir a una sección del PDF" active={outlineOpen()}
+          disabled={!hasPdf()} onClick={() => setOutlineOpen(!outlineOpen())} />
         <Btn icon={ic.find} title="Buscar en el PDF (Ctrl+F)" active={pdfSearchOpen()}
           disabled={!hasPdf()} onClick={() => setPdfSearchOpen(!pdfSearchOpen())} />
         <Btn icon={ic.draw} title="Anotar / dibujar sobre el PDF" active={annotBarOpen()}
@@ -289,7 +294,12 @@ export default function PreviewPane() {
           </Show>
         </div>
       </Show>
-      <div class={`preview-scroll tool-${tool()}${invert() ? ' pdf-invert' : ''}${annotTool() ? ' annot-active' : ''}`} ref={scrollRef}></div>
+      <div class="preview-body">
+        <Show when={outlineOpen() && hasPdf()}>
+          <PdfOutline />
+        </Show>
+        <div class={`preview-scroll tool-${tool()}${invert() ? ' pdf-invert' : ''}${annotTool() ? ' annot-active' : ''}`} ref={scrollRef}></div>
+      </div>
     </>
   );
 }

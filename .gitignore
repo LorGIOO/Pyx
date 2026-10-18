@@ -59,3 +59,7 @@ CLAUDE.md
 # os
 .DS_Store
 Thumbs.db
+Manual de usuario/xref/
+# El manual de usuario se distribuye con su PDF y su fuente.
+!Manual de usuario/*.pdf
+!Manual de usuario/*.pltx

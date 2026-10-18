@@ -265,6 +265,13 @@ const FIELDS = () => [
       'Mathcad-style: the result appears greyed next to the expression, without touching the document.'],
   },
   {
+    cat: 'cells', sec: ['Ejecución', 'Execution'], key: 'reactiveCells', type: 'check',
+    label: 'Ejecución reactiva: al ejecutar una celda, ejecutar también las que dependen de ella',
+    en: 'Reactive execution: running a cell also runs the cells that depend on it',
+    hint: ['Como marimo: Pyx sabe qué variables define y usa cada celda. Al ejecutar una (Mayús+Intro) se ejecutan también las que usan lo que ha cambiado, y solo esas. Desactivado, se ejecuta solo esa celda (como en Jupyter) y las que dependen de ella se marcan como desactualizadas. La compilación siempre ejecuta únicamente lo necesario.',
+      'Like marimo: Pyx knows which variables each cell defines and uses. Running one (Shift+Enter) also runs the cells that use what changed, and only those. Off, only that cell runs (as in Jupyter) and the ones that depend on it are marked out of date. Compiling always runs only what is needed.'],
+  },
+  {
     cat: 'cells', sec: ['Resultados', 'Results'], key: 'saveOutputs', type: 'check',
     label: 'Guardar los resultados dentro del documento', en: 'Store results inside the document',
     hint: ['Los resultados viajan dentro del .pltx: al reabrir el informe se ven los números, las tablas y las figuras sin volver a ejecutar nada (ni hace falta Python). Un resultado cuya celda haya cambiado se descarta y la celda se marca como desactualizada.',
@@ -376,8 +383,14 @@ const FIELDS = () => [
     cat: 'lang', sec: ['Gramática y estructura', 'Grammar and structure'], key: 'grammarCheck', type: 'check',
     label: 'Subrayar problemas de estructura (azul)', en: 'Underline structure problems (blue)',
     after: () => broadcastSpellRefresh(),
-    hint: ['Detecta palabras repetidas seguidas («el el»), al estilo de Word.',
-      'Detects consecutive repeated words ("the the"), Word-style.'],
+    hint: ['Sin conexión: palabras repetidas («el el»), espacios antes de la puntuación o que faltan después, mayúscula tras un punto, «a el»/«de el» y los signos de apertura ¿ ¡ que faltan. Pasa el ratón por el subrayado para ver el motivo.',
+      'Offline: repeated words ("the the"), spaces before punctuation or missing after it, a capital after a full stop. Hover over the underline to see why.'],
+  },
+  {
+    cat: 'lang', sec: ['Gramática y estructura', 'Grammar and structure'], key: 'languageTool', type: 'text',
+    label: 'Servidor de LanguageTool', en: 'LanguageTool server', placeholder: 'http://localhost:8081',
+    hint: ['Opcional: la revisión gramatical completa de LanguageTool (el motor de LibreOffice). Escribe la dirección de tu servidor (java -jar languagetool-server.jar --port 8081 → http://localhost:8081) o https://api.languagetool.org para el servidor público, que recibe el texto del documento. Vacío = desactivado. Sus avisos aparecen como diagnósticos (F8), con las correcciones propuestas.',
+      'Optional: LanguageTool\'s full grammar check (LibreOffice\'s engine). Enter your server\'s address (java -jar languagetool-server.jar --port 8081 → http://localhost:8081) or https://api.languagetool.org for the public server, which receives the document\'s text. Empty = off. Its findings show as diagnostics (F8), with the proposed fixes.'],
   },
 ];
 
@@ -526,6 +539,10 @@ export default function ConfigDialog() {
               </For>
             </select>
           </Show>
+          <Show when={f.type === 'text'}>
+            <input class="cfg-select cfg-wide" type="text" spellcheck={false} value={fValue(f) || ''}
+              placeholder={f.placeholder || ''} disabled={off()} onChange={(e) => fSet(f, e.target.value.trim())} />
+          </Show>
           <Show when={f.type === 'range'}>
             <input type="range" min={f.min} max={f.max} step={f.step} value={fValue(f)} disabled={off()}
               onInput={(e) => fSet(f, parseFloat(e.target.value))} />
@@ -673,6 +690,16 @@ export default function ConfigDialog() {
                   {tr('Intérprete en uso', 'Interpreter in use')}: {state.env.python || tr('sin detectar', 'not detected')}
                   {' · '}{tr('Estado del kernel', 'Kernel status')}: {state.kernelStatus}
                 </p>
+                <div class="cfg-row">
+                  <span class="cfg-label">{tr('Python de Pyx', 'Pyx\'s Python')}</span>
+                  <button class="cfg-btn" onClick={() => import('./SetupDialog.jsx').then((m) => m.openSetup({ python: true }))}>
+                    {tr('Preparar o actualizar…', 'Set up or update…')}
+                  </button>
+                </div>
+                <p class="cfg-hint">
+                  {tr('Crea, con uv, un Python propio de Pyx con numpy, scipy, sympy, pandas, matplotlib, handcalcs y pint, sin tocar el sistema. Pasa a ser el intérprete que usa Pyx.',
+                    'Creates, with uv, Pyx\'s own Python with numpy, scipy, sympy, pandas, matplotlib, handcalcs and pint, without touching the system. It becomes the interpreter Pyx uses.')}
+                </p>
               </Show>
 
               <Show when={!searching() && cat() === 'compile'}>
@@ -691,6 +718,14 @@ export default function ConfigDialog() {
                       'No LaTeX found on the system. Install MiKTeX or TeX Live, or Tectonic: a single program that downloads only the packages each document needs.')}
                   {' '}{tr('El motor se aplica al documento activo.', 'The engine applies to the active document.')}
                 </p>
+                <Show when={!(state.env.engines || []).includes('tectonic')}>
+                  <div class="cfg-row">
+                    <span class="cfg-label">Tectonic</span>
+                    <button class="cfg-btn" onClick={() => import('./SetupDialog.jsx').then((m) => m.openSetup({ latex: true }))}>
+                      {tr('Descargar Tectonic…', 'Download Tectonic…')}
+                    </button>
+                  </div>
+                </Show>
               </Show>
 
               {/* The declarative option rows. */}

@@ -8,7 +8,7 @@ import { StateEffect } from '@codemirror/state';
 import { findPyExprs } from '../compile/latex-bridge.js';
 import { dirOf } from '../core/paths.js';
 import { evalExpressions } from './cell-runner.js';
-import { parseCells, cellAtLine } from './cells.js';
+import { parseCells, cellAtLine, refreshCells } from './cells.js';
 import { state as appState } from '../core/state.js';
 import { general } from '../solid/stores/settingsStore.js';
 
@@ -98,18 +98,29 @@ export const pyGhost = ViewPlugin.fromClass(class {
       || u.transactions.some((tr) => tr.effects.some((ef) => ef.is(refreshGhost)))) {
       this.decorations = ghostDecos(u.view);
     }
-    if (u.docChanged) this.schedule(u.view);
+    // Re-read the values when the text changes AND when cells have run: a run
+    // changes the namespace without touching the text (they used to stay at
+    // whatever they were before the run, until the next keystroke).
+    if (u.docChanged || u.transactions.some((tr) => tr.effects.some((ef) => ef.is(refreshCells)))) this.schedule(u.view);
   }
-  schedule(view) {
+  schedule(view, delay = 500) {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.evaluate(view), 500);
+    this.timer = setTimeout(() => this.evaluate(view), delay);
   }
   destroy() { clearTimeout(this.timer); }
   async evaluate(view) {
     if (general.pyGhost === false) return;
     // Only when the kernel is ALREADY alive (never auto-start for a preview) and
-    // no compile is mid-flight (its cell sequence must not be disturbed).
-    if (appState.kernelStatus !== 'ready' || appState.compiling) return;
+    // no compile is mid-flight (its cell sequence must not be disturbed). A
+    // busy kernel or a compile in flight means "later", not "never": the
+    // values that run is producing are exactly the ones worth showing.
+    if (appState.kernelStatus === 'busy' || appState.kernelStatus === 'starting' || appState.compiling) {
+      this.retries = (this.retries || 0) + 1;
+      if (this.retries <= 120) this.schedule(view, 1000);
+      return;
+    }
+    this.retries = 0;
+    if (appState.kernelStatus !== 'ready') return;
     const d = appState.documents[appState.activeIndex];
     if (!d || d.kind) return;
     // Only documents that actually have cells — a pure .tex has no kernel values.

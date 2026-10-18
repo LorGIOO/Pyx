@@ -240,3 +240,37 @@
   background: var(--theme-surface);
 }
 .cm-math-hover .katex-display { margin: 0.2em 0; }
+
+/* Python signature / documentation tooltips (py-signature.js). */
+.cm-tooltip:has(> .cm-py-sig) { padding: 0; border-radius: 6px; }
+.cm-py-sig {
+  max-width: min(640px, 70vw);
+  max-height: 40vh;
+  overflow: auto;
+  padding: 6px 10px;
+  color: var(--theme-text);
+  background: var(--theme-surface);
+  font-size: 12.5px;
+}
+.cm-py-sig code { font-family: var(--font-mono, monospace); white-space: pre-wrap; }
+.cm-py-sig code b { color: var(--theme-accent); }
+.cm-py-doc {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--theme-border, rgba(127,127,127,.25));
+  white-space: pre-wrap;
+  color: var(--theme-text-muted, var(--theme-text));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Interactive controls in cells (controls.js) */
+.pyx-ctl { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; vertical-align: middle; font-family: var(--font-ui, system-ui); font-size: 12px; }
+.pyx-ctl input[type=range] { width: 160px; accent-color: var(--theme-accent); vertical-align: middle; }
+.pyx-ctl-val { min-width: 3ch; padding: 0 6px; border-radius: 4px; background: color-mix(in srgb, var(--theme-accent) 14%, transparent); color: var(--theme-text); font-family: var(--font-mono, monospace); }
+.pyx-ctl input[type=number], .pyx-ctl input[type=text], .pyx-ctl select {
+  height: 20px; padding: 0 4px; border: 1px solid var(--theme-border); border-radius: 4px;
+  background: var(--theme-bg); color: var(--theme-text); font: inherit; font-size: 12px;
+}
+.pyx-ctl input[type=number] { width: 90px; }
+.pyx-ctl input[type=checkbox] { accent-color: var(--theme-accent); }

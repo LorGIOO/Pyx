@@ -29,6 +29,8 @@ export const state = createMutable({
 
   // Toolchain / runtime
   env: { python: null, latex: null, engines: [] },
+  // Libraries the open document imports that its Python lacks (status bar).
+  missingModules: [],
   kernelStatus: 'idle', // idle | starting | ready | busy | error
   // True when a soft interrupt has not taken hold: the stop button then offers
   // the forced kill instead of repeating a word that plainly did nothing.

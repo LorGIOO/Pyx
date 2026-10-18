@@ -269,6 +269,11 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
                 if rel.starts_with(crate::latex::WARM_DIR) {
                     continue;
                 }
+                // xelatex's intermediate (.xdv): rewritten by every compile and
+                // never read back — as big as the PDF, for nothing.
+                if rel.to_ascii_lowercase().ends_with(".xdv") {
+                    continue;
+                }
                 if let Ok(data) = fs::read(&abs) {
                     // The text of a build directory (.aux, .log, .toc) deflates
                     // to a fraction of its size and is worth compressing. The

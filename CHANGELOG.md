@@ -3,9 +3,39 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar]
+## [1.6.0] — 2026-10-18
 
-### Editor — funciones de TeXstudio
+Pyx recalcula solo lo que un cambio alcanza, completa Python de verdad, se
+prepara solo en un equipo vacío y trae su manual de usuario, escrito y
+compilado con el propio Pyx.
+
+### Cálculo
+
+- **Ejecución reactiva (grafo de dependencias, como marimo).** Pyx sabe qué
+  variables define y usa cada celda. Al compilar o al pulsar Mayús+Intro se
+  ejecutan solo las celdas cambiadas y las que dependen de ellas; si una
+  celda vuelve a dar el mismo valor, lo que la lee no se ejecuta (corte
+  temprano). Las mutaciones (`lst.append`) cuentan como definiciones; lo que
+  no se puede analizar (`exec`, `global`, magias) vuelve a la regla exacta.
+  Comprobado contra Python real con cientos de documentos aleatorios.
+- **Celdas desactualizadas en cascada**: al editar una celda, las que
+  dependen de ella lo indican. Nuevo ajuste: Ejecución reactiva.
+- **Controles interactivos** en las celdas (`# @slider`, `# @input`,
+  `# @select`, `# @check`, como en MATLAB) y panel **Parámetros**.
+- **Autocompletado de Python con jedi** sobre el espacio de nombres vivo,
+  firma de la función al escribir y ayuda al pasar el ratón.
+- Los valores en gris de `\py{}` se actualizan también al ejecutar celdas.
+
+### Sin instalaciones previas
+
+- Si falta Python o LaTeX, **Pyx los prepara con un clic**: uv descarga un
+  CPython autónomo con numpy, scipy, sympy, pandas, matplotlib, handcalcs,
+  pint, IPython y jedi; Tectonic hace de motor LaTeX. Todo en la carpeta de
+  datos de Pyx.
+- Un `ModuleNotFoundError` trae el botón **Instalar**, y la barra de estado
+  avisa de las librerías que importa el documento y faltan.
+
+### Editor
 
 - **Vista previa de fórmulas al pasar el ratón** sobre `$…$`, `\[…\]` o
   entornos como `equation`/`align`: se dibuja con KaTeX y cada `\py{}`
@@ -30,12 +60,33 @@ Todas las versiones publicadas de Pyx. El formato sigue
   llamen igual en carpetas distintas.
 - Abrir un proyecto con un PDF ya compilado deja SyncTeX listo sin compilar.
 
+### Más funciones de TeXstudio
+
+- **Autocompletado de LaTeX desde datos**: 336 comandos y 51 entornos con su
+  paquete y descripción; si el paquete no está cargado, se añade el
+  `\usepackage`. También los comandos definidos en el documento.
+- **Buscar en todo el proyecto** (Ctrl+Mayús+F), con reemplazo.
+- **Pegar tablas de Excel**, LibreOffice, Word o web como `tabular`.
+- **Historial del cursor** (Alt+← / Alt+→), Ctrl+B / Ctrl+I.
+- **Gramática**: más reglas sin conexión y LanguageTool opcional.
+- **Macros en Python** (Alt+Mayús+1…9) con su editor.
+- **Historial de versiones** de cada documento (comparar y restaurar) y Git
+  básico.
+- **Glosarios** (glossaries) ordenados entre pasadas y autocompletado de
+  `\gls{}`; **marcadores del PDF**.
+
+### Manual de usuario
+
+- Nueva carpeta **Manual de usuario**: un manual de 49 páginas con capturas
+  de todas las funciones, escrito como documento `.pltx` y compilado con Pyx
+  (sus figuras y números los calculan celdas de Python al compilar).
+
 ### Interno
 
-- Eliminadas nueve funciones sin uso.
-- Nuevo documento `docs/IDEAS-Y-MEJORAS.md` con la hoja de ruta: funciones
-  de TeXstudio pendientes, ideas de Jupyter, marimo, MATLAB, Mathcad y
-  CalcTree, y repositorios útiles.
+- Eliminadas nueve funciones sin uso, las carpetas `examples/`, `docs/` y
+  `tools/`, los iconos de Android, iOS y Microsoft Store y tres paquetes de
+  diccionarios que solo usaba un script de generación.
+- El `.pltx` ya no guarda el `.xdv` intermedio de xelatex.
 
 ## [1.5.0] — 2026-10-16
 

@@ -48,6 +48,7 @@ import { pyLint } from './py-lint.js';
 import { latexLint } from './latex-lint-ext.js';
 import { latexExtras } from './latex-extras.js';
 import { pySignatures } from './py-signature.js';
+import { parseCells as parseCellsFor, cellAtLine } from './cell-parse.js';
 import { pasteTables } from './paste-table.js';
 import { cellControls } from './controls.js';
 import { cursorHistory, historyBack, historyForward } from './cursor-history.js';
@@ -65,6 +66,19 @@ import { gv } from '../solid/stores/settingsStore.js';
 
 // Marks transactions that were forwarded from a sibling pane (prevents loops).
 const syncAnnotation = Annotation.define();
+
+/** Wrap the selection (or leave the caret inside) — outside Python cells. */
+function latexWrap(view, before, after) {
+  const sel = view.state.selection.main;
+  const ln = view.state.doc.lineAt(sel.head).number;
+  if (cellAtLine(parseCellsFor(view.state), ln)) return false;
+  const text = view.state.sliceDoc(sel.from, sel.to);
+  view.dispatch({
+    changes: { from: sel.from, to: sel.to, insert: before + text + after },
+    selection: { anchor: sel.from + before.length, head: sel.from + before.length + text.length },
+  });
+  return true;
+}
 
 /* ---------- minimap (VSCode-style), toggleable from Configuración ---------- */
 const minimapCompartment = new Compartment();
@@ -309,6 +323,9 @@ export function createDocState(docId, content) {
         // Jupyter-style cell reorder (whole cell moves; plain lines otherwise).
         { key: 'Alt-ArrowUp', run: moveCellOrLineUp, preventDefault: true },
         { key: 'Alt-ArrowDown', run: moveCellOrLineDown, preventDefault: true },
+        // TeXstudio's formatting shortcuts (in LaTeX; inside a cell they are Python's).
+        { key: 'Mod-b', run: (v) => latexWrap(v, '\\textbf{', '}'), preventDefault: true },
+        { key: 'Mod-i', run: (v) => latexWrap(v, '\\textit{', '}'), preventDefault: true },
         // Alt+Shift+1…9: the user's Python macros.
         ...Array.from({ length: 9 }, (_, i) => ({ key: `Alt-Shift-${i + 1}`, run: () => runMacroIndex(i), preventDefault: true })),
         { key: 'Alt-ArrowLeft', run: historyBack, preventDefault: true },

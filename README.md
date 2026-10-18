@@ -97,13 +97,13 @@ Más capturas, con la explicación de cada función, en el [manual de usuario](M
 
 ## 📦 Instalación
 
-Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest):
+Descarga el instalador de tu sistema desde la carpeta [**Instaladores**](Instaladores/) de este repositorio o desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest):
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | `Pyx_1.6.0_x64-setup.exe` |
-| **macOS** (Intel y Apple Silicon) | `Pyx_1.6.0_universal.dmg` |
-| **Linux** | `.deb` (Debian/Ubuntu) · `.rpm` (Fedora) · `.AppImage` (cualquier distro) |
+| **Windows** (x64) | [`Pyx_1.6.0_x64-setup.exe`](Instaladores/Pyx_1.6.0_x64-setup.exe) · [`Pyx_1.6.0_x64_en-US.msi`](Instaladores/Pyx_1.6.0_x64_en-US.msi) |
+| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.0_universal.dmg`](Instaladores/Pyx_1.6.0_universal.dmg) |
+| **Linux** | [`.deb`](Instaladores/Pyx_1.6.0_amd64.deb) (Debian/Ubuntu) · [`.rpm`](Instaladores/Pyx-1.6.0-1.x86_64.rpm) (Fedora) · `.AppImage` (cualquier distro, solo en la release por su tamaño) |
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.
 

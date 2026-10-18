@@ -306,6 +306,33 @@ export async function listVariables() {
   }
 }
 
+/* ---------------- completion and signatures (jedi) ----------------
+   Read-only questions about the live namespace. They never start a kernel,
+   never wait behind a running cell (the answer would come too late to be of
+   any use) and never flip the status indicator. null = no answer: the editor
+   falls back to what it knows statically. */
+function kernelIdle() {
+  return isTauri() && started && state.kernelStatus === 'ready' && !kernelSequenceActive();
+}
+export async function kernelComplete(code, line, col, cwd) {
+  if (!kernelIdle()) return null;
+  try {
+    const r = await kernelExec({ id: reqId++, complete: code, line, col, cwd });
+    return r && Array.isArray(r.items) ? r : null;
+  } catch (_) {
+    return null;
+  }
+}
+export async function kernelInspect(code, line, col, cwd) {
+  if (!kernelIdle()) return null;
+  try {
+    const r = await kernelExec({ id: reqId++, inspect: code, line, col, cwd });
+    return r && r.inspect && (r.inspect.signature || r.inspect.doc) ? r.inspect : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 export async function prewarmModules(names, cwd) {
   if (!isTauri()) return;
   const todo = [...new Set(names)].filter((n) => n && !warmed.has(n));

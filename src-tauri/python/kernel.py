@@ -13,6 +13,8 @@ Requests (one JSON object per line):
     {"id": 3, "lint": ["cell code", ...]}                        # squiggles
     {"id": 4, "prewarm": ["numpy", "scipy.optimize"], "cwd": ...}
     {"id": 5, "forget": ["a", "b"]}                              # dependency graph
+    {"id": 6, "complete": "code", "line": 3, "col": 4, "cwd": ...} # completion (jedi)
+    {"id": 7, "inspect": "code", "line": 3, "col": 4}             # signature + doc
     A cell request may carry "watch": [names]; its response then lists the
     watched names whose value did not change ("unchanged") and every name bound
     to an immutable value ("immutable").
@@ -3406,6 +3408,145 @@ def _forget(names):
     return gone
 
 
+# ---------------------------------------------------------------------------
+# completion (jedi, like IPython and JupyterLab)
+# ---------------------------------------------------------------------------
+# jedi.Interpreter completes against the LIVE namespace: `df.` lists the
+# columns' methods of the DataFrame the document built, `np.linalg.` the real
+# submodule, a string being typed in `read_csv("…` the files of the project.
+# Without jedi, a plain fallback lists names and attributes (no code runs:
+# attributes are looked up on objects that already exist).
+_COMPLETE_MAX = 300
+_JEDI_TYPES = {"module": "namespace", "class": "class", "function": "function",
+               "instance": "variable", "statement": "variable", "param": "variable",
+               "keyword": "keyword", "property": "property", "path": "text"}
+
+
+def _complete(req):
+    code = req.get("complete") or ""
+    line = int(req.get("line") or 1)
+    col = int(req.get("col") or 0)
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        try:
+            import jedi  # noqa: F401
+        except Exception:
+            return {"engine": "basic", "items": _complete_basic(code, line, col)}
+        try:
+            with _USER_CODE:
+                script = jedi.Interpreter(code, [NS])
+                comps = script.complete(line, col)
+        except Exception:
+            return {"engine": "basic", "items": _complete_basic(code, line, col)}
+        items = []
+        for c in comps[:_COMPLETE_MAX]:
+            try:
+                items.append({"name": c.name, "type": _JEDI_TYPES.get(c.type, "variable"),
+                              "complete": c.complete, "module": c.module_name or ""})
+            except Exception:
+                continue
+        return {"engine": "jedi", "items": items}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+
+
+def _complete_basic(code, line, col):
+    lines = code.split("\n")
+    text = lines[line - 1][:col] if 0 < line <= len(lines) else ""
+    m = re.search(r"([A-Za-z_][\w.]*)$", text)
+    if not m:
+        return []
+    expr = m.group(1)
+    parts = expr.split(".")
+    prefix = parts[-1]
+    out = []
+    if len(parts) == 1:
+        import builtins
+        import keyword
+        names = set(NS) | set(dir(builtins)) | set(keyword.kwlist)
+        for n in sorted(names):
+            if n.startswith(prefix) and not n.startswith("__"):
+                v = NS.get(n, getattr(builtins, n, None))
+                kind = ("keyword" if keyword.iskeyword(n) else "namespace" if isinstance(v, types.ModuleType)
+                        else "class" if isinstance(v, type) else "function" if callable(v) else "variable")
+                out.append({"name": n, "type": kind, "complete": n[len(prefix):], "module": ""})
+        return out[:_COMPLETE_MAX]
+    obj = NS.get(parts[0])
+    if obj is None:
+        return []
+    try:
+        for p in parts[1:-1]:
+            obj = getattr(obj, p)
+        names = dir(obj)
+    except Exception:
+        return []
+    for n in names:
+        if n.startswith(prefix) and (prefix.startswith("_") or not n.startswith("_")):
+            try:
+                v = getattr(obj, n)
+                kind = ("namespace" if isinstance(v, types.ModuleType) else "class" if isinstance(v, type)
+                        else "function" if callable(v) else "property")
+            except Exception:
+                kind = "property"
+            out.append({"name": n, "type": kind, "complete": n[len(prefix):], "module": ""})
+    return out[:_COMPLETE_MAX]
+
+
+def _inspect(req):
+    """Signature and documentation of what is at the cursor (Mayús+Tab in
+    Jupyter): jedi when available, otherwise inspect on the live object."""
+    code = req.get("inspect") or ""
+    line = int(req.get("line") or 1)
+    col = int(req.get("col") or 0)
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        try:
+            import jedi
+            with _USER_CODE:
+                script = jedi.Interpreter(code, [NS])
+                sigs = script.get_signatures(line, col)
+                if sigs:
+                    s = sigs[0]
+                    return {"name": s.name, "signature": s.to_string(), "doc": _clip_text(s.docstring(raw=True) or "", 4000),
+                            "param": s.index}
+                names = script.infer(line, col) or script.help(line, col)
+                if names:
+                    d = names[0]
+                    return {"name": d.name, "signature": "", "doc": _clip_text(d.docstring() or "", 4000), "param": None}
+        except ImportError:
+            pass
+        except Exception:
+            return {}
+        lines = code.split("\n")
+        text = lines[line - 1][:col] if 0 < line <= len(lines) else ""
+        m = re.search(r"([A-Za-z_][\w.]*)\(?[^()]*$", text)
+        if not m:
+            return {}
+        obj = NS.get(m.group(1).split(".")[0])
+        try:
+            for p in m.group(1).split(".")[1:]:
+                obj = getattr(obj, p)
+        except Exception:
+            return {}
+        if obj is None:
+            return {}
+        import inspect as _insp
+        try:
+            sig = str(_insp.signature(obj))
+        except Exception:
+            sig = ""
+        return {"name": m.group(1), "signature": m.group(1).split(".")[-1] + sig,
+                "doc": _clip_text(_insp.getdoc(obj) or "", 4000), "param": None}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+
+
 def _run_request(req):
     """Execute one cell and collect everything it produced."""
     global _USER_CWD
@@ -3613,6 +3754,10 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, "vars": _vars()}
     if "forget" in req:
         return {"id": req.get("id"), "ok": True, "forgot": _forget(req.get("forget"))}
+    if "complete" in req:
+        return {"id": req.get("id"), "ok": True, **_complete(req)}
+    if "inspect" in req:
+        return {"id": req.get("id"), "ok": True, "inspect": _inspect(req)}
     return _run_request(req)
 
 

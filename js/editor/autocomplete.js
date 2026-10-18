@@ -3,7 +3,9 @@
 // type inside (\subsection → \subsection{▮}), TeXstudio/VSCode-style, via
 // CodeMirror snippet completions (${} marks where the cursor lands).
 import { snippetCompletion } from '@codemirror/autocomplete';
-import { parseCells } from './cells.js';
+import { parseCells } from './cell-parse.js';
+import { analyzePython } from './py-deps.js';
+import { kernelComplete } from './cell-runner.js';
 import { state as appState } from '../core/state.js';
 import { dirOf, joinPath } from '../core/paths.js';
 import { getDocContent } from './setup.js';
@@ -85,26 +87,17 @@ const PY_SNIPPETS = [
   snippetCompletion('lambda ${x}: ${expr}', { label: 'lambda', detail: 'función anónima', type: 'keyword', boost: 40 }),
   pyFunc('print', 'imprimir'),
 ];
-// Bare keywords (the template-worthy ones already live in PY_SNIPPETS).
+// Without a kernel (or while it is busy): keywords, builtins and the names
+// the document's cells define. With one, jedi answers instead (see below).
 const PY_KEYWORDS = ['as', 'else', 'except', 'finally', 'return', 'yield', 'in', 'is', 'not', 'and',
   'or', 'pass', 'break', 'continue', 'global', 'nonlocal', 'async', 'await', 'raise', 'assert', 'del',
   'None', 'True', 'False'];
-// Builtin FUNCTIONS → insert name() with the caret inside the parens.
-const PY_BUILTIN_FUNCS = ['len', 'range', 'abs', 'sum', 'min', 'max', 'round', 'pow', 'divmod',
-  'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed', 'open', 'input', 'isinstance',
-  'issubclass', 'super', 'format', 'repr', 'any', 'all', 'hasattr', 'getattr', 'setattr', 'callable',
-  'iter', 'next'];
-// Builtin TYPES → plain (also valid as annotations `x: int`); type `(` to call.
-const PY_TYPES = ['int', 'float', 'str', 'list', 'dict', 'set', 'tuple', 'bool', 'bytes', 'bytearray',
-  'complex', 'frozenset', 'object', 'type', 'memoryview'];
-const PY_MODULES = ['math', 'numpy', 'np', 'pandas', 'pd', 'sympy', 'sp', 'matplotlib', 'plt', 'os',
-  'sys', 'json', 'random', 'datetime', 're'];
-const pyOptions = [
-  ...PY_SNIPPETS,
+const PY_BUILTINS = ['len', 'range', 'abs', 'sum', 'min', 'max', 'round', 'enumerate', 'zip', 'map',
+  'filter', 'sorted', 'reversed', 'open', 'isinstance', 'format', 'repr', 'any', 'all', 'int', 'float',
+  'str', 'list', 'dict', 'set', 'tuple', 'bool', 'complex'];
+const pyStatic = [
   ...PY_KEYWORDS.map((k) => ({ label: k, type: 'keyword' })),
-  ...PY_BUILTIN_FUNCS.map((b) => pyFunc(b)),
-  ...PY_TYPES.map((t) => ({ label: t, type: 'type' })),
-  ...PY_MODULES.map((m) => ({ label: m, type: 'variable' })),
+  ...PY_BUILTINS.map((b) => pyFunc(b)),
 ];
 
 function inCell(state, pos) {
@@ -230,103 +223,81 @@ function endEnvOptions() {
   return [freeEnvOption, ...envNames().map((e) => ({ label: e, type: 'class', apply: endApply(e) }))];
 }
 
-/* ---------- Python: document-aware completion (VSCode-like) ---------- */
-// Curated members for `obj.` completion of common modules.
-const MOD_MEMBERS = {
-  math: ['pi', 'e', 'tau', 'inf', 'nan', 'sqrt', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
-    'sinh', 'cosh', 'tanh', 'log', 'log2', 'log10', 'exp', 'pow', 'floor', 'ceil', 'trunc', 'fabs',
-    'factorial', 'gcd', 'radians', 'degrees', 'hypot', 'isclose', 'isnan', 'isinf', 'comb', 'perm'],
-  np: ['array', 'asarray', 'zeros', 'ones', 'full', 'empty', 'arange', 'linspace', 'logspace', 'eye',
-    'identity', 'dot', 'matmul', 'cross', 'sum', 'prod', 'mean', 'median', 'std', 'var', 'min', 'max',
-    'argmin', 'argmax', 'sqrt', 'exp', 'log', 'log10', 'sin', 'cos', 'tan', 'abs', 'round', 'floor',
-    'ceil', 'pi', 'e', 'inf', 'nan', 'reshape', 'transpose', 'concatenate', 'stack', 'vstack', 'hstack',
-    'where', 'unique', 'sort', 'clip', 'cumsum', 'diff', 'gradient', 'linalg', 'random'],
-  plt: ['plot', 'scatter', 'bar', 'barh', 'hist', 'pie', 'boxplot', 'errorbar', 'fill_between',
-    'imshow', 'contour', 'contourf', 'xlabel', 'ylabel', 'title', 'suptitle', 'legend', 'grid',
-    'xlim', 'ylim', 'xticks', 'yticks', 'axis', 'figure', 'subplot', 'subplots', 'tight_layout',
-    'show', 'savefig', 'close', 'colorbar', 'annotate', 'text', 'axhline', 'axvline'],
-  pd: ['DataFrame', 'Series', 'read_csv', 'read_excel', 'concat', 'merge', 'pivot_table', 'to_numeric',
-    'to_datetime', 'isna', 'notna', 'cut', 'qcut', 'date_range'],
-  os: ['path', 'getcwd', 'chdir', 'listdir', 'makedirs', 'mkdir', 'remove', 'rename', 'environ',
-    'walk', 'system', 'getenv'],
-  sys: ['argv', 'path', 'version', 'version_info', 'platform', 'exit', 'stdin', 'stdout', 'stderr',
-    'maxsize', 'modules'],
-  random: ['random', 'randint', 'randrange', 'choice', 'choices', 'sample', 'shuffle', 'uniform',
-    'gauss', 'normalvariate', 'seed'],
-  sp: ['symbols', 'Symbol', 'Matrix', 'solve', 'simplify', 'expand', 'factor', 'diff', 'integrate',
-    'limit', 'series', 'latex', 'sqrt', 'sin', 'cos', 'tan', 'exp', 'log', 'pi', 'oo', 'Rational'],
-};
-MOD_MEMBERS.numpy = MOD_MEMBERS.np;
-MOD_MEMBERS.pandas = MOD_MEMBERS.pd;
-MOD_MEMBERS.sympy = MOD_MEMBERS.sp;
-// Members that are CONSTANTS or submodules (np.pi, sys.argv, np.random, os.path…)
-// → inserted plain, no parens. Everything else in MOD_MEMBERS is callable.
-const MEMBER_NONCALL = new Set(['pi', 'e', 'tau', 'inf', 'nan', 'oo', 'linalg', 'random', 'path',
-  'environ', 'argv', 'version', 'version_info', 'platform', 'stdin', 'stdout', 'stderr', 'maxsize',
-  'modules']);
-
-// Identifiers DEFINED in the document's cells (vars, functions, imports, params).
+/* ---------- Python: real completion (jedi) ---------- */
+// Names DEFINED by the document's cells (variables, functions, imports), from
+// the same analysis the dependency graph uses.
 function docDefinedNames(state) {
   const names = new Set();
-  let m;
-  for (const c of parseCells(state)) {
-    const code = c.code;
-    const reAssign = /^[ \t]*([A-Za-z_]\w*)[ \t]*(?:[+\-*/%&|^@]?=)(?!=)/gm;
-    while ((m = reAssign.exec(code))) names.add(m[1]);
-    const reDef = /^[ \t]*(?:def|class)[ \t]+([A-Za-z_]\w*)/gm;
-    while ((m = reDef.exec(code))) names.add(m[1]);
-    const reImp = /^[ \t]*import[ \t]+([A-Za-z_][\w.]*)(?:[ \t]+as[ \t]+([A-Za-z_]\w*))?/gm;
-    while ((m = reImp.exec(code))) names.add(m[2] || m[1].split('.')[0]);
-    const reFrom = /^[ \t]*from[ \t]+[\w.]+[ \t]+import[ \t]+(.+)$/gm;
-    while ((m = reFrom.exec(code))) {
-      for (const part of m[1].split(',')) {
-        const nm = part.trim().split(/\s+as\s+/).pop().trim().replace(/[()]/g, '');
-        if (/^[A-Za-z_]\w*$/.test(nm)) names.add(nm);
-      }
-    }
-    const reFor = /\bfor[ \t]+([A-Za-z_]\w*)/g;
-    while ((m = reFor.exec(code))) names.add(m[1]);
-    const reParams = /\bdef[ \t]+[A-Za-z_]\w*[ \t]*\(([^)]*)\)/g;
-    while ((m = reParams.exec(code))) {
-      for (const p of m[1].split(',')) {
-        const nm = p.trim().split(/[:=]/)[0].trim().replace(/^\*+/, '');
-        if (/^[A-Za-z_]\w*$/.test(nm)) names.add(nm);
-      }
-    }
-  }
+  for (const c of parseCells(state)) for (const d of analyzePython(c.code).defs) names.add(d);
   return names;
 }
 
-// The full Python option list: static (keywords/builtins/modules) + the names
-// defined in the document (variables, functions, imports — boosted to the top).
-function pyDynamicOptions(state) {
-  const opts = pyOptions.slice();
-  const seen = new Set(opts.map((o) => o.label));
-  for (const n of docDefinedNames(state)) if (!seen.has(n)) { seen.add(n); opts.push({ label: n, type: 'variable', boost: 30 }); }
-  return opts;
+// The code jedi sees: every cell above (so a name defined there but not run
+// yet still completes) and the current cell, with the cursor's line/column.
+function cellSource(state, pos) {
+  const ln = state.doc.lineAt(pos).number;
+  const parts = [];
+  for (const c of parseCells(state)) {
+    if (ln > c.headerLine && ln < c.endLine) {
+      const offset = parts.reduce((n, p) => n + p.split('\n').length, 0);
+      parts.push(c.code);
+      return { code: parts.join('\n'), line: offset + (ln - c.headerLine), col: pos - state.doc.lineAt(pos).from };
+    }
+    if (c.headerLine > ln) break;
+    parts.push(c.code);
+  }
+  return null;
 }
 
-export async function calcCompletions(context) {
-  if (inCell(context.state, context.pos)) {
-    const line = context.state.doc.lineAt(context.pos);
-    const before = line.text.slice(0, context.pos - line.from);
-    // obj.member → curated module members (np., plt., math.…).
-    const dot = before.match(/([A-Za-z_]\w*)\.(\w*)$/);
-    if (dot) {
-      const members = MOD_MEMBERS[dot[1]];
-      if (!members) return null; // unknown object → don't guess attributes
-      return {
-        from: context.pos - dot[2].length,
-        options: members.map((n) => (MEMBER_NONCALL.has(n)
-          ? { label: n, type: 'property' }
-          : snippetCompletion(`${n}(\${})`, { label: n, type: 'method' }))),
-        validFor: /^\w*$/,
-      };
-    }
-    const word = context.matchBefore(/[A-Za-z_]\w*/);
-    if (!word || (word.from === word.to && !context.explicit)) return null;
-    return { from: word.from, options: pyDynamicOptions(context.state), validFor: /^\w*$/ };
+async function activeCwdQuick() {
+  try {
+    const m = await import('../compile/compiler.js');
+    return await m.activeRootDir();
+  } catch (_) {
+    return undefined;
   }
+}
+
+const JEDI_BOOST = { variable: 20, function: 15, class: 15, namespace: 10, property: 12, keyword: 0, text: 25 };
+function jediOption(item) {
+  const call = (item.type === 'function' || item.type === 'class') && !item.name.endsWith('=');
+  const detail = item.module && item.type !== 'keyword' ? item.module : undefined;
+  if (call) return snippetCompletion(`${item.name}(\${})`, { label: item.name, type: item.type, detail, boost: JEDI_BOOST[item.type] });
+  return { label: item.name, type: item.type, detail, boost: JEDI_BOOST[item.type] || 0 };
+}
+
+async function pythonCompletions(context) {
+  const { state, pos } = context;
+  const line = state.doc.lineAt(pos);
+  const before = line.text.slice(0, pos - line.from);
+  const afterDot = /\.\w*$/.test(before);
+  const inString = /(['"])[^'"]*$/.test(before);
+  const word = context.matchBefore(/[A-Za-z_]\w*/);
+  if (!context.explicit && !afterDot && !inString && (!word || word.from === word.to)) return null;
+
+  const src = cellSource(state, pos);
+  const res = src ? await kernelComplete(src.code, src.line, src.col, await activeCwdQuick()) : null;
+  if (context.aborted) return null;
+  if (res && res.items.length) {
+    // jedi says how much of each name is already typed: name minus `complete`.
+    const first = res.items[0];
+    const typed = Math.max(0, first.name.length - first.complete.length);
+    const options = res.items.map(jediOption);
+    if (!afterDot && !inString) options.push(...PY_SNIPPETS);
+    return { from: pos - typed, options, validFor: inString ? undefined : /^\w*$/ };
+  }
+  if (afterDot || inString) return null; // nothing reliable to say about attributes
+  if (!word) return null;
+  const opts = [...PY_SNIPPETS, ...pyStatic];
+  const seen = new Set(opts.map((o) => o.label));
+  for (const n of docDefinedNames(state)) if (!seen.has(n)) { seen.add(n); opts.push({ label: n, type: 'variable', boost: 30 }); }
+  return { from: word.from, options: opts, validFor: /^\w*$/ };
+}
+
+export { cellSource };
+
+export async function calcCompletions(context) {
+  if (inCell(context.state, context.pos)) return pythonCompletions(context);
 
   // Inside a \ref{…}/\cite{…}/\begin{…} argument → suggest the right list.
   const line = context.state.doc.lineAt(context.pos);

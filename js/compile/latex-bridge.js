@@ -571,6 +571,9 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender 
     guards.push('\\providecommand\\Pyx@eat@i[1]{}');
     guards.push('\\providecommand\\py{\\@ifstar\\Pyx@eat@i\\Pyx@eat@i}');
     guards.push('\\providecommand\\pyif[3]{}');
+    // \pynotebook{…} links a Jupyter notebook (its cells already ran): the
+    // command itself prints nothing.
+    guards.push('\\providecommand\\pynotebook[1]{}');
   }
   // LAST: the hooks wrap whatever the guards above may have just loaded
   // (graphicx, listings).

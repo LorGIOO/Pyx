@@ -472,6 +472,84 @@ async fn read_sources(paths: Vec<String>) -> Result<Vec<Option<String>>, String>
     .map_err(|e| e.to_string())
 }
 
+/// One code cell of a Jupyter notebook: its id (nbformat ≥ 4.5) and source.
+#[derive(serde::Serialize)]
+struct NotebookCell {
+    id: Option<String>,
+    source: String,
+}
+
+#[derive(serde::Deserialize)]
+struct NbFile {
+    #[serde(default)]
+    cells: Vec<NbCellIn>,
+    #[serde(default)]
+    nbformat: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct NbCellIn {
+    #[serde(default)]
+    cell_type: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    source: NbSource,
+}
+
+/// A cell's source: a list of lines (what Jupyter writes) or one string.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum NbSource {
+    Lines(Vec<String>),
+    Text(String),
+}
+
+impl Default for NbSource {
+    fn default() -> Self {
+        NbSource::Text(String::new())
+    }
+}
+
+/// The CODE cells of a Jupyter notebook (`\pynotebook{…}`), in order.
+///
+/// Parsed here so only the code crosses to the window: a notebook keeps its
+/// outputs — figures as base64, long tables — and is often tens of MB of
+/// which the code is a few KB. Outputs and metadata are skipped by the parser
+/// without being built.
+#[tauri::command]
+async fn read_notebook(path: String) -> Result<Vec<NotebookCell>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("No se pudo leer {path}: {e}"))?;
+        notebook_code_cells(&bytes, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn notebook_code_cells(bytes: &[u8], path: &str) -> Result<Vec<NotebookCell>, String> {
+    let nb: NbFile = serde_json::from_slice(bytes)
+        .map_err(|e| format!("{path} no es un cuaderno de Jupyter válido: {e}"))?;
+    if nb.nbformat > 0 && nb.nbformat < 4 {
+        return Err(format!(
+            "{path} usa el formato antiguo de Jupyter (v{}): ábrelo y guárdalo con Jupyter actual.",
+            nb.nbformat
+        ));
+    }
+    Ok(nb
+        .cells
+        .into_iter()
+        .filter(|c| c.cell_type == "code")
+        .map(|c| NotebookCell {
+            id: c.id,
+            source: match c.source {
+                NbSource::Lines(l) => l.concat(),
+                NbSource::Text(t) => t,
+            },
+        })
+        .collect())
+}
+
 /// One searchable file of a project: its path and its text.
 #[derive(serde::Serialize)]
 struct ProjectText {
@@ -1025,6 +1103,7 @@ pub fn run() {
             install_packages,
             file_stamps,
             read_sources,
+            read_notebook,
             kernel_start,
             kernel_exec,
             kernel_reset,
@@ -1073,6 +1152,30 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::percent_decode;
+
+    /// A notebook gives its code cells, in order and joined as Jupyter splits
+    /// them into lines — never its markdown, its outputs or its metadata.
+    #[test]
+    fn notebook_gives_only_its_code_cells() {
+        let nb = r##"{
+          "nbformat": 4, "nbformat_minor": 5, "metadata": {"kernelspec": {"name": "python3"}},
+          "cells": [
+            {"cell_type": "markdown", "id": "m1", "source": ["# Título"]},
+            {"cell_type": "code", "id": "a1", "source": ["import numpy as np\n", "L = 6.0"],
+             "outputs": [{"output_type": "display_data", "data": {"image/png": "iVBORw0KGgo="}}],
+             "execution_count": 1, "metadata": {}},
+            {"cell_type": "code", "source": "q = L * 2", "outputs": []}
+          ]
+        }"##;
+        let cells = super::notebook_code_cells(nb.as_bytes(), "calculo.ipynb").unwrap();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].id.as_deref(), Some("a1"));
+        assert_eq!(cells[0].source, "import numpy as np\nL = 6.0");
+        assert_eq!(cells[1].id, None);
+        assert_eq!(cells[1].source, "q = L * 2");
+        assert!(super::notebook_code_cells(b"{\"nbformat\": 3, \"worksheets\": []}", "viejo.ipynb").is_err());
+        assert!(super::notebook_code_cells(b"no es json", "roto.ipynb").is_err());
+    }
 
     /// The new content replaces the old one, the permissions survive, and no
     /// temporary file is left beside the document.

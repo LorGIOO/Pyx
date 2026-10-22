@@ -17,6 +17,7 @@ import {
   execKey, programOf, forgetNames, ensureStarNames,
 } from '../editor/cell-runner.js';
 import { executePlan } from '../editor/dep-plan.js';
+import { notebookPath, loadNotebook } from '../editor/notebooks.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
 import { setBuildMaps, persistBuildMaps, ensureBuildMaps } from './build-maps.js';
@@ -332,6 +333,7 @@ export async function activeRootDir() {
 
 /* ---- multi-file gather / run / build (document order, depth ≤ 3) ---- */
 const INPUT_SRC = '\\\\(input|include)\\s*\\{([^}]+)\\}';
+const NOTEBOOK_RE = /\\pynotebook\s*\{([^}]+)\}/g;
 const isPyxPath = (p) => !/\.tex$/i.test(p); // per-FILE rule: .tex = pure LaTeX…
 // …UNLESS it actually contains Python cells: a .tex with %#python cells is
 // processed (cells run, \py{} resolved) just like a .pltx, so cells can be
@@ -433,6 +435,7 @@ function analyzeFile(path, content) {
   const inputRe = new RegExp(INPUT_SRC, 'g');
   let inCell = false, code = [], headerLn = 0, lineNo = 0;
   let cellIdx = -1, cellId = null;
+  let notebooks = 0;
 
   for (const line of content.split(/\r?\n/)) {
     lineNo++;
@@ -458,6 +461,11 @@ function analyzeFile(path, content) {
           inputRe.lastIndex = 0;
           let m;
           while ((m = inputRe.exec(code))) events.push({ kind: 'input', raw: m[2] });
+          // \pynotebook{cuaderno.ipynb}: the notebook's code cells run HERE.
+          if (code.indexOf('\\pynotebook') >= 0) {
+            NOTEBOOK_RE.lastIndex = 0;
+            while ((m = NOTEBOOK_RE.exec(code))) { events.push({ kind: 'notebook', raw: m[1].trim() }); notebooks++; }
+          }
         }
       }
       continue;
@@ -480,8 +488,9 @@ function analyzeFile(path, content) {
   // worst outcome of all — surface it as a problem the user can act on.
   const unterminated = inCell ? headerLn : 0;
 
-  // .tex is pure LaTeX unless it actually carries Python cells.
-  const isPyx = isPyxPath(path) || cells.length > 0;
+  // .tex is pure LaTeX unless it actually carries Python cells (its own, or
+  // a linked notebook's).
+  const isPyx = isPyxPath(path) || cells.length > 0 || notebooks > 0;
   const pyExprs = isPyx ? findPyExprs(content) : [];
   const conds = isPyx ? collectPyIfConds(content) : [];
   const hasPyIf = isPyx && findPyIfExprs(content).length > 0;
@@ -504,7 +513,9 @@ function analyzeFile(path, content) {
     // cannot read a zip: a plain-LaTeX chapter saved as .pltx used to get no
     // copy, so its parent's \input kept pointing at the container and the
     // chapter never compiled. A .pltx has to work anywhere a .tex does.
-    needsBuild: isPltx(path) || (isPyx && (cells.length > 0 || pyExprs.length > 0 || hasPyIf)),
+    // A \pynotebook needs the copy too: it is where the guard that makes the
+    // command print nothing reaches the engine.
+    needsBuild: isPltx(path) || notebooks > 0 || (isPyx && (cells.length > 0 || pyExprs.length > 0 || hasPyIf)),
   };
 }
 
@@ -526,7 +537,10 @@ export async function prewarmActive() {
       : await readSourceFile(rootPath).catch(() => '');
     const files = await gatherTree(rootPath, rootContent, dirOf(rootPath), { save: false });
     const names = [];
-    for (const f of files.values()) for (const c of f.cells || []) names.push(...importsOf(c.code));
+    for (const f of files.values()) {
+      for (const c of f.cells || []) names.push(...importsOf(c.code));
+      for (const nb of (f.notebooks && f.notebooks.values()) || []) for (const c of nb.cells) names.push(...importsOf(c.code));
+    }
     if (names.length) await prewarmModules(names, dirOf(rootPath));
   } catch (_) { /* warm-up is an optimisation: never an error */ }
 }
@@ -544,6 +558,20 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
       ...analyzeFile(path, content), // ONE scan per file, per compile
     };
     files.set(path, f);
+    // Linked Jupyter notebooks (\pynotebook): their code cells, re-read only
+    // when the notebook changed on disk (notebooks.js).
+    const nbRaws = [...new Set(f.events.filter((e) => e.kind === 'notebook').map((e) => e.raw))];
+    if (nbRaws.length) {
+      f.notebooks = new Map();
+      await Promise.all(nbRaws.map(async (raw) => {
+        const p = notebookPath(rootDir, raw);
+        try {
+          f.notebooks.set(raw, { path: p, cells: await loadNotebook(p) });
+        } catch (e) {
+          f.notebooks.set(raw, { path: p, cells: [], error: String((e && e.message) || e) });
+        }
+      }));
+    }
     if (depth >= 3) return;
 
     // Resolve this file's \input targets first, then batch-read the ones that
@@ -803,7 +831,17 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     ];
     const exprs = [...pyValExprs, ...condExprs.map(pyifKey)];
     let valueMap = {};
-    const anyCells = pyFiles.some((p) => files.get(p).cells.length > 0);
+    const nbFiles = [...files.values()].filter((f) => f.notebooks);
+    const anyCells = pyFiles.some((p) => files.get(p).cells.length > 0)
+      || nbFiles.some((f) => [...f.notebooks.values()].some((nb) => nb.cells.length > 0));
+    // A notebook that could not be read is said, with the reason: its
+    // variables are then missing, and the NameError alone would not explain why.
+    let nbProblems = '';
+    for (const f of nbFiles) {
+      for (const [raw, nb] of f.notebooks) {
+        if (nb.error) nbProblems += `\n[\\pynotebook{${raw}}] No se pudo leer el cuaderno: ${nb.error}`;
+      }
+    }
 
     if (anyCells || exprs.length) {
       /* The project's cells in EXECUTION order: document order, descending
@@ -823,6 +861,14 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
             if (ev.kind === 'input') {
               const child = f.raws.get(ev.raw);
               if (child) walkOrder(child);
+              continue;
+            }
+            if (ev.kind === 'notebook') {
+              // A linked notebook's code cells run here, in its order.
+              const nb = f.notebooks && f.notebooks.get(ev.raw);
+              for (const cell of (nb && nb.cells) || []) {
+                runOrder.push({ path: nb.path, file: f, cell, nth: cell.nth, notebook: true });
+              }
               continue;
             }
             runOrder.push({ path, file: f, cell: ev.cell, nth: ++n });
@@ -861,7 +907,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           // hand, or the PDF would silently lose the calculation. Every run
           // fills the cache; this only fires after an eviction.
           program.forEach((p, i) => {
-            if (!mustRun(i) && HANDCALCS_MAGIC.test(runOrder[i].cell.code) && !renderKnown(p.hash)) forced.push(p.key);
+            if (!mustRun(i) && !runOrder[i].notebook && HANDCALCS_MAGIC.test(runOrder[i].cell.code)
+              && !renderKnown(p.hash)) forced.push(p.key);
           });
           // A cell is only "already run" if what it READ is still the same: a
           // spreadsheet or CSV edited since gives different numbers with the
@@ -892,11 +939,12 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           forget: forgetNames,
           run: async (i, watch) => {
             phase.ran++;
-            const { path, cell, nth } = runOrder[i];
-            const od = state.documents.find((d) => !d.kind && samePath(d.path, path));
+            const { path, cell, nth, notebook } = runOrder[i];
+            const od = notebook ? null : state.documents.find((d) => !d.kind && samePath(d.path, path));
             const view = od ? getViewOfDoc(od.id) : null;
+            // A notebook's cells run from the notebook's folder, as in Jupyter.
             const res = await execCellFor(view, view ? docIdOf(view.state) : null, cell, cwd,
-              { key: program[i].key, D: plan.effects[i].D, watch });
+              { key: program[i].key, D: plan.effects[i].D, watch, runCwd: notebook ? cell.dir : undefined });
             // execCellFor recorded the cell's typeset block (recordRender, where
             // the HARD RULE lives: only a cell that EXPLICITLY declares
             // %%render / %%tex may put anything into the PDF).
@@ -921,7 +969,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // Every cell contributes its typeset block, skipped ones included:
         // their code is unchanged, so the cached render is exactly current.
         for (const f of files.values()) f.renders = {};
-        for (const { file, cell } of runOrder) {
+        for (const { file, cell, notebook } of runOrder) {
+          if (notebook) continue; // a notebook's handcalcs stay in the notebook
           const latex = cachedRender(cell.codeHash);
           if (latex) file.renders[cellKey(cell)] = latex;
         }
@@ -970,6 +1019,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       });
       phase.cells = performance.now() - tCells;
     }
+    problems += nbProblems;
 
     if (cancelRequested) {
       state.lastLog = '===== Avisos de Pyx =====\n[Pyx] Compilación detenida por el usuario.';

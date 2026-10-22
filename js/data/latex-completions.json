@@ -228,6 +228,7 @@
     ["Omega", "", "", "Ω"],
     ["py", "{${1:expresión}}", "", "Valor de Python en el texto (Pyx)"],
     ["pyif", "{${1:condición}}{${2:si se cumple}}{${3:si no}}", "", "Texto condicional según Python (Pyx)"],
+    ["pynotebook", "{${1:cuaderno.ipynb}}", "", "Vincular un cuaderno de Jupyter: sus celdas se ejecutan aquí (Pyx)"],
     ["dfrac", "{${1:num}}{${2:den}}", "amsmath", "Fracción grande"],
     ["tfrac", "{${1:num}}{${2:den}}", "amsmath", "Fracción pequeña"],
     ["binom", "{${1:n}}{${2:k}}", "amsmath", "Coeficiente binomial"],

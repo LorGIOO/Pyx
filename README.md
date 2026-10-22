@@ -54,6 +54,7 @@ from pyx import figure, figtex, tabletex, tex, texesc
 ## 🚀 Características
 
 - **Simbiosis LaTeX ↔ Python** — celdas `%#python … %#end` (el archivo sigue siendo un `.tex` válido) y el puente **`\py{expresión}`** que mete valores calculados en el documento.
+- **Cuadernos de Jupyter vinculados** — `\pynotebook{../calculos/modelo.ipynb}` ejecuta las celdas de código del cuaderno en ese punto del documento (desde la carpeta del cuaderno, como Jupyter), y `\py{}`, `\pyif{}` y tus celdas usan sus variables igual que siempre. Sigues trabajando el cuaderno en Jupyter o VS Code: al guardarlo, Pyx vuelve a ejecutar solo las celdas que cambiaron y lo que depende de ellas.
 - **Texto que reacciona al cálculo** — `\pyif{condición}{…}{…}`: el informe se redacta solo según el resultado (p. ej. «CUMPLE / NO CUMPLE»).
 - **Valores en vivo** — el resultado de cada `\py{}` aparece en gris junto a él mientras escribes, sin compilar (estilo Mathcad / MATLAB Live).
 - **Kernel Python plano, como Jupyter** — el espacio de nombres arranca **vacío**: ninguna librería viene precargada ni tiene trato de favor, así que las actualizas, las cambias o las parcheas como en cualquier IDE. Lo que sí trae el kernel es el protocolo del cuaderno: `display()`, `get_ipython()`, las figuras de matplotlib capturadas solas y **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar).
@@ -71,7 +72,7 @@ from pyx import figure, figtex, tabletex, tex, texesc
 - **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
 - **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
 - **Tu carpeta solo tiene lo tuyo** — el motor LaTeX no escribe nada junto al documento: los `.build.tex`, el `.aux`, `.log`, `.toc`, `.out`, `.mtc*`, el índice SyncTeX y el PDF viven en un directorio de trabajo fuera del proyecto, y al guardar se empaquetan **dentro del `.pltx`** como hace un `.docx`. Lo único que se queda fuera, a propósito, son tus fuentes: `.tex`, imágenes y `.sty`.
-- **Lo mejor de TeXstudio** — autocompletado de 336 comandos y 51 entornos (añade el `\usepackage` que falte), vista previa de fórmulas al pasar el ratón, Ctrl+clic de `\ref` a `\label`, renombrar `\begin`/`\end` a la vez, historial del cursor (`Alt+←`), **buscar en todo el proyecto** (`Ctrl+Mayús+F`), **pegar tablas de Excel** como `tabular`, glosarios, marcadores del PDF, gramática (local y **LanguageTool**) y **macros en Python**.
+- **Lo mejor de TeXstudio** — autocompletado de 337 comandos y 51 entornos (añade el `\usepackage` que falte), vista previa de fórmulas al pasar el ratón, Ctrl+clic de `\ref` a `\label`, renombrar `\begin`/`\end` a la vez, historial del cursor (`Alt+←`), **buscar en todo el proyecto** (`Ctrl+Mayús+F`), **pegar tablas de Excel** como `tabular`, glosarios, marcadores del PDF, gramática (local y **LanguageTool**) y **macros en Python**.
 - **Comodidades de IDE** — snippets, corrector ortográfico (español e inglés), plegado de código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables y temas claro/oscuro/azul.
 - **Funciona sin conexión** — las fórmulas de handcalcs se componen con KaTeX empaquetado en la app; nada depende de una CDN.
 

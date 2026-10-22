@@ -10,7 +10,7 @@ import { pathExists, readBinaryFile, openExternal } from '../core/platform.js';
 import { dirOf, joinPath, baseName } from '../core/paths.js';
 
 const FILE_CMD =
-  /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting)\s*(?:\[[^\]]*\])?\{([^{}]+)\}/g;
+  /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting|pynotebook)\s*(?:\[[^\]]*\])?\{([^{}]+)\}/g;
 
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 
@@ -44,6 +44,7 @@ async function openHit(hit) {
   if (!/\.[a-z0-9]+$/i.test(p)) {
     if (hit.cmd === 'includegraphics') candidates.push(p + '.pdf', p + '.png', p + '.jpg', p + '.jpeg');
     else if (hit.cmd === 'bibliography' || hit.cmd === 'addbibresource') candidates.push(p + '.bib');
+    else if (hit.cmd === 'pynotebook') candidates.push(p + '.ipynb');
     else candidates.push(p + '.tex', p + '.pltx');
   }
   for (const c of candidates) {
@@ -54,8 +55,10 @@ async function openHit(hit) {
       const bytes = await readBinaryFile(c);
       const url = URL.createObjectURL(new Blob([bytes]));
       docStore.openImageTab(url, baseName(c));
-    } else if (ext === 'pdf') {
-      openExternal(c); // binary PDF → system viewer
+    } else if (ext === 'pdf' || ext === 'ipynb') {
+      // A PDF in the system viewer; a notebook in Jupyter / VS Code, where
+      // it is edited (Pyx runs its code, see notebooks.js).
+      openExternal(c);
     } else {
       await docStore.openPath(c);
     }

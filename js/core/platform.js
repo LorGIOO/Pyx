@@ -240,6 +240,9 @@ export const fileStamps = (paths) => invoke('file_stamps', { paths });
 // The document source of several files in one round trip (null = unreadable):
 // a .pltx gives only its source.tex, never its results or build artifacts.
 export const readSources = (paths) => invoke('read_sources', { paths });
+// The code cells of a Jupyter notebook ([{id, source}]): only the code crosses
+// to the window, never the notebook's saved outputs.
+export const readNotebook = (path) => invoke('read_notebook', { path });
 export const renamePath = (from, to) => invoke('rename_path', { from, to });
 export const removePath = (path) => invoke('remove_path', { path });
 export const createFile = (path) => invoke('create_file', { path });

@@ -3,6 +3,129 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.6.2] — 2026-10-22
+
+Pyx deja de repetir trabajo. En un cuaderno corriente —cada celda importa lo
+que usa, `%matplotlib inline` arriba— cambiar una celda re-ejecutaba el
+documento entero; ahora ejecuta esa celda. Un documento puede usar las
+variables de un cuaderno de Jupyter (`\pynotebook{…}`), y las tablas de pandas
+se ven como en JupyterLab y VS Code.
+
+### Añadido
+
+- **Cuadernos de Jupyter vinculados: `\pynotebook{ruta/cuaderno.ipynb}`.**
+  Las celdas de código del cuaderno se ejecutan en el kernel de Pyx en ese
+  punto del documento, y `\py{}`, `\pyif{}` y las celdas `%#python` usan sus
+  variables con la sintaxis de siempre. Se ejecutan desde la carpeta del
+  cuaderno, como en Jupyter (`pd.read_csv("datos.csv")` junto al cuaderno
+  funciona). El cuaderno se sigue editando en Jupyter o VS Code a la vez: Pyx
+  lo relee cuando cambia y el grafo de dependencias vuelve a ejecutar solo las
+  celdas modificadas y lo que depende de ellas. La ruta es relativa a la
+  carpeta del documento raíz (`.ipynb` se puede omitir); se pueden vincular
+  varios. Mayús+Intro en una celda que lee una variable del cuaderno lo
+  ejecuta primero si hace falta, y un fallo del cuaderno se explica en la
+  celda y en los avisos de la compilación. Ctrl+clic en la ruta abre el
+  cuaderno en su programa. Solo se lee su código: sus salidas guardadas
+  (figuras incluidas) no se cargan.
+
+### Rendimiento
+
+- **Un import repetido ya no re-ejecuta el documento.** Con `import numpy as
+  np` en varias celdas, el grafo de dependencias creía que cada una
+  «redefinía» `np` y arrastraba todas las demás: un Mayús+Intro en un
+  cuaderno de 300 celdas ejecutaba las 300. Un nombre que solo enlaza siempre
+  el mismo import es el mismo objeto en todas las celdas: ahora se ejecuta
+  una.
+- **Las magias de IPython ya no obligan a ejecutarlo todo.** `%matplotlib`,
+  `%config`, `%pip`, `!orden`, `%time …`, `%timeit …`, `x = !orden`,
+  `%%time`, `%%capture` y las celdas `%%html`, `%%latex`, `%%writefile`,
+  `%%bash`… se analizan por lo que hacen. Antes, una sola de esas líneas
+  hacía que cualquier cambio reiniciara el kernel y volviera a ejecutar todas
+  las celdas (leer otra vez el CSV de 500 000 filas por cambiar un título).
+  Las que pueden cambiar cualquier cosa (`%run`, `%cd`…) siguen siendo
+  prudentes.
+- **`from math import *` (o `numpy`, `scipy`…)** también se sigue: el kernel
+  dice qué nombres enlaza. Los módulos del propio proyecto se tratan como
+  antes.
+- **Las respuestas del kernel llegan a la ventana tal como salen de Python**,
+  sin convertirlas en Rust a un árbol JSON y otra vez a texto: la mitad de
+  trabajo por cada resultado, que con figuras y salidas largas son megabytes.
+- **Encontrar el documento raíz ya no relee la carpeta.** Un documento sin
+  `\documentclass` (un cuaderno solo de Python, sobre todo) leía todos los
+  `.tex` y `.pltx` de su carpeta y de la superior —contenedores enteros, con
+  sus resultados guardados— en cada Mayús+Intro pasados 20 s. Ahora decide el
+  listado de las carpetas, y solo se relee lo que cambió.
+- **De un `.pltx` se lee solo su fuente** al compilar un capítulo, buscar el
+  raíz o buscar en el proyecto: sus resultados guardados (figuras incluidas)
+  y su carpeta de trabajo ya no se descomprimen para eso.
+- **El editor redibuja las celdas una vez por fotograma.** Cada celda
+  ejecutada pedía dos redibujados de todas las celdas: ejecutar entero un
+  documento de 300 celdas gastaba ~2,4 s solo en eso, entre celda y celda.
+- **La revisión de sintaxis manda al kernel solo las celdas que cambiaron.**
+  Antes compilaba todas en cada pausa al escribir, y un Mayús+Intro pulsado
+  justo después esperaba detrás.
+- **Salidas de texto enormes:** pasadas las 2000 líneas se muestran el
+  principio y el final, con un botón para ver el resto (como VS Code).
+  Cincuenta mil líneas tardaban ~0,4 s en dibujarse y convertían el editor en
+  un desplazamiento de 700 000 px.
+
+### Cambiado
+
+- **Tablas como en JupyterLab y VS Code**: sin rejilla, filas alternas
+  suaves, cabecera e índice en negrita, números alineados a la derecha y una
+  línea bajo la cabecera, en el tema claro y en el oscuro. Los DataFrames se
+  mostraban con la rejilla blanca por defecto del navegador: el bloque
+  `<style>` que pandas añade los mandaba a un marco aislado donde no llegaban
+  los estilos de Pyx. Ese bloque solo alinea celdas y ahora se descarta.
+
+### Eliminado
+
+- **Panel Parámetros y controles interactivos** (`# @slider`, `# @input`,
+  `# @select`, `# @check`). Esos comentarios siguen siendo comentarios de
+  Python: las celdas que los tengan se ejecutan igual, solo que ya no
+  muestran un control.
+- **Panel Variables** de la barra lateral. Las variables siguen a mano donde
+  se usan: el valor de cada `\py{}` aparece en gris junto a él, y el
+  autocompletado de Python conoce las del kernel.
+- **Panel Historial** (versiones guardadas y Git). Guardar ya no conserva una
+  copia aparte del documento. Las versiones que ya se guardaron no se borran:
+  siguen en la carpeta de datos de Pyx (`%LOCALAPPDATA%\Pyx\history` en
+  Windows) por si alguna hiciera falta.
+
+### Corregido
+
+- **Un resultado podía quedarse sin actualizar** al ejecutar solo lo
+  necesario, cuando un mismo nombre se definía en varias celdas: el «no ha
+  cambiado» comparaba con el valor que quedaba en memoria, que podía venir de
+  otra celda, no con el que había visto la celda que lo lee. Ahora ese
+  atajo solo se aplica a nombres con una única celda que los define.
+  Comprobado contra Python real con 1500 documentos aleatorios.
+- **`\begin{…}` ya no duplica lo que escribes.** La opción «\begin{ }» del
+  autocompletado ponía dos cursores (uno en el `\begin` y otro en el `\end`)
+  que seguían activos después del nombre: Intro partía las dos líneas y todo
+  lo que se escribía salía dos veces. Ahora hay un solo cursor; el `\end`
+  copia el nombre mientras lo escribes e Intro (o Tab) entra en el cuerpo del
+  entorno.
+- **Intro tras un `\begin{x}` solo añade `\end{x}` si el entorno no está
+  cerrado.** Antes añadía otro `\end` cada vez. Elegir un entorno de la lista
+  sobre un `\begin` que ya tiene cierre cambia solo el nombre (y, sobre la
+  plantilla vacía, pone la del entorno elegido: la figura trae su
+  `\includegraphics` y su `\caption`).
+- **Renombrar el `\end` renombra también su `\begin`**, no solo al revés.
+- **Ajuste del PDF al ancho y al alto.** Una página que esperaba a
+  redibujarse tras un cambio de zoom ocupaba 1,7 veces su ancho: aparecía una
+  barra de desplazamiento horizontal y «Ajustar» centraba sobre ese ancho
+  falso, con la página desplazada a un lado. Además, «Ajustar al alto» no se
+  rehacía al cambiar la altura del visor (salir del modo zen, abrir la
+  terminal, una ventana más baja), y cambiar de ajuste o de tamaño hacía
+  perder la página que estabas leyendo. «Ajustar al alto» muestra ahora la
+  página entera y centrada.
+- **Salir del modo zen con Esc ya no deja el visor en gris ni lo devuelve a
+  la página 1**, y el editor conserva su posición. El modo zen quitaba la
+  barra de título, la cinta y la barra de estado; al volver a ponerlas, el
+  área de trabajo se recolocaba y perdía su desplazamiento. Ahora solo se
+  ocultan.
+
 ## [1.6.0] — 2026-10-18
 
 Pyx recalcula solo lo que un cambio alcanza, completa Python de verdad, se

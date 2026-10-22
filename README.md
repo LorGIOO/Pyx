@@ -95,13 +95,13 @@ Más capturas, con la explicación de cada función, en el [manual de usuario](M
 
 ## 📦 Instalación
 
-Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.6.2):
+Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.6.3):
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | [`Pyx_1.6.2_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.2/Pyx_1.6.2_x64-setup.exe) · [`Pyx_1.6.2_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.2/Pyx_1.6.2_x64_en-US.msi) |
-| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.2_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.2/Pyx_1.6.2_universal.dmg) |
-| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.2/Pyx_1.6.2_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.2/Pyx-1.6.2-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.2/Pyx_1.6.2_amd64.AppImage) (cualquier distro) |
+| **Windows** (x64) | [`Pyx_1.6.3_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_x64-setup.exe) · [`Pyx_1.6.3_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_x64_en-US.msi) |
+| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.3_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_universal.dmg) |
+| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx-1.6.3-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_amd64.AppImage) (cualquier distro) |
 
 La carpeta [Instaladores](Instaladores/) del repositorio conserva los de la versión 1.6.0.
 

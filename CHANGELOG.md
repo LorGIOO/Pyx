@@ -3,7 +3,10 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar]
+## [1.6.3] — 2026-10-22
+
+Un cuaderno de Jupyter vinculado ya no se vuelve a ejecutar: el documento
+toma los valores que ya tiene, en milisegundos en lugar de minutos.
 
 ### Cambiado
 
@@ -1027,6 +1030,10 @@ ha cambiado, y que abrir un informe no dependa de tener Python instalado.
 - Instaladores para Windows, macOS y Linux.
 - Soporte de interfaz en inglés.
 
+[1.6.3]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.3
+[1.6.2]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.2
+[1.6.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.0
+[1.5.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.5.0
 [1.4.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.4.0
 [1.3.1]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.1
 [1.3.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.3.0

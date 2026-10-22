@@ -1,6 +1,6 @@
 [package]
 name = "pyx"
-version = "1.6.2"
+version = "1.6.3"
 description = "Editor LaTeX con celdas Python tipo Jupyter"
 authors = ["Lorgio"]
 license = "MIT"

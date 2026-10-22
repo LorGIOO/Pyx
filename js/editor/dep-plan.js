@@ -42,6 +42,8 @@ memoryview min next object oct open ord pow print property range repr reversed r
 slice sorted staticmethod str sum super tuple type zip display __build_class__ Exception ValueError
 TypeError KeyError IndexError RuntimeError ZeroDivisionError ArithmeticError AssertionError
 AttributeError NameError NotImplementedError OSError StopIteration Warning UserWarning`.split(/\s+/));
+/** A Python builtin (`len`, `round`…): never a variable of the document. */
+export const isBuiltin = (name) => BUILTINS.has(name);
 // Builtins that change their first argument.
 const MUT_BUILTINS = new Set(['next', 'setattr', 'delattr']);
 

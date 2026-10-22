@@ -29,7 +29,10 @@ import { EditorView, Decoration, WidgetType, ViewPlugin } from '@codemirror/view
 import { classifyPythonCached } from './py-highlight.js';
 import { state as appState } from '../core/state.js';
 import { dirOf, baseName } from '../core/paths.js';
-import { notebookRefs, notebookPath, loadNotebook } from './notebooks.js';
+import {
+  notebookRefs, notebookPath, loadNotebook, documentReads, documentDefs,
+} from './notebooks.js';
+import { findPyExprs, collectPyIfConds } from '../compile/latex-bridge.js';
 import { randomId } from '../core/hash.js';
 import { openExternal } from '../core/platform.js';
 import { docIdOf } from './doc-id.js';
@@ -39,7 +42,7 @@ import {
 import {
   runCellCode, withKernelLock, interruptKernel, recordRender, takeRestartReason,
   nsRecord, nsFail, nsMarkStale, nsIsStale, nsPlan, nsImmutable, execKey, programOf, forgetNames,
-  ensureStarNames,
+  ensureStarNames, resolveNotebook, runLinkEntry, saveNotebookValues, nsHasRun,
 } from './cell-runner.js';
 import { analyzePython } from './py-deps.js';
 import { executePlan, downstreamOf } from './dep-plan.js';
@@ -174,34 +177,57 @@ function docPath(docId) {
 
 /**
  * This document's cells as a planner program, and the keys they run under —
- * with the code cells of every Jupyter notebook it links (\pynotebook{…}) in
- * their place, so a cell that reads a notebook's variable can have the
- * notebook run first, exactly as a compile does (same keys, same folder).
- * `nbErrors`: the notebooks that could not be read, with the reason.
+ * with every Jupyter notebook it links (\pynotebook{…}) in its place: as ONE
+ * entry that loads the notebook's values (from its live Jupyter kernel, or
+ * the snapshot of the last ones), or — only when there are none — as its
+ * code cells, exactly as a compile does (same keys, same folder;
+ * cell-runner.js resolveNotebook). Call it holding the kernel lock.
+ * `nbErrors`: lines explaining what went wrong with a notebook (unreadable,
+ * variables Jupyter does not have), shown when a cell that reads it fails.
+ * `fresh`: the namespace is about to be emptied.
  */
-async function docProgram(docId, cells, view = null, cwd = undefined) {
+async function docProgram(docId, cells, view = null, cwd = undefined, { fresh = false } = {}) {
   const path = docPath(docId);
   const own = cells.map((cell) => ({ key: execKey(path, docId, cell), cell }));
   const prefix = `${path || `doc:${docId}`}::`;
-  const refs = view ? notebookRefs(view.state.doc.toString()) : [];
+  const text = view ? view.state.doc.toString() : '';
+  const refs = view ? notebookRefs(text) : [];
   const nbErrors = [];
   const nbPrefixes = [];
+  const plans = new Map(); // notebook path -> resolveNotebook result
   let entries = own;
   if (refs.length) {
+    const codes = cells.map((c) => c.code);
+    // What the document reads — its cells, \py{} and \pyif{} — is what it
+    // takes from the notebook (the same names a compile asks for).
+    const needed = documentReads(codes, [...findPyExprs(text).map((e) => e.expr), ...collectPyIfConds(text)]);
+    const ownDefs = documentDefs(codes);
     entries = [];
     let k = 0;
     for (const ref of refs) {
       while (k < own.length && own[k].cell.headerLine < ref.line) entries.push(own[k++]);
       const nbPath = notebookPath(cwd || dirOf(path), ref.raw);
       if (!nbPath) {
-        nbErrors.push(`\\pynotebook{${ref.raw}}: guarda el documento para que su ruta tenga desde dónde partir`);
+        nbErrors.push(`✗ No se pudo leer el cuaderno \\pynotebook{${ref.raw}}: guarda el documento para que su ruta tenga desde dónde partir`);
         continue;
       }
       nbPrefixes.push(`${nbPath}::`);
       try {
-        for (const cell of await loadNotebook(nbPath)) entries.push({ key: execKey(nbPath, null, cell), cell, notebook: true });
+        const nbCells = await loadNotebook(nbPath);
+        if (plans.has(nbPath)) continue; // linked twice: it takes part once, where it first appears
+        let plan = null;
+        if (nbCells.length) {
+          plan = await resolveNotebook(nbPath, nbCells, needed, cwd || dirOf(path), { fresh, own: ownDefs });
+          plans.set(nbPath, plan);
+          if (plan.missing && plan.missing.length) {
+            nbErrors.push(plan.source === 'jupyter'
+              ? `✗ Jupyter no tiene ${plan.missing.join(', ')} (${baseName(nbPath)}): ejecuta en Jupyter las celdas que las definen`
+              : `✗ Los valores guardados de ${baseName(nbPath)} no incluyen ${plan.missing.join(', ')}`);
+          }
+        }
+        if (plan) entries.push(...plan.entries);
       } catch (e) {
-        nbErrors.push(`\\pynotebook{${ref.raw}}: ${String((e && e.message) || e)}`);
+        nbErrors.push(`✗ No se pudo leer el cuaderno \\pynotebook{${ref.raw}}: ${String((e && e.message) || e)}`);
       }
     }
     while (k < own.length) entries.push(own[k++]);
@@ -211,15 +237,30 @@ async function docProgram(docId, cells, view = null, cwd = undefined) {
     program: programOf(entries),
     owned: (key) => key.startsWith(prefix) || nbPrefixes.some((p) => key.startsWith(p)),
     nbErrors,
+    plans,
+    nbRan: new Set(), // notebooks whose cells ran (runEntry)
   };
 }
 
 /** Run one entry of a document's program: its own cell (output shown in the
- *  editor) or a linked notebook's (run from the notebook's folder). */
-function runEntry(docId, entry, cwd, meta) {
-  return entry.notebook
-    ? execCellFor(null, null, entry.cell, cwd, { ...meta, runCwd: entry.cell.dir })
-    : execCell(docId, entry.cell, cwd, meta);
+ *  editor), a linked notebook's values (loaded, nothing runs) or — when it
+ *  has no values to take — one of the notebook's cells (from its folder). */
+function runEntry(docId, entry, cwd, meta, prog) {
+  if (entry.link) return runLinkEntry(entry, cwd, meta);
+  if (entry.notebook) {
+    if (prog) prog.nbRan.add(entry.cell.notebook);
+    return execCellFor(null, null, entry.cell, cwd, { ...meta, runCwd: entry.cell.dir });
+  }
+  return execCell(docId, entry.cell, cwd, meta);
+}
+
+/** A notebook whose cells had to run here: keep its values, so it is not run
+ *  again (they are loaded next time). Holding the kernel lock. */
+async function saveRanNotebooks(prog, cwd) {
+  for (const nbPath of prog.nbRan) {
+    const plan = prog.plans.get(nbPath);
+    if (plan && plan.mode === 'run' && nsHasRun(plan.entries)) await saveNotebookValues(nbPath, plan, cwd);
+  }
 }
 
 /** A linked notebook's cell failed (or a notebook could not be read) while
@@ -227,12 +268,15 @@ function runEntry(docId, entry, cwd, meta) {
  *  output is not on screen, and a NameError alone would not explain it. */
 function reportNotebookProblem(docId, target, fail, nbErrors) {
   const lines = [];
-  if (fail) {
+  if (fail && fail.entry.link) {
+    const e = fail.res.error;
+    lines.push(`✗ ${(e && e.msg) || fail.res.stderr || 'no se pudieron cargar los valores del cuaderno'} (${baseName(fail.entry.cell.notebook)})`);
+  } else if (fail) {
     const e = fail.res.error;
     const what = e ? `${e.type}: ${e.msg}${e.line != null ? ` (línea ${e.line} de la celda)` : ''}` : (fail.res.stderr || 'error');
     lines.push(`✗ Falló el cuaderno ${baseName(fail.entry.cell.notebook)}, celda ${fail.entry.cell.nth}: ${what}`);
   }
-  for (const m of nbErrors || []) lines.push(`✗ No se pudo leer el cuaderno ${m}`);
+  for (const m of nbErrors || []) lines.push(m);
   if (!lines.length || !target) return;
   const key = cellKey(target);
   const prev = getOutput(docId, key) || {};
@@ -297,7 +341,8 @@ async function runOne(view, cell) {
   let render = false;
   await withKernelLock(async () => {
     const cells = parseCells(view.state);
-    const { entries, program, owned, nbErrors } = await docProgram(docId, cells, view, cwd);
+    const prog = await docProgram(docId, cells, view, cwd);
+    const { entries, program, owned, nbErrors } = prog;
     const me = entries.findIndex((e) => !e.notebook && cellKey(e.cell) === cellKey(cell));
     if (me < 0) return;
     const target = entries[me].cell;
@@ -305,6 +350,11 @@ async function runOne(view, cell) {
     const plan = nsPlan(program, { dir: cwd, forced: [entries[me].key], interactive: true, owned });
     const meta = (i, watch) => ({ key: entries[i].key, D: plan.effects[i].D, watch });
     if (plan.mode !== 'graph' || general.reactiveCells === false) {
+      // A linked notebook's values above it are loaded first if they are not
+      // in the namespace yet: that runs nothing, and the cell can read them.
+      for (let i = 0; i < me; i++) {
+        if (entries[i].link && !nsHasRun([entries[i]])) await runEntry(docId, entries[i], cwd, meta(i), prog);
+      }
       const res = await execCell(docId, target, cwd, meta(me));
       render = !!(res && res.ok && res.render);
       if (plan.mode === 'graph') {
@@ -322,13 +372,14 @@ async function runOne(view, cell) {
     const out = await executePlan(plan, {
       forget: forgetNames,
       run: async (i, watch) => {
-        const res = await runEntry(docId, entries[i], cwd, meta(i, watch));
+        const res = await runEntry(docId, entries[i], cwd, meta(i, watch), prog);
         if (res && res.ok && res.render && !entries[i].notebook) render = true;
         if (res && res.ok === false && entries[i].notebook) nbFail = { entry: entries[i], res };
         return res;
       },
     });
     if (!out.ok) { nsMarkStale(out.notRun.map((i) => entries[i].key)); broadcastCellRefresh(); }
+    await saveRanNotebooks(prog, cwd);
     reportNotebookProblem(docId, target, nbFail, nbErrors);
   });
   if (render) scheduleHandcalcsCompile();
@@ -371,7 +422,8 @@ async function runRange(view, from, to) {
   let render = false;
   await withKernelLock(async () => {
     const cells = parseCells(view.state);
-    const { entries, program, owned, nbErrors } = await docProgram(docId, cells, view, cwd);
+    const prog = await docProgram(docId, cells, view, cwd);
+    const { entries, program, owned, nbErrors } = prog;
     // The document cells [from, to) and the notebook cells linked among them
     // (above the first one too, when the range starts at the top).
     const at = (c) => entries.findIndex((e) => !e.notebook && cellKey(e.cell) === cellKey(c));
@@ -383,7 +435,7 @@ async function runRange(view, from, to) {
     const plan = nsPlan(program, { dir: cwd, forced: keys, interactive: true, owned });
     let last = null;
     for (let i = start; i < end; i++) {
-      const res = await runEntry(docId, entries[i], cwd, { key: entries[i].key, D: plan.effects[i].D });
+      const res = await runEntry(docId, entries[i], cwd, { key: entries[i].key, D: plan.effects[i].D }, prog);
       if (!entries[i].notebook) last = entries[i].cell;
       if (res && res.ok === false) {
         nsMarkStale(entries.slice(i + 1, end).map((e) => e.key));
@@ -397,6 +449,7 @@ async function runRange(view, from, to) {
       if (res && res.render && !entries[i].notebook) render = true;
     }
     if (plan.mode === 'graph') nsMarkStale(plan.run.filter((i) => i >= end).map((i) => entries[i].key));
+    await saveRanNotebooks(prog, cwd);
   });
   broadcastCellRefresh();
   if (render) scheduleHandcalcsCompile();
@@ -578,7 +631,10 @@ async function runAllCellsHeld(view, { force = false, cwd } = {}) {
   const docId = docIdOf(view.state);
   const cells = parseCells(view.state);
   const dir = cwd !== undefined ? cwd : await activeCwd();
-  const { entries, program, nbErrors } = await docProgram(docId, cells, view, dir);
+  // "Ejecutar todo" starts from an empty namespace, but a linked notebook's
+  // values are still loaded, not recomputed.
+  const prog = await docProgram(docId, cells, view, dir, { fresh: force });
+  const { entries, program, nbErrors } = prog;
   if (!entries.length) return;
   if (!force) await ensureStarNames(program, dir);
   let plan = force ? null : nsPlan(program, { dir });
@@ -591,12 +647,13 @@ async function runAllCellsHeld(view, { force = false, cwd } = {}) {
   const out = await executePlan(plan, {
     forget: forgetNames,
     run: async (i, watch) => {
-      const res = await runEntry(docId, entries[i], dir, { key: entries[i].key, D: plan.effects[i].D, watch });
+      const res = await runEntry(docId, entries[i], dir, { key: entries[i].key, D: plan.effects[i].D, watch }, prog);
       if (res && res.ok === false && entries[i].notebook) nbFail = { entry: entries[i], res, at: i };
       return res;
     },
   });
   if (!out.ok) nsMarkStale(out.notRun.map((i) => entries[i].key));
+  await saveRanNotebooks(prog, dir);
   if (nbFail || nbErrors.length) {
     // On the first cell of the document the problem kept from running.
     const after = nbFail ? entries.slice(nbFail.at + 1).find((e) => !e.notebook) : null;

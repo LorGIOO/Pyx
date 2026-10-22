@@ -3,6 +3,33 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar]
+
+### Cambiado
+
+- **Un cuaderno vinculado ya no se ejecuta: Pyx toma sus valores.** Con
+  `\pynotebook{…}`, el documento recibe las variables que usa directamente
+  del kernel de Jupyter donde el cuaderno ya se ejecutó (VS Code, JupyterLab
+  o Jupyter Notebook): se copian en una fracción de segundo y en el cuaderno
+  no se ejecuta nada (ni queda rastro en su historial ni en sus variables).
+  Con Jupyter cerrado, se usan los últimos valores guardados mientras el
+  código del cuaderno no cambie; también sirven para un `\py{}` nuevo que lea
+  otra variable pequeña del cuaderno. Solo si no hay ni Jupyter abierto ni
+  valores guardados (o el código del cuaderno ha cambiado) se ejecuta en Pyx,
+  una vez: sus valores se guardan y la siguiente compilación los carga. El
+  registro de la compilación dice de dónde salió cada cuaderno y en cuánto
+  tiempo, y los avisos señalan las variables que Jupyter aún no tiene.
+  "Recompilar desde cero" y "Ejecutar todo" tampoco vuelven a ejecutar el
+  cuaderno. La conexión con Jupyter no necesita `jupyter_client` ni `pyzmq`
+  en el Python de Pyx.
+
+### Corregido
+
+- La barra de botones de las celdas desaparecía con el visor de PDF abierto
+  cuando una línea no cabía en el editor (sin ajuste de línea o con una salida
+  ancha): quedaba pegada al final del contenido, fuera de la vista. Ahora se
+  mantiene en el borde visible de la celda.
+
 ## [1.6.2] — 2026-10-22
 
 Pyx deja de repetir trabajo. En un cuaderno corriente —cada celda importa lo

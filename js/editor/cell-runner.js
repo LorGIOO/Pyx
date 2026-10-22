@@ -8,6 +8,9 @@ import { createExecState } from './exec-state.js';
 import { analyzePython } from './py-deps.js';
 import { cellKey } from './cell-parse.js';
 import { setStarNames, clearStarNames, unknownStarModules } from './dep-plan.js';
+import { notebookCodeHash, notebookDefs, linkInfo } from './notebooks.js';
+import { hashString } from '../core/hash.js';
+import { dirOf } from '../core/paths.js';
 
 let reqId = 1;
 let started = false;
@@ -69,10 +72,162 @@ export const nsPlan = (program, opts) => ns.plan(program, opts);
 
 /** The key a cell's run is filed under: unique across a project's files. */
 export const execKey = (path, docId, cell) => `${path || `doc:${docId}`}::${cellKey(cell)}`;
-/** A planner program from [{key, cell}]. */
-export const programOf = (entries) => entries.map(({ key, cell }) => ({
-  key, hash: cell.codeHash, info: analyzePython(cell.code),
+/** A planner program from [{key, cell, info?}] (`info`: an entry that is not
+ *  code, such as a linked notebook's values, says what it defines). */
+export const programOf = (entries) => entries.map(({ key, cell, info }) => ({
+  key, hash: cell.codeHash, info: info || analyzePython(cell.code),
 }));
+
+/* ---------------- linked notebooks: their values, not their code ----------------
+   See kernel.py `_nb_fetch`. For each \pynotebook the document takes the
+   variables it uses from the notebook's live Jupyter kernel, or from the
+   snapshot of the last ones (valid while the notebook's code — and, for a
+   snapshot of Pyx's own run, its data files — are the same). Only when
+   neither exists do the notebook's cells run here, and then the snapshot is
+   taken from that run, so they do not run again next time. */
+export async function notebookLink(op, payload) {
+  if (!isTauri()) return { source: null, reason: 'requiere la app de escritorio' };
+  await ensureKernel();
+  return kernelExec({ id: reqId++, nblink: op, ...payload });
+}
+
+/** Every one of these entries ran in this namespace, with this exact code. */
+export function nsHasRun(entries) {
+  if (!entries.length) return false;
+  const { ran, known } = ns.state();
+  if (!known) return false;
+  return entries.every((e) => {
+    const r = ran.get(e.key);
+    return !!r && r.hash === e.cell.codeHash && !r.stale;
+  });
+}
+
+/**
+ * How a linked notebook takes part in a run.
+ * @param {string} nbPath
+ * @param {object[]} cells   its code cells (notebooks.js loadNotebook)
+ * @param {Set<string>|null} needed  names the document reads (null: unknown)
+ * @param {string} cwd
+ * @param {{fresh?: boolean, own?: Set<string>}} [opts]
+ *   fresh — the namespace is about to be emptied (what ran here does not count);
+ *   own — names the document defines itself (never reported as missing).
+ * @returns {Promise<{mode:'link'|'run'|'none', entries:object[], names?:string[],
+ *   extras?:string[], codeHash:string, source?:string, from?:string, label?:string,
+ *   when?:number, missing?:string[], errors?:object, ms?:number, reason?:string,
+ *   ranHere?:boolean}>}
+ *   link — one entry that puts the values in the namespace; run — its cells;
+ *   none — the document uses none of its variables (nothing runs).
+ *
+ * Where the values come from, best first: the notebook's LIVE Jupyter kernel
+ * (what the user sees there); what already ran in this session; the snapshot
+ * of the last values while the code is the same; and only when there is none
+ * of these, its cells run here — once: their values are then saved.
+ */
+export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = false, own = null } = {}) {
+  const entries = cells.map((cell) => ({ key: execKey(nbPath, null, cell), cell, notebook: true }));
+  const codeHash = notebookCodeHash(cells);
+  const defs = notebookDefs(cells);
+  let names = null;
+  if (needed) names = [...needed].filter((n) => !defs || defs.has(n)).sort();
+  else if (defs) names = [...defs].sort();
+  // The notebook's other values: kept in its snapshot when they are small, so
+  // a \py{} added later is served too, with Jupyter closed.
+  const extras = defs && names ? [...defs].filter((n) => !names.includes(n)).sort() : [];
+  const ranHere = !fresh && nsHasRun(entries);
+  const base = { entries, codeHash, names, asked: names, extras, ranHere };
+  if (!names) return { mode: 'run', ...base, reason: 'no se puede saber qué variables usa el documento' };
+  if (!names.length) return { mode: 'none', ...base, entries: [] };
+  const t0 = performance.now();
+  let r = null;
+  try {
+    r = await notebookLink('fetch', {
+      notebook: nbPath, names, extra: extras, codeHash, required: defs ? names : [], cwd,
+    });
+  } catch (e) {
+    r = { source: null, reason: String((e && e.message) || e) };
+  }
+  const ms = performance.now() - t0;
+  if (!r || !r.source) {
+    return { mode: 'run', ...base, ms, reason: ranHere ? 'ya ejecutado en esta sesión' : (r && (r.reason || r.error)) || '' };
+  }
+  // Its cells already ran here and Jupyter has nothing newer to offer: the
+  // namespace holds their values already, nothing to load.
+  if (ranHere && r.source !== 'jupyter') return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
+  const got = r.names || {};
+  const avail = names.filter((n) => Object.prototype.hasOwnProperty.call(got, n));
+  const token = hashString(avail.map((n) => `${n}:${got[n]}`).join('|'));
+  const modules = new Map();
+  for (const n of avail) if (String(got[n]).startsWith('module:')) modules.set(n, String(got[n]).slice(7));
+  const cell = {
+    code: '', codeHash: token, id: 'valores', index: 0, nth: 0, headerLn: 0, notebook: nbPath, dir: dirOf(nbPath),
+  };
+  return {
+    mode: 'link',
+    ...base,
+    entries: [{ key: execKey(nbPath, null, cell), cell, notebook: true, link: { names: avail }, info: linkInfo(avail, modules) }],
+    names: avail, source: r.source, from: r.from, label: r.label, when: r.when,
+    missing: (r.missing || []).filter((n) => names.includes(n) && !(own && own.has(n))),
+    errors: r.errors || {}, ms,
+  };
+}
+
+/** One line for the log: where a linked notebook's values came from. */
+export function notebookNote(nbPath, plan, ran) {
+  const name = String(nbPath).split(/[\\/]/).pop();
+  if (!plan) return '';
+  if (plan.mode === 'none') return `${name}: el documento no usa ninguna de sus variables (no se ha ejecutado)`;
+  if (plan.mode === 'link') {
+    const n = plan.names.length;
+    const what = `${n} variable${n === 1 ? '' : 's'}`;
+    const t = plan.ms != null ? ` en ${Math.round(plan.ms)} ms` : '';
+    if (plan.source === 'jupyter') return `${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el cuaderno`;
+    const when = plan.when ? ` del ${new Date(plan.when * 1000).toLocaleString()}` : '';
+    const of = plan.from === 'jupyter' ? `de Jupyter${when}` : `de la última ejecución en Pyx${when}`;
+    return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el cuaderno`;
+  }
+  if (!ran) return `${name}: ya cargado en esta sesión, sin ejecutar nada`;
+  const why = plan.reason ? ` (${plan.reason})` : '';
+  return `${name}: ejecutado en Pyx${why}; sus valores quedan guardados y no se volverá a ejecutar mientras su código no cambie`;
+}
+
+/** Run the entry that stands for a notebook's values: put them in the
+ *  namespace (fresh objects) and record it like any cell. */
+export async function runLinkEntry(entry, cwd, meta = {}) {
+  const key = meta.key || entry.key;
+  let res;
+  try {
+    res = await notebookLink('apply', { notebook: entry.cell.notebook, names: entry.link.names, cwd });
+  } catch (e) {
+    res = { ok: false, error: String((e && e.message) || e) };
+  }
+  if (res && res.ok) {
+    nsRecord(key, entry.cell.codeHash, cwd, [], meta.D);
+    const bad = Object.entries(res.errors || {});
+    return {
+      ok: true,
+      unchanged: res.unchanged || [],
+      stderr: bad.length ? `No se pudieron cargar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}` : '',
+      loadErrors: res.errors || {},
+    };
+  }
+  nsFail(key, meta.D);
+  const msg = (res && res.error) || 'sin respuesta del kernel';
+  return { ok: false, stdout: '', stderr: msg, error: { type: 'Error', msg: `no se pudieron cargar los valores del cuaderno: ${msg}` } };
+}
+
+/** After the notebook's cells ran here: keep their values as its snapshot,
+ *  so they are not run again (plan: what resolveNotebook returned). */
+export async function saveNotebookValues(nbPath, plan, cwd) {
+  if (!plan || !plan.names || !plan.names.length) return null;
+  const reads = nsReads(plan.entries.map((e) => e.key)).map((r) => [r.path, r.mtime, r.size]);
+  try {
+    return await notebookLink('save', {
+      notebook: nbPath, names: plan.names, extra: plan.extras || [], codeHash: plan.codeHash, reads, cwd,
+    });
+  } catch (_) {
+    return null;
+  }
+}
 
 /** Delete names from the namespace (a removed cell's, before its readers re-run). */
 export async function forgetNames(names) {

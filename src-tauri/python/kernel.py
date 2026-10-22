@@ -3358,6 +3358,628 @@ def _star_names(mods):
     return out
 
 
+# ---------------------------------------------------------------------------
+# linked Jupyter notebooks (\pynotebook): their VALUES, not their code
+# ---------------------------------------------------------------------------
+# A notebook the user runs in Jupyter (VS Code, JupyterLab) already holds its
+# results in that kernel, and running it again in Pyx repeated minutes of
+# work. So the document takes the variables it uses from the notebook's LIVE
+# kernel — pickled there, loaded here, nothing executed — and keeps them on
+# disk as the notebook's snapshot, which keeps serving while the notebook's
+# code is unchanged, Jupyter open or not. Only when neither exists does the
+# app run the notebook's cells (and then the snapshot is taken from that run).
+#
+# Every value applied to the namespace is a FRESH unpickled object: a cell of
+# the document that modifies a DataFrame in place can never change what the
+# next run receives.
+_NB_STAGE = {}       # notebook key -> {"source", "when", "label", "items": {name: item}}
+_NB_APPLIED = {}     # notebook key -> {name: hash last applied}
+_JUPYTER_SEEN = {}   # notebook key -> connection file that served it last
+_JUPYTER_TAKEN = {}  # notebook key -> (kernel run id, names taken) of the last copy
+
+# Evaluated in the user's Jupyter kernel (user_expressions: nothing runs, no
+# history): which notebook it serves — VS Code, JupyterLab/Notebook — and its
+# working directory, as "path<newline>cwd".
+_JUPYTER_PROBE = ("(globals().get('__vsc_ipynb_file__') or globals().get('__session__') "
+                  "or __import__('os').environ.get('JPY_SESSION_NAME') or '') + chr(10) "
+                  "+ __import__('os').getcwd()")
+# ... and how many cells it has run (with its process: a restarted kernel
+# counts from 1 again): while that is the same, nothing has run there since
+# the last copy, and its values are the ones Pyx holds.
+# (A separate expression: a kernel that is not IPython fails only this one.)
+_JUPYTER_COUNT = "'%d:%s' % (__import__('os').getpid(), get_ipython().execution_count)"
+
+# Run in the user's Jupyter kernel, in a PRIVATE namespace (nothing is left
+# in theirs; silent and outside the history): each requested variable is
+# pickled to `OUT` unless its hash is the one Pyx already holds; modules go by
+# name, functions and classes of the notebook by source.
+_JUPYTER_TAKE = r'''
+import pickle, hashlib, json, os, sys, types, inspect, time, builtins
+res = {}
+t_end = time.perf_counter() + BUDGET
+for i, n in enumerate(list(NAMES) + list(EXTRA)):
+    extra = i >= len(NAMES)
+    if extra and time.perf_counter() > t_end:
+        break
+    if n not in NS:
+        if not extra and not hasattr(builtins, n):
+            res[n] = {"missing": True}
+        continue
+    v = NS[n]
+    if isinstance(v, types.ModuleType):
+        res[n] = {"module": v.__name__}
+        continue
+    if isinstance(v, (types.FunctionType, type)) and getattr(v, "__module__", None) == "__main__":
+        try:
+            src = inspect.getsource(v)
+            res[n] = {"source": src, "hash": hashlib.blake2b(src.encode("utf-8"), digest_size=16).hexdigest()}
+            continue
+        except Exception:
+            pass
+    try:
+        if extra and sys.getsizeof(v) > LIMIT:
+            continue
+        b = pickle.dumps(v, protocol=5)
+    except Exception as e:
+        if not extra:
+            res[n] = {"error": "%s: %s" % (type(e).__name__, e)}
+        continue
+    if extra and len(b) > LIMIT:
+        continue
+    h = hashlib.blake2b(b, digest_size=16).hexdigest()
+    if KNOWN.get(n) == h:
+        res[n] = {"hash": h, "same": True, "type": type(v).__name__}
+        continue
+    f = os.path.join(OUT, "v%d-%s.pkl" % (i, h))
+    with open(f, "wb") as fh:
+        fh.write(b)
+    res[n] = {"hash": h, "file": f, "type": type(v).__name__}
+with open(os.path.join(OUT, "manifest.json"), "w", encoding="utf-8") as fh:
+    json.dump(res, fh)
+'''
+
+# The notebook's OTHER values ("extra": not used by the document today) are
+# kept in the snapshot too when they are small, so a \py{} added later is
+# served with Jupyter closed instead of running the notebook. Bounded in size
+# per value and in total time, so a compile never pays for them.
+_NB_EXTRA_LIMIT = 1_000_000  # bytes per value
+_NB_EXTRA_BUDGET = 0.3       # seconds for all of them
+
+
+def _pyx_data_dir():
+    """Pyx's own data folder (runtime.rs tools_dir)."""
+    if os.name == "nt":
+        return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Pyx")
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Pyx")
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "pyx")
+
+
+def _nb_key(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _nb_dir(path):
+    import hashlib
+    h = hashlib.blake2b(_nb_key(path).encode("utf-8"), digest_size=10).hexdigest()
+    return os.path.join(_pyx_data_dir(), "jupyter", h)
+
+
+class _ZmqDealer:
+    """Just enough ZeroMQ to talk to a Jupyter kernel's shell socket: ZMTP 3.0
+    with the NULL mechanism (what every local Jupyter kernel uses) as a DEALER.
+    Pyx needs no jupyter_client nor pyzmq in its own Python — and importing
+    them cost most of a second on the first compile."""
+
+    _GREETING = b"\xff" + b"\x00" * 8 + b"\x7f" + b"\x03\x00" + b"NULL".ljust(20, b"\x00") + b"\x00" * 32
+
+    def __init__(self, host, port, timeout):
+        import socket
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        try:
+            # The handshake is answered by ZeroMQ's own thread, busy kernel or not.
+            self.sock.settimeout(2.0)
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.sock.sendall(self._GREETING)
+            peer = self._read(64)
+            if peer[0] != 0xFF or peer[9] != 0x7F or peer[10] < 3 or peer[12:32].rstrip(b"\x00") != b"NULL":
+                raise RuntimeError("no es un socket ZeroMQ compatible")
+            self._command(b"READY", {b"Socket-Type": b"DEALER"})
+            while True:
+                flags, body = self._frame()
+                if not flags & 4:
+                    raise RuntimeError("saludo ZeroMQ inesperado")
+                name = body[1:1 + body[0]]
+                if name == b"READY":
+                    break
+                if name == b"ERROR":
+                    raise RuntimeError("el kernel rechazó la conexión")
+        except BaseException:
+            self.close()
+            raise
+
+    def _read(self, n):
+        buf = bytearray()
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("conexión cerrada")
+            buf += chunk
+        return bytes(buf)
+
+    def _frame(self):
+        import struct
+        flags = self._read(1)[0]
+        size = struct.unpack(">Q", self._read(8))[0] if flags & 2 else self._read(1)[0]
+        return flags, self._read(size)
+
+    @staticmethod
+    def _head(flags, size):
+        import struct
+        return bytes([flags | 2]) + struct.pack(">Q", size) if size > 255 else bytes([flags, size])
+
+    def _command(self, name, props):
+        import struct
+        body = bytes([len(name)]) + name + b"".join(
+            bytes([len(k)]) + k + struct.pack(">I", len(v)) + v for k, v in props.items())
+        self.sock.sendall(self._head(4, len(body)) + body)
+
+    def send(self, frames):
+        last = len(frames) - 1
+        self.sock.sendall(b"".join(self._head(1 if i < last else 0, len(f)) + f for i, f in enumerate(frames)))
+
+    def recv(self, timeout):
+        """One whole message (its frames); commands (heartbeats) are skipped."""
+        self.sock.settimeout(timeout)
+        frames = []
+        while True:
+            flags, body = self._frame()
+            if flags & 4:
+                continue
+            frames.append(body)
+            if not flags & 1:
+                return frames
+
+    def close(self):
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+
+class _JupyterShell:
+    """A Jupyter client reduced to what Pyx asks of the user's kernel: silent
+    execute requests (outside the history) and their replies, signed with the
+    connection file's key as the messaging protocol requires."""
+
+    def __init__(self, conn, timeout):
+        self.key = str(conn.get("key") or "").encode("utf-8")
+        scheme = str(conn.get("signature_scheme") or "hmac-sha256")
+        self.digest = scheme.split("-", 1)[1] if scheme.startswith("hmac-") else "sha256"
+        self.session = uuid.uuid4().hex
+        self.run_id = ""  # "<connection file>#<pid>:<execution count>", from the probe
+        self.z = _ZmqDealer(conn.get("ip") or "127.0.0.1", int(conn["shell_port"]), timeout)
+
+    def _sign(self, parts):
+        if not self.key:
+            return b""
+        import hashlib
+        import hmac
+        h = hmac.new(self.key, digestmod=getattr(hashlib, self.digest))
+        for p in parts:
+            h.update(p)
+        return h.hexdigest().encode("ascii")
+
+    def execute(self, code, user_expressions=None):
+        import datetime
+        mid = uuid.uuid4().hex
+        header = json.dumps({
+            "msg_id": mid, "session": self.session, "username": "pyx", "msg_type": "execute_request",
+            "version": "5.3",
+            "date": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        }).encode("utf-8")
+        parent = meta = b"{}"
+        content = json.dumps({
+            "code": code, "silent": True, "store_history": False, "user_expressions": user_expressions or {},
+            "allow_stdin": False, "stop_on_error": False,
+        }).encode("utf-8")
+        self.z.send([b"<IDS|MSG>", self._sign([header, parent, meta, content]), header, parent, meta, content])
+        return mid
+
+    def reply(self, mid, timeout):
+        """The reply to request `mid`, or None after `timeout` seconds."""
+        import socket
+        end = time.monotonic() + timeout
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return None
+            try:
+                frames = self.z.recv(left)
+            except (socket.timeout, TimeoutError):
+                return None
+            if b"<IDS|MSG>" not in frames:
+                continue
+            i = frames.index(b"<IDS|MSG>")
+            parts = frames[i + 1:i + 6]
+            if len(parts) < 5:
+                continue
+            if self.key and parts[0] != self._sign(parts[1:5]):
+                continue
+            parent = json.loads(parts[2].decode("utf-8") or "{}")
+            if parent.get("msg_id") == mid:
+                return {"parent_header": parent, "content": json.loads(parts[4].decode("utf-8") or "{}")}
+
+    def close(self):
+        self.z.close()
+
+
+def _jupyter_runtime_dirs():
+    """Where Jupyter writes its kernels' connection files (jupyter_core's
+    rules): JUPYTER_RUNTIME_DIR or JUPYTER_DATA_DIR when set, else the
+    platform's folders (VS Code's kernels land there too)."""
+    if os.environ.get("JUPYTER_RUNTIME_DIR"):
+        return [os.environ["JUPYTER_RUNTIME_DIR"]]
+    if os.environ.get("JUPYTER_DATA_DIR"):
+        return [os.path.join(os.environ["JUPYTER_DATA_DIR"], "runtime")]
+    home = os.path.expanduser("~")
+    if os.name == "nt":
+        out = [os.path.join(os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming"), "jupyter", "runtime"),
+               os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "Jupyter", "runtime")]
+    elif sys.platform == "darwin":
+        out = [os.path.join(home, "Library", "Jupyter", "runtime"),
+               os.path.join(home, "Library", "Application Support", "Jupyter", "runtime")]
+    else:
+        out = [os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "jupyter", "runtime")]
+        if os.environ.get("XDG_RUNTIME_DIR"):
+            out.append(os.path.join(os.environ["XDG_RUNTIME_DIR"], "jupyter"))
+    return out
+
+
+def _jupyter_find(nb):
+    """The live Jupyter kernel running notebook `nb`: (client, label) or
+    (None, why). The user's kernels are found through Jupyter's runtime
+    folder; a dead one (a leftover connection file) is skipped in a few
+    milliseconds by its closed port, a busy one after a short wait. Nothing
+    runs in them: the question is a silent user expression."""
+    key = _nb_key(nb)
+    folder = os.path.normcase(os.path.dirname(key))
+    files = []
+    for rt in _jupyter_runtime_dirs():
+        try:
+            files += [os.path.join(rt, f) for f in os.listdir(rt) if f.startswith("kernel-") and f.endswith(".json")]
+        except OSError:
+            pass
+    if not files:
+        return None, "Jupyter no está abierto"
+
+    def mtime(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0
+    files.sort(key=mtime, reverse=True)
+    seen = _JUPYTER_SEEN.get(key)
+    if seen in files:
+        files.remove(seen)
+        files.insert(0, seen)
+    by_cwd, busy = [], False
+    for path in files:
+        client = None
+        try:
+            with open(path, encoding="utf-8") as fh:
+                conn = json.load(fh)
+            if (conn.get("transport") or "tcp") != "tcp":
+                continue
+            client = _JupyterShell(conn, 0.05)  # a kernel that is gone refuses at once
+            mid = client.execute("", {"p": _JUPYTER_PROBE, "n": _JUPYTER_COUNT})
+            reply = client.reply(mid, 1.5)
+            if reply is None:
+                busy = True
+                client.close()
+                continue
+            data = ((reply.get("content") or {}).get("user_expressions") or {}).get("p") or {}
+            text = ast.literal_eval((data.get("data") or {}).get("text/plain", "''"))
+            served, _sep, cwd = str(text).partition(chr(10))
+            ran = ((reply.get("content") or {}).get("user_expressions") or {}).get("n") or {}
+            if ran.get("status") == "ok":
+                client.run_id = "%s#%s" % (path, (ran.get("data") or {}).get("text/plain", ""))
+        except Exception:
+            if client is not None:
+                client.close()
+            continue
+        served_n = os.path.normcase(served.replace("/", os.sep)) if served else ""
+        if served_n and (served_n == key or (not os.path.isabs(served) and key.endswith(os.sep + served_n))):
+            for other, _p in by_cwd:
+                other.close()
+            _JUPYTER_SEEN[key] = path
+            return client, "VS Code" if os.path.basename(path).startswith("kernel-v") else "Jupyter"
+        if not served and os.path.normcase(cwd) == folder:
+            by_cwd.append((client, path))
+        else:
+            client.close()
+    if len(by_cwd) == 1:
+        _JUPYTER_SEEN[key] = by_cwd[0][1]
+        return by_cwd[0][0], "Jupyter"
+    for other, _p in by_cwd:
+        other.close()
+    return None, ("el kernel de Jupyter de este cuaderno está ocupado" if busy
+                  else "Jupyter no tiene abierto este cuaderno")
+
+
+def _nb_write_meta(d, meta):
+    import json as _json
+    tmp = os.path.join(d, "meta.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        _json.dump(meta, fh)
+    os.replace(tmp, os.path.join(d, "meta.json"))
+
+
+def _nb_tidy(d, keep):
+    """Remove the snapshot's value files no item points to any more."""
+    try:
+        for f in os.listdir(d):
+            p = os.path.join(d, f)
+            if f.endswith(".pkl") and p not in keep:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def _nb_fetch(req):
+    """The values `names` of notebook `notebook`, from its live Jupyter
+    kernel, or else from its snapshot when that was taken from the same code
+    (`codeHash`). Staged here for _nb_apply; nothing enters the namespace."""
+    import json as _json
+    nb = req.get("notebook") or ""
+    names = [n for n in (req.get("names") or []) if isinstance(n, str)]
+    extra = [n for n in (req.get("extra") or []) if isinstance(n, str) and n not in names]
+    code_hash = req.get("codeHash")
+    key = _nb_key(nb)
+    d = _nb_dir(nb)
+    staged = _NB_STAGE.get(key)
+    if not staged:
+        # First fetch since Pyx started: the values on disk from last time
+        # (whatever their code), so Jupyter only writes what changed since.
+        try:
+            with open(os.path.join(d, "meta.json"), encoding="utf-8") as fh:
+                staged = {"items": (_json.load(fh) or {}).get("items") or {}}
+        except Exception:
+            staged = {}
+    t0 = time.perf_counter()
+    kc, label = _jupyter_find(nb) if req.get("live", True) else (None, "")
+    why = label if kc is None else ""
+    live = False
+    if kc is not None:
+        try:
+            cur = _NB_STAGE.get(key) or {}
+            prev = _JUPYTER_TAKEN.get(key)
+            if (kc.run_id and prev and prev[0] == kc.run_id and set(names) | set(extra) <= prev[1]
+                    and cur.get("source") == "jupyter" and not cur.get("snapshot")
+                    and all(os.path.exists(it["path"]) for it in cur["items"].values() if it.get("path"))):
+                # Nothing has run in Jupyter since the last copy: its values are
+                # the ones staged here. No pickling, no files: just the question.
+                if cur.get("codeHash") != code_hash:
+                    cur["codeHash"] = code_hash
+                    _nb_write_meta(d, {"notebook": nb, "codeHash": code_hash, "source": "jupyter",
+                                       "label": cur.get("label") or label, "when": cur.get("when") or time.time(),
+                                       "items": cur["items"]})
+                live = True
+            else:
+                os.makedirs(d, exist_ok=True)
+                known = {n: it.get("hash") for n, it in (staged.get("items") or {}).items()
+                         if it.get("path") and os.path.exists(it["path"])}
+                man_path = os.path.join(d, "manifest.json")
+                try:
+                    os.remove(man_path)
+                except OSError:
+                    pass
+                code = ("exec(%r, {'__builtins__': __builtins__, 'NS': globals(), 'NAMES': %r, 'EXTRA': %r, "
+                        "'KNOWN': %r, 'OUT': %r, 'LIMIT': %d, 'BUDGET': %r})") % (
+                    _JUPYTER_TAKE, names, extra, known, d, _NB_EXTRA_LIMIT, _NB_EXTRA_BUDGET)
+                mid = kc.execute(code)
+                reply = kc.reply(mid, float(req.get("timeout") or 600))
+                status = ((reply or {}).get("content") or {}).get("status")
+                if status != "ok":
+                    raise RuntimeError("Jupyter no pudo entregar los valores (%s)" % (
+                        ((reply or {}).get("content") or {}).get("evalue") or "sin respuesta"))
+                with open(man_path, encoding="utf-8") as fh:
+                    man = _json.load(fh)
+                items = {}
+                for n, r in man.items():
+                    if r.get("same"):
+                        items[n] = dict(staged["items"][n])
+                    elif r.get("file"):
+                        items[n] = {"hash": r["hash"], "path": r["file"], "type": r.get("type")}
+                    else:
+                        items[n] = r
+                now = time.time()
+                _NB_STAGE[key] = {"source": "jupyter", "label": label, "when": now, "items": items,
+                                  "codeHash": code_hash}
+                _JUPYTER_TAKEN[key] = (kc.run_id, frozenset(names) | frozenset(extra))
+                _nb_write_meta(d, {"notebook": nb, "codeHash": code_hash, "source": "jupyter",
+                                   "label": label, "when": now, "items": items})
+                _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
+                live = True
+        except Exception as e:
+            why = _safe_str(e)
+        finally:
+            kc.close()
+    if not live:
+        # No live kernel: the snapshot, if it was taken from this very code
+        # and holds every name the document asks for.
+        try:
+            with open(os.path.join(d, "meta.json"), encoding="utf-8") as fh:
+                meta = _json.load(fh)
+        except Exception:
+            meta = None
+        required = [n for n in (req.get("required") or names) if isinstance(n, str)]
+        snap = (meta or {}).get("items") or {}
+        # A name never asked for is lacking; one Jupyter did not have when the
+        # values were taken is not (it is reported missing, as it was then).
+        lacking = [n for n in required if n not in snap]
+        if meta is None:
+            snap_why = "no hay valores guardados de este cuaderno"
+        elif not code_hash or meta.get("codeHash") != code_hash:
+            snap_why = "su código ha cambiado desde los valores guardados"
+        elif lacking:
+            snap_why = "los valores guardados no incluyen %s" % ", ".join(lacking[:5])
+        elif not all(os.path.exists(it["path"]) for it in snap.values() if it.get("path")):
+            snap_why = "faltan archivos de los valores guardados"
+        else:
+            snap_why = ""
+        if not snap_why and meta.get("reads"):
+            # Taken from Pyx's own run: still valid only while the data files
+            # it read are the ones it read.
+            for p, m, s in meta["reads"]:
+                try:
+                    st_ = os.stat(p)
+                    changed = st_.st_mtime_ns // 1_000_000 != m or st_.st_size != s
+                except OSError:
+                    changed = True
+                if changed:
+                    snap_why = "han cambiado los datos que lee (%s)" % os.path.basename(p)
+                    break
+        if snap_why:
+            return {"source": None, "reason": "%s y %s" % (why, snap_why) if why else snap_why}
+        _NB_STAGE[key] = {"source": meta.get("source") or "pyx", "label": meta.get("label") or "",
+                          "when": meta.get("when") or 0, "items": snap, "snapshot": True}
+    st = _NB_STAGE[key]
+    items = st["items"]
+    return {
+        "source": "snapshot" if st.get("snapshot") else st["source"],
+        "from": st["source"], "label": st.get("label") or "", "when": st.get("when") or 0,
+        "names": {n: (it.get("hash") or ("module:" + it["module"] if it.get("module") else "")) for n, it in items.items()
+                  if not it.get("missing") and not it.get("error")},
+        "missing": [n for n, it in items.items() if it.get("missing")],
+        "errors": {n: it["error"] for n, it in items.items() if it.get("error")},
+        "why": why,
+        "ms": round((time.perf_counter() - t0) * 1000),
+    }
+
+
+def _nb_apply(req):
+    """Put the staged values of a notebook into the namespace: modules by
+    import, the notebook's functions and classes from their source, data as
+    fresh unpickled objects. Reports which names hold what they held after
+    the previous apply (the dependency graph's early cutoff)."""
+    import importlib
+    import pickle
+    nb = req.get("notebook") or ""
+    key = _nb_key(nb)
+    st = _NB_STAGE.get(key)
+    if not st:
+        return {"ok": False, "error": "los valores del cuaderno no están preparados"}
+    items = st["items"]
+    names = [n for n in (req.get("names") or list(items)) if n in items]
+    last = _NB_APPLIED.setdefault(key, {})
+    errors, unchanged = {}, []
+    order = sorted(names, key=lambda n: 0 if items[n].get("module") else 1 if items[n].get("source") else 2)
+    with _USER_CODE:
+        for n in order:
+            it = items[n]
+            try:
+                if it.get("module"):
+                    NS[n] = importlib.import_module(it["module"])
+                elif it.get("source"):
+                    exec(compile(it["source"], "<cuaderno %s>" % os.path.basename(nb), "exec"), NS)
+                elif it.get("path"):
+                    with open(it["path"], "rb") as fh:
+                        NS[n] = pickle.load(fh)
+                else:
+                    continue
+                token = it.get("hash") or ("module:" + it["module"] if it.get("module") else "")
+                if token and last.get(n) == token:
+                    unchanged.append(n)
+                last[n] = token
+            except Exception as e:
+                errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+    # A value that cannot be loaded is reported, and the rest still arrive:
+    # a cell that reads it then fails with a NameError the report explains.
+    return {"ok": True, "unchanged": unchanged, "errors": errors}
+
+
+def _nb_save(req):
+    """After Pyx itself ran the notebook: its values for the document, as the
+    notebook's snapshot (with the files they were computed from)."""
+    import hashlib
+    import inspect
+    import pickle
+    nb = req.get("notebook") or ""
+    key = _nb_key(nb)
+    d = _nb_dir(nb)
+    os.makedirs(d, exist_ok=True)
+    items = {}
+    names = [n for n in (req.get("names") or []) if isinstance(n, str)]
+    extra = [n for n in (req.get("extra") or []) if isinstance(n, str) and n not in names]
+    t_end = time.perf_counter() + _NB_EXTRA_BUDGET
+    for i, n in enumerate(names + extra):
+        is_extra = i >= len(names)
+        if n not in NS or (is_extra and time.perf_counter() > t_end):
+            continue
+        v = NS[n]
+        try:
+            if isinstance(v, types.ModuleType):
+                items[n] = {"module": v.__name__}
+                continue
+            if isinstance(v, (types.FunctionType, type)) and getattr(v, "__module__", None) == "__main__":
+                try:
+                    src = inspect.getsource(v)
+                    items[n] = {"source": src, "hash": hashlib.blake2b(src.encode("utf-8"), digest_size=16).hexdigest()}
+                    continue
+                except Exception:
+                    pass
+            if is_extra and sys.getsizeof(v) > _NB_EXTRA_LIMIT:
+                continue
+            b = pickle.dumps(v, protocol=5)
+            if is_extra and len(b) > _NB_EXTRA_LIMIT:
+                continue
+            h = hashlib.blake2b(b, digest_size=16).hexdigest()
+            p = os.path.join(d, "v%d-%s.pkl" % (i, h))
+            if not os.path.exists(p):
+                with open(p, "wb") as fh:
+                    fh.write(b)
+            items[n] = {"hash": h, "path": p, "type": type(v).__name__}
+        except Exception as e:
+            if not is_extra:
+                items[n] = {"error": "%s: %s" % (type(e).__name__, _safe_str(e))}
+    # The data files the notebook's cells read ([path, mtime ms, size]): a
+    # snapshot computed from a spreadsheet that has changed since is stale.
+    reads = [r for r in (req.get("reads") or []) if isinstance(r, list) and len(r) == 3]
+    meta = {"notebook": nb, "codeHash": req.get("codeHash"), "source": "pyx", "label": "Pyx",
+            "when": time.time(), "items": items, "reads": reads}
+    _nb_write_meta(d, meta)
+    _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
+    _NB_STAGE[key] = {"source": "pyx", "label": "Pyx", "when": meta["when"], "items": items, "snapshot": True}
+    _NB_APPLIED[key] = {n: it.get("hash") for n, it in items.items() if it.get("hash")}
+    return {"saved": sorted(n for n, it in items.items() if not it.get("error")),
+            "errors": {n: it["error"] for n, it in items.items() if it.get("error")}}
+
+
+def _nblink(req):
+    op = req.get("nblink")
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        if op == "fetch":
+            return _nb_fetch(req)
+        if op == "apply":
+            return _nb_apply(req)
+        if op == "save":
+            return _nb_save(req)
+        return {"error": "operación desconocida: %s" % op}
+    except BaseException as e:
+        return {"source": None, "ok": False, "error": "%s: %s" % (type(e).__name__, _safe_str(e))}
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+
+
 def _forget(names):
     """Delete names a removed or edited cell no longer defines."""
     gone = []
@@ -3748,6 +4370,8 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, "forgot": _forget(req.get("forget"))}
     if "starnames" in req:
         return {"id": req.get("id"), "ok": True, "starnames": _star_names(req.get("starnames"))}
+    if "nblink" in req:
+        return {"id": req.get("id"), "ok": True, **_nblink(req)}
     if "complete" in req:
         return {"id": req.get("id"), "ok": True, **_complete(req)}
     if "inspect" in req:

@@ -14,10 +14,11 @@ import { docIdOf } from '../editor/doc-id.js';
 import {
   runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
-  execKey, programOf, forgetNames, ensureStarNames,
+  execKey, programOf, forgetNames, ensureStarNames, resolveNotebook, runLinkEntry,
+  saveNotebookValues, notebookNote, nsHasRun,
 } from '../editor/cell-runner.js';
 import { executePlan } from '../editor/dep-plan.js';
-import { notebookPath, loadNotebook } from '../editor/notebooks.js';
+import { notebookPath, loadNotebook, documentReads, documentDefs } from '../editor/notebooks.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
 import { setBuildMaps, persistBuildMaps, ensureBuildMaps } from './build-maps.js';
@@ -837,6 +838,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // A notebook that could not be read is said, with the reason: its
     // variables are then missing, and the NameError alone would not explain why.
     let nbProblems = '';
+    const nbNotes = []; // where each linked notebook's values came from (log)
     for (const f of nbFiles) {
       for (const [raw, nb] of f.notebooks) {
         if (nb.error) nbProblems += `\n[\\pynotebook{${raw}}] No se pudo leer el cuaderno: ${nb.error}`;
@@ -844,13 +846,36 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     }
 
     if (anyCells || exprs.length) {
+      /* Linked notebooks (\pynotebook): their VALUES, or their cells.
+         The document takes the variables it uses from the notebook's live
+         Jupyter kernel — or from the snapshot of the last ones while the
+         notebook's code is unchanged — and nothing of the notebook runs.
+         Only when neither exists do its cells run here (and a snapshot is
+         taken from that run). See cell-runner.js resolveNotebook. */
+      const docCodes = nbFiles.length ? pyFiles.flatMap((p) => files.get(p).cells.map((c) => c.code)) : [];
+      const docNeeds = nbFiles.length ? documentReads(docCodes, [...pyValExprs, ...condExprs]) : null;
+      const docOwn = nbFiles.length ? documentDefs(docCodes) : null;
+      const nbPlans = new Map(); // notebook path -> resolveNotebook result
       /* The project's cells in EXECUTION order: document order, descending
          into each \input where it appears. gatherTree already recorded that
          order as a flat event list per file (analyzeFile), so this walks it
-         directly instead of re-splitting every file of the project. */
-      const runOrder = [];
-      {
+         directly instead of re-splitting every file of the project.
+         Runs inside the kernel lock: resolving a notebook asks the kernel. */
+      let runOrder = [];
+      let program = [];
+      const nbRan = new Set();   // notebooks whose cells ran in this compile
+      const nbSaved = new Set(); // ... and whose values were then saved
+      const prepare = async (fresh) => {
+        nbPlans.clear();
+        for (const f of nbFiles) {
+          for (const nb of f.notebooks.values()) {
+            if (nbPlans.has(nb.path) || !nb.cells.length) continue;
+            nbPlans.set(nb.path, await resolveNotebook(nb.path, nb.cells, docNeeds, cwd, { fresh, own: docOwn }));
+          }
+        }
+        runOrder = [];
         const seen = new Set();
+        const placed = new Set(); // a notebook linked twice takes part once, where it first appears
         const walkOrder = (path) => {
           if (seen.has(path)) return;
           seen.add(path);
@@ -864,10 +889,12 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
               continue;
             }
             if (ev.kind === 'notebook') {
-              // A linked notebook's code cells run here, in its order.
+              // The notebook's values (one entry) or its code cells, here.
               const nb = f.notebooks && f.notebooks.get(ev.raw);
-              for (const cell of (nb && nb.cells) || []) {
-                runOrder.push({ path: nb.path, file: f, cell, nth: cell.nth, notebook: true });
+              const plan = nb && !placed.has(nb.path) && nbPlans.get(nb.path);
+              if (nb) placed.add(nb.path);
+              for (const e of (plan && plan.entries) || []) {
+                runOrder.push({ path: nb.path, file: f, cell: e.cell, nth: e.cell.nth, notebook: true, link: e.link, info: e.info });
               }
               continue;
             }
@@ -875,9 +902,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           }
         };
         walkOrder(rootPath);
-      }
-      const hashes = runOrder.map((e) => e.cell.codeHash);
-      phase.total = runOrder.length;
+        phase.total = runOrder.filter((e) => !e.link).length;
+        program = programOf(runOrder.map((e) => ({ key: execKey(e.path, null, e.cell), cell: e.cell, info: e.info })));
+      };
 
       /* Run only the cells a change reaches.
        *
@@ -894,10 +921,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
        * kernel ran exactly the first cells of this document, otherwise reset
        * and run everything. An unknown namespace is never reused, and "Recompilar
        * desde cero" always starts from an empty one. */
-      const program = programOf(runOrder.map((e) => ({ key: execKey(e.path, null, e.cell), cell: e.cell })));
       // Says whether everything ran from a clean namespace, and whether a cell failed.
       const runTree = async (force) => {
         problems = '';
+        await prepare(force);
         if (!force) await ensureStarNames(program, cwd);
         let plan = force ? null : nsPlan(program, { dir: cwd });
         if (plan && plan.mode !== 'full') {
@@ -938,8 +965,15 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           stop: () => cancelRequested, // "Detener": not one more cell
           forget: forgetNames,
           run: async (i, watch) => {
+            const { path, cell, nth, notebook, link } = runOrder[i];
+            if (link) {
+              // A notebook's values: loaded, not computed (nothing of it runs).
+              const res = await runLinkEntry(runOrder[i], cwd, { key: program[i].key, D: plan.effects[i].D });
+              if (res.stderr) cellProblem(`${baseName(path)} · valores`, res.stderr);
+              return res;
+            }
             phase.ran++;
-            const { path, cell, nth, notebook } = runOrder[i];
+            if (notebook) nbRan.add(path);
             const od = notebook ? null : state.documents.find((d) => !d.kind && samePath(d.path, path));
             const view = od ? getViewOfDoc(od.id) : null;
             // A notebook's cells run from the notebook's folder, as in Jupyter.
@@ -966,6 +1000,14 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // no longer describe: it stops there, and what did not run is marked
         // outdated so the next compile runs it.
         if (!out.ok) nsMarkStale(out.notRun.map((i) => program[i].key));
+        // A notebook whose cells had to run here: its values are saved now,
+        // so the next compile (or the next session) loads them instead.
+        for (const [nbPath, nbPlan] of nbPlans) {
+          if (nbPlan.mode === 'run' && nbRan.has(nbPath) && !cancelRequested && nsHasRun(nbPlan.entries)) {
+            const saved = await saveNotebookValues(nbPath, nbPlan, cwd);
+            if (saved && saved.saved) nbSaved.add(nbPath);
+          }
+        }
         // Every cell contributes its typeset block, skipped ones included:
         // their code is unchanged, so the cached render is exactly current.
         for (const f of files.values()) f.renders = {};
@@ -1018,6 +1060,23 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         }
       });
       phase.cells = performance.now() - tCells;
+      for (const [nbPath, nbPlan] of nbPlans) {
+        const note = notebookNote(nbPath, nbPlan, nbRan.has(nbPath));
+        if (note) nbNotes.push(note);
+        const name = baseName(nbPath);
+        if (nbPlan.missing && nbPlan.missing.length) {
+          nbProblems += nbPlan.source === 'jupyter'
+            ? `\n[${name}] Jupyter no tiene ${nbPlan.missing.join(', ')}: ejecuta en Jupyter las celdas que las definen.`
+            : `\n[${name}] Los valores guardados no incluyen ${nbPlan.missing.join(', ')}.`;
+        }
+        const bad = Object.entries(nbPlan.errors || {}).filter(([n]) => (nbPlan.asked || []).includes(n));
+        if (bad.length) {
+          nbProblems += `\n[${name}] No se pudieron copiar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`;
+        }
+        if (nbRan.has(nbPath) && nbPlan.mode === 'run' && !nbSaved.has(nbPath) && nbPlan.names && nbPlan.names.length) {
+          nbNotes.push(`${name}: no se pudieron guardar sus valores; la próxima vez se tomarán de Jupyter si está abierto`);
+        }
+      }
     }
     problems += nbProblems;
 
@@ -1030,7 +1089,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     if (pythonOnly) {
       state.lastLog =
         (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') +
-        'Documento sin LaTeX: se han ejecutado las celdas Python (no se genera PDF).';
+        'Documento sin LaTeX: se han ejecutado las celdas Python (no se genera PDF).'
+        + (nbNotes.length ? `\n\nCuadernos:\n${nbNotes.map((n) => `  ${n}`).join('\n')}` : '');
       state.lastCompileOk = !problems;
       return;
     }
@@ -1349,7 +1409,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       + `(${engine}, ${ranPasses} pasada${ranPasses === 1 ? '' : 's'})\n`
       + `Total         : ${Math.round(performance.now() - t0)} ms`
       + (fresh ? '\nModo          : desde cero (kernel nuevo, sin datos auxiliares)' : '')
-      + (pythonNote ? `\nPython        : ${pythonNote}` : '');
+      + (pythonNote ? `\nPython        : ${pythonNote}` : '')
+      + nbNotes.map((n) => `\nCuaderno      : ${n}`).join('');
     // Three outcomes, not two. A PDF that LaTeX produced while recovering from
     // errors is not a failed compile — the document IS there, with its
     // problems listed — and painting it with the same red as "no PDF at all"

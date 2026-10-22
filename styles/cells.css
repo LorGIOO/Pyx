@@ -167,12 +167,22 @@
    Hairline border (notebook.cellToolbarSeparator = #8080805A) over the cell's
    own background, so it stays legible above whatever it overlaps. */
 .cell-actions {
-  position: absolute;
-  /* `top: 0` is the padding box, i.e. just inside the 1px border; -1px puts
-     the panel's centre on the border LINE itself. */
-  top: -1px;
+  /* STICKY, not absolute: pinned to the right of the part of the cell you can
+     SEE. The head is as wide as the editor's content, and that content is
+     wider than the editor whenever a line does not wrap or an output is wide
+     — which is what happens as soon as the PDF viewer takes half the window.
+     Pinned to the head's right end, the toolbar was then off-screen, past the
+     horizontal scroll. Sticky keeps it at the visible right edge, and inside
+     its cell. */
+  position: sticky;
   right: 6px;
-  transform: translateY(-50%);
+  margin-left: auto;
+  margin-right: 2px; /* + the head's 4px padding = 6px from the border */
+  flex: none;
+  /* Its top on the head's inner edge, then up by half its height plus the
+     1px border: the panel's centre sits on the border LINE itself. */
+  align-self: flex-start;
+  transform: translateY(calc(-50% - 1px));
   z-index: 4;
   display: flex;
   align-items: center;

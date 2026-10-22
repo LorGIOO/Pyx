@@ -7,10 +7,7 @@ import { gotoLine, insertSnippet } from '../../editor/commands.js';
 import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
-import VariablesPanel from './VariablesPanel.jsx';
 import ProjectSearch from './ProjectSearch.jsx';
-import ParamsPanel from './ParamsPanel.jsx';
-import HistoryPanel from './HistoryPanel.jsx';
 
 // Side-strip icons, same hand as the ribbon (16x16, 1.2px strokes). The
 // codicon each one is modelled on is named in the comment.
@@ -24,14 +21,8 @@ const I = {
   symbols: `<svg ${S}><path d="M11.6 3.6V2.5H4.5L8.2 8l-3.7 5.5h7.1v-1.1"/></svg>`,
   // codicon: files
   files: `<svg ${S}><path d="M5.5 1.5h4L12.5 4.5v8a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M9.5 1.5v3h3"/><path d="M2.5 4.2v9.3a1 1 0 0 0 1 1H10"/></svg>`,
-  // codicon: settings (sliders)
-  params: `<svg ${S}><path d="M2.5 4h7M12.5 4h1M2.5 8h2M7.5 8h6M2.5 12h5M10.5 12h3"/><circle cx="11" cy="4" r="1.5"/><circle cx="6" cy="8" r="1.5"/><circle cx="9" cy="12" r="1.5"/></svg>`,
-  // codicon: history
-  history: `<svg ${S}><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8"/><path d="M2.4 2.6v2.6H5"/><path d="M8 5v3.2l2.2 1.4"/></svg>`,
   // codicon: search
   search: `<svg ${S}><circle cx="6.8" cy="6.8" r="4.3"/><path d="m10 10 4 4"/></svg>`,
-  // codicon: symbol-variable
-  vars: `<svg ${S}><path d="M2.5 4.5 8 1.8l5.5 2.7v7L8 14.2l-5.5-2.7z"/><path d="M2.5 4.5 8 7.2l5.5-2.7M8 7.2v7"/></svg>`,
 };
 const TABS = [
   { id: 'structure', label: 'Estructura', icon: I.structure },
@@ -39,9 +30,6 @@ const TABS = [
   { id: 'symbols', label: 'Símbolos', icon: I.symbols },
   { id: 'files', label: 'Archivos', icon: I.files },
   { id: 'search', label: 'Buscar en el proyecto', icon: I.search },
-  { id: 'vars', label: 'Variables', icon: I.vars },
-  { id: 'params', label: 'Parámetros', icon: I.params },
-  { id: 'history', label: 'Historial', icon: I.history },
 ];
 const KIND_SHORT = {
   part: 'P', chapter: 'C', section: 'S', subsection: 'ss',
@@ -155,24 +143,9 @@ export default function SidePanel() {
               </For>
             </Show>
 
-            {/* Parámetros: the document's controls (# @slider …), CalcTree-style */}
-            <Show when={tab() === 'params'}>
-              <ParamsPanel />
-            </Show>
-
-            {/* Historial: saved versions and Git */}
-            <Show when={tab() === 'history'}>
-              <HistoryPanel />
-            </Show>
-
             {/* Buscar en el proyecto (Ctrl+Mayús+F) */}
             <Show when={tab() === 'search'}>
               <ProjectSearch />
-            </Show>
-
-            {/* Variables: the kernel's namespace (Jupyter's variable inspector) */}
-            <Show when={tab() === 'vars'}>
-              <VariablesPanel />
             </Show>
 
             {/* Archivos: VSCode-style explorer of the document's folder */}

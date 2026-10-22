@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { analyzePython } from '../js/editor/py-deps.js';
-import { planRun, executePlan } from '../js/editor/dep-plan.js';
+import { planRun, executePlan, setStarNames, unknownStarModules } from '../js/editor/dep-plan.js';
 
 const python = ['python3', 'python', 'py'].find((exe) => {
   const r = spawnSync(exe, ['-c', 'import sys; print(sys.version_info >= (3, 8))'], { encoding: 'utf8' });
@@ -58,11 +58,24 @@ function makeCell(r) {
     `${x} = h(lst)`,
     `${x} = sorted(lst)[:1]`,
     `${x} = max(${y}, ${z})`,
+    // The same import in several cells (stable), a DIFFERENT module under the
+    // same name (math vs cmath give different values), and `del` of it.
+    'import math as mm',
+    'import math as mm',
+    'import cmath as mm',
+    `${x} = mm.sqrt(${y} * ${y})`,
+    'from math import sqrt as sq',
+    `${x} = sq(${y} * 4)`,
+    'del mm',
+    // A star import (its names come from the kernel) — and `e`, which it
+    // rebinds, is one of the document's own names too.
+    'from math import *',
+    `${x} = floor(${y} * pi)`,
   ];
   return pick(t);
 }
 
-const PRELUDE = 'import random\nrandom.seed(1)\na = b = c = d = e = p = q = r = s = u = 1\nlst = []\ndd = {}\ndef f(v):\n    return v\ndef g():\n    pass\ndef h(m):\n    return 0';
+const PRELUDE = 'import random\nimport math as mm\nfrom math import sqrt as sq\nrandom.seed(1)\na = b = c = d = e = p = q = r = s = u = 1\nlst = []\ndd = {}\ndef f(v):\n    return v\ndef g():\n    pass\ndef h(m):\n    return 0';
 
 function makeCase(seed) {
   const r = rng(seed);
@@ -140,6 +153,12 @@ describe.skipIf(!python)('dependency graph vs. a full run, in the real kernel', 
       const last = await runAll(before.map((c) => c.code));
       if (!last) continue;
       const prog = (cells) => cells.map((c) => ({ key: c.key, hash: c.code, info: analyzePython(c.code) }));
+      // What star imports bind, asked of the kernel as the app does.
+      const stars = unknownStarModules([...before, ...after].map((c) => analyzePython(c.code)));
+      if (stars.length) {
+        const r = await k.send({ starnames: stars });
+        for (const [mod, names] of Object.entries(r.starnames || {})) setStarNames(mod, names);
+      }
       const pb = prog(before);
       const imm = last.immutable || [];
       const planB = planRun({ program: pb, ran: new Map(), history: [], immutable: imm });

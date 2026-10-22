@@ -40,13 +40,17 @@ export default function App() {
   return (
     <>
       {/* Zen mode: ONLY the file tabs + editor + viewer remain — even the
-          title bar and ribbon disappear (Esc or Ctrl+Alt+Z exits). */}
-      <Show when={!state.zenMode}>
+          title bar and ribbon disappear (Esc or Ctrl+Alt+Z exits).
+          The bars are HIDDEN, never removed. Removing and re-inserting them
+          made Solid move the tabs and the whole work area in the DOM, and an
+          element that moves loses its scroll position: leaving zen mode left
+          the PDF viewer grey and back on page 1, and the editor at the top. */}
+      <div class="keep-mounted" classList={{ 'is-hidden': state.zenMode }}>
         <TitleBar />
         <div class="ribbon-container">
           <Ribbon />
         </div>
-      </Show>
+      </div>
       <DocumentTabs />
 
       <div class="content">
@@ -83,7 +87,7 @@ export default function App() {
           }
         >
           <Show when={!state.viewerMaximized}>
-            <Show when={!state.sidePanelHidden && !state.zenMode}><SidePanel /></Show>
+            <div class="keep-mounted" classList={{ 'is-hidden': state.sidePanelHidden || state.zenMode }}><SidePanel /></div>
             <div
               class="editor-pane"
               style={{ 'flex-grow': state.previewVisible ? state.editorRatio : 1, 'flex-basis': 0 }}
@@ -103,7 +107,7 @@ export default function App() {
         </Show>
       </div>
 
-      <Show when={!state.zenMode}><StatusBar /></Show>
+      <div class="keep-mounted" classList={{ 'is-hidden': state.zenMode }}><StatusBar /></div>
       <ConfigDialog />
       <ContextMenu />
       <Wizards />

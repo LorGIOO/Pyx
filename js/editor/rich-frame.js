@@ -99,18 +99,52 @@ function bootstrap(token) {
 })()<\/script>`;
 }
 
+/**
+ * The table look of every output (pandas, Styler, plain HTML), as JupyterLab
+ * and VS Code draw a DataFrame: no grid, a rule under the header, bold header
+ * and index, soft alternating rows, numbers right-aligned in the UI font.
+ * A frame cannot see the app's CSS variables, so the colours come in
+ * resolved. A Styler's own rules (`#T_… td`) are more specific and win.
+ */
+export function tableCss(fg, rule) {
+  const mix = (p) => `color-mix(in srgb, ${fg} ${p}%, transparent)`;
+  return `
+  table{border-collapse:collapse;border-spacing:0;border:1px solid ${mix(10)};
+    font:12.5px "Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums;color:${fg};margin:2px 0}
+  thead{border-bottom:1px solid ${rule}}
+  th,td{border:none;padding:5px 12px;text-align:right;vertical-align:middle;white-space:nowrap;line-height:1.4}
+  th{font-weight:600}
+  thead th{vertical-align:bottom}
+  tbody tr:nth-child(odd){background:${mix(5)}}
+  tbody tr:hover{background:${mix(11)}}
+  table + p, .dataframe + p{font:11.5px "Segoe UI",system-ui,sans-serif;opacity:.7;margin:4px 0 0}`;
+}
+
+/* pandas' own <style scoped> block (`.dataframe tbody tr th {vertical-align:
+   top}`…) sent every DataFrame to the sandboxed frame — a <style> cannot go
+   inline — where the app's table look never reached it: a browser-default
+   white grid. Its rules only align cells, which the table look already does,
+   so a block made of nothing but `.dataframe` rules is dropped and the table
+   renders inline like the rest of the output. */
+const PANDAS_STYLE = /<style scoped>\s*((?:\.dataframe[^{}<>@]*\{[^{}<>@]*\}\s*)+)<\/style>/gi;
+export function stripPandasStyle(html) {
+  return String(html || '').replace(PANDAS_STYLE, (m, rules) => (/url\(|expression|import/i.test(rules) ? m : ''));
+}
+
 /** Theme-aware document wrapper, so output follows the app's light/dark theme. */
 function srcdocFor(inner, token, extraCss = '', autoSize = true) {
   const css = getComputedStyle(document.documentElement);
   const v = (n, fb) => (css.getPropertyValue(n) || fb).trim();
   const fg = v('--theme-cell-output-text', '#dddddd');
   const accent = v('--theme-cell-accent', '#3794ff');
+  const rule = v('--theme-cell-border', '#555555');
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>
   html,body{margin:0;padding:0;background:transparent;color:${fg};
     font:13px "Segoe UI",system-ui,sans-serif;overflow:auto}
   body{padding:2px}
   a{color:${accent}}
+  ${tableCss(fg, rule)}
   ${extraCss}
 </style></head><body>${inner}${bootstrap(token)}</body></html>`;
 }

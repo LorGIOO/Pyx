@@ -3190,89 +3190,6 @@ def _reset_session(cwd):
     _reset_library_state()
 
 
-# Names the kernel itself puts in (or that IPython users expect there): not
-# the document's variables.
-_VARS_HIDDEN = {"In", "Out", "get_ipython", "exit", "quit", "display", "open"}
-
-
-def _describe(value):
-    """(type, size, value) of one variable, for the Variables panel.
-
-    Cheap and safe by construction: a DataFrame or an array is described by
-    its shape and dtype — never printed — and everything else goes through a
-    length-capped repr that cannot raise. Nothing here may be slow on a large
-    object or run more of the user's code than its __repr__."""
-    import reprlib
-    t = type(value)
-    tname = t.__name__
-    mod = getattr(t, "__module__", "") or ""
-    short = reprlib.Repr()
-    short.maxstring, short.maxother, short.maxlist, short.maxdict = 80, 80, 8, 6
-    size = ""
-    try:
-        shape = getattr(value, "shape", None)
-        if mod.startswith("pandas") and tname == "DataFrame":
-            size = "%d × %d" % tuple(value.shape)
-            cols = ", ".join(str(c) for c in list(value.columns)[:6])
-            more = "…" if len(value.columns) > 6 else ""
-            return tname, size, "columnas: %s%s" % (cols, more)
-        if mod.startswith("pandas") and tname == "Series":
-            return tname, str(len(value)), "dtype %s" % value.dtype
-        if isinstance(shape, tuple) and mod.startswith("numpy"):
-            size = " × ".join(str(n) for n in shape) or "escalar"
-            if getattr(value, "size", 0) <= 6:
-                return "%s[%s]" % (tname, getattr(value, "dtype", "")), size, _safe_str(value.tolist())
-            return "%s[%s]" % (tname, getattr(value, "dtype", "")), size, ""
-        if isinstance(value, bool) or value is None:
-            return tname, "", repr(value)
-        if isinstance(value, float):
-            return tname, "", "%.10g" % value
-        if isinstance(value, (int, complex)):
-            return tname, "", short.repr(value)
-        if isinstance(value, str):
-            return tname, str(len(value)), short.repr(value)
-        if isinstance(value, (list, tuple, dict, set, frozenset)):
-            return tname, str(len(value)), short.repr(value)
-        # pint quantities, sympy expressions, Decimal, Fraction…: their str is
-        # what an engineer wants to read ("9.81 meter / second ** 2").
-        text = _safe_str(value)
-        if len(text) > 120:
-            text = text[:117] + "…"
-        return tname, size, text
-    except BaseException:
-        return tname, size, "<no se puede mostrar>"
-
-
-def _vars():
-    """The document's variables, like JupyterLab's variable inspector: no
-    modules, functions or classes, no _private names."""
-    out = []
-    sink = _CellIO()
-    _STDOUT.point_to(sink)
-    _STDERR.point_to(sink)
-    try:
-        for name, value in list(NS.items()):
-            if name.startswith("_") or name in _VARS_HIDDEN:
-                continue
-            if isinstance(value, (types.ModuleType, types.FunctionType, types.BuiltinFunctionType, type)):
-                continue
-            if callable(value) and not hasattr(value, "shape") and not hasattr(value, "__len__"):
-                continue  # functools.partial, ufuncs, bound methods…
-            try:
-                with _USER_CODE:
-                    tname, size, text = _describe(value)
-            except BaseException:
-                tname, size, text = type(value).__name__, "", "<no se puede mostrar>"
-            out.append({"name": name, "type": tname, "size": size, "value": text})
-            if len(out) >= 500:
-                break
-    finally:
-        _STDOUT.point_to(_BG_OUT)
-        _STDERR.point_to(_BG_ERR)
-    out.sort(key=lambda v: v["name"].lower())
-    return out
-
-
 def _evals(req):
     """\\py{...} values. One bad expression never costs the others — not even
     a SystemExit or an exception whose message cannot be printed."""
@@ -3380,6 +3297,11 @@ def _same_value(a, b):
     or an equal immutable of the same type. A mutable object, even the very
     same one, may have been modified in place — never 'the same'."""
     try:
+        if isinstance(a, types.ModuleType):
+            # `import numpy as np` again hands back the one module object: the
+            # same module is the same value (what the document does to a
+            # library is caught separately, see _TAINT).
+            return a is b
         if not _is_immutable(a):
             return False
         if a is b:
@@ -3399,6 +3321,41 @@ def _same_value(a, b):
         return eq is True or (type(eq).__name__ == "bool_" and bool(eq))
     except Exception:
         return False
+
+
+def _star_names(mods):
+    """What `from <mod> import *` binds, per module: its __all__, or else its
+    public names — Python's own rule. Only for installed libraries: their
+    names are fixed, while a module of the project changes as it is edited
+    (None: the app keeps treating that cell as unanalyzable). The module is
+    imported if needed, as the cell itself would."""
+    import importlib
+    out = {}
+    sink = _CellIO()
+    _STDOUT.point_to(sink)
+    _STDERR.point_to(sink)
+    try:
+        for name in mods or []:
+            if not isinstance(name, str) or not name or name.startswith("."):
+                continue
+            try:
+                with _USER_CODE:
+                    mod = sys.modules.get(name) or importlib.import_module(name)
+                if not _library_module(name):
+                    out[name] = None
+                    continue
+                exported = getattr(mod, "__all__", None)
+                if exported is not None:
+                    names = [n for n in exported if isinstance(n, str)]
+                else:
+                    names = [n for n in vars(mod) if not n.startswith("_")]
+                out[name] = names
+            except BaseException:
+                out[name] = None
+    finally:
+        _STDOUT.point_to(_BG_OUT)
+        _STDERR.point_to(_BG_ERR)
+    return out
 
 
 def _forget(names):
@@ -3787,10 +3744,10 @@ def handle(req):
         return {"id": req.get("id"), "ok": True, "evals": _evals(req)}
     if "lint" in req:
         return {"id": req.get("id"), "ok": True, "lint": _lint(req.get("lint"))}
-    if req.get("vars"):
-        return {"id": req.get("id"), "ok": True, "vars": _vars()}
     if "forget" in req:
         return {"id": req.get("id"), "ok": True, "forgot": _forget(req.get("forget"))}
+    if "starnames" in req:
+        return {"id": req.get("id"), "ok": True, "starnames": _star_names(req.get("starnames"))}
     if "complete" in req:
         return {"id": req.get("id"), "ok": True, **_complete(req)}
     if "inspect" in req:

@@ -264,13 +264,3 @@
   line-height: 1.4;
 }
 
-/* Interactive controls in cells (controls.js) */
-.pyx-ctl { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; vertical-align: middle; font-family: var(--font-ui, system-ui); font-size: 12px; }
-.pyx-ctl input[type=range] { width: 160px; accent-color: var(--theme-accent); vertical-align: middle; }
-.pyx-ctl-val { min-width: 3ch; padding: 0 6px; border-radius: 4px; background: color-mix(in srgb, var(--theme-accent) 14%, transparent); color: var(--theme-text); font-family: var(--font-mono, monospace); }
-.pyx-ctl input[type=number], .pyx-ctl input[type=text], .pyx-ctl select {
-  height: 20px; padding: 0 4px; border: 1px solid var(--theme-border); border-radius: 4px;
-  background: var(--theme-bg); color: var(--theme-text); font: inherit; font-size: 12px;
-}
-.pyx-ctl input[type=number] { width: 90px; }
-.pyx-ctl input[type=checkbox] { accent-color: var(--theme-accent); }

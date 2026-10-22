@@ -98,6 +98,36 @@ fn tidy_legacy(doc: &Path) {
     let _ = fs::remove_dir_all(dir.join(".pyxbuild"));
 }
 
+/// Only the document SOURCE of a `.pltx` — what the compiler and the project
+/// search need from every file they look at.
+///
+/// `read` loads the whole container into memory and inflates the saved cell
+/// results too (figures included: megabytes), and the compiler asked for that
+/// for every candidate file when it searched a folder for the root document.
+/// This seeks straight to `source.tex` through the zip's central directory:
+/// the build artifacts and the results are never read.
+///
+/// `Ok(None)` for a legacy plain-text `.pltx` (the caller reads it as text).
+pub fn read_source(path: &str) -> Result<Option<String>, String> {
+    let mut f = fs::File::open(path).map_err(|e| format!("No se pudo leer {path}: {e}"))?;
+    let mut head = [0u8; 4];
+    let n = f.read(&mut head).map_err(|e| e.to_string())?;
+    if !is_zip(&head[..n]) {
+        return Ok(None);
+    }
+    let f = fs::File::open(path).map_err(|e| format!("No se pudo leer {path}: {e}"))?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(f))
+        .map_err(|e| format!("El .pltx está dañado: {e}"))?;
+    let mut entry = zip
+        .by_name(SOURCE_ENTRY)
+        .map_err(|_| "El .pltx no contiene source.tex".to_string())?;
+    let mut source = String::new();
+    entry
+        .read_to_string(&mut source)
+        .map_err(|e| format!("No se pudo leer la fuente del .pltx: {e}"))?;
+    Ok(Some(source))
+}
+
 /// Read a `.pltx`: its source and saved cell results. If it is legacy plain
 /// text, report `is_zip=false`.
 ///
@@ -304,6 +334,33 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The compiler's and the search's read: the source and nothing else —
+    /// the same text `read` gives, a legacy text file reported as such, and a
+    /// damaged container an error, never its bytes as text.
+    #[test]
+    fn read_source_gives_only_the_source() {
+        let dir = std::env::temp_dir().join(format!("pyx-pltx-src-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("capitulo.pltx");
+        let doc = doc.to_str().unwrap();
+        let src = "\\chapter{Muro}\n%#python\nH = 4\n%#end\n";
+        write(doc, src, Some("{\"c1\":{\"stdout\":\"mucho texto\"}}")).unwrap();
+        assert_eq!(read_source(doc).unwrap().as_deref(), Some(src));
+        assert_eq!(read(doc, false).unwrap().source.as_deref(), Some(src));
+
+        let legacy = dir.join("viejo.pltx");
+        fs::write(&legacy, "\\documentclass{article}").unwrap();
+        assert_eq!(read_source(legacy.to_str().unwrap()).unwrap(), None);
+
+        let broken = dir.join("roto.pltx");
+        fs::write(&broken, b"PK\x03\x04 no es un zip").unwrap();
+        assert!(read_source(broken.to_str().unwrap()).is_err());
+        let _ = fs::remove_dir_all(&dir);
+        // The working directory of this temporary document only.
+        let _ = fs::remove_dir_all(workspace::build_dir(doc));
+    }
 
     /// THE regression behind "I edit, I compile, and the PDF does not change".
     ///

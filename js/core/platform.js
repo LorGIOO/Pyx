@@ -206,7 +206,16 @@ export const pltxWrite = (path, source, outputs = null) =>
 // Installed font family names for the editor's font picker.
 export const listFonts = () => invoke('list_fonts');
 export const kernelStart = () => invoke('kernel_start');
-export const kernelExec = (req) => invoke('kernel_exec', { req });
+// The response arrives as the kernel's own JSON text in raw bytes (Rust no
+// longer parses and re-serializes it): one decode, one parse, here.
+const frameDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+export async function kernelExec(req) {
+  const raw = await invoke('kernel_exec', { req });
+  if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) return JSON.parse(frameDecoder.decode(raw));
+  if (Array.isArray(raw)) return JSON.parse(frameDecoder.decode(new Uint8Array(raw)));
+  if (typeof raw === 'string') return JSON.parse(raw);
+  return raw;
+}
 export const kernelReset = () => invoke('kernel_reset');
 // path = null → automatic interpreter detection.
 export const kernelSetPython = (path) => invoke('kernel_set_python', { path: path || null });
@@ -216,14 +225,6 @@ export const kernelInterrupt = (hard = false) => invoke('kernel_interrupt', { ha
 export const listPythons = () => invoke('list_pythons');
 // What Pyx sets up by itself (runtime.rs): its own Python (uv) and Tectonic.
 export const runtimeInfo = () => invoke('runtime_info');
-// Version history of documents and Git (history.rs).
-export const historySave = (path, content) => invoke('history_save', { path, content });
-export const historyList = (path) => invoke('history_list', { path });
-export const historyRead = (path, id) => invoke('history_read', { path, id });
-export const gitStatus = (dir) => invoke('git_status', { dir });
-export const gitInit = (dir) => invoke('git_init', { dir });
-export const gitCommit = (dir, message) => invoke('git_commit', { dir, message });
-export const gitShow = (dir, rev, file) => invoke('git_show', { dir, rev, file });
 export const installTectonic = () => invoke('install_tectonic');
 export const setupPython = (packages = []) => invoke('setup_python', { packages });
 export const installPackages = (python, packages) => invoke('install_packages', { python, packages });
@@ -236,6 +237,9 @@ export const projectTexts = (root) => invoke('project_texts', { root });
 // Batched {mtime, size} for several files — lets the compiler skip re-reading
 // \input'ed chapters that haven't changed on disk.
 export const fileStamps = (paths) => invoke('file_stamps', { paths });
+// The document source of several files in one round trip (null = unreadable):
+// a .pltx gives only its source.tex, never its results or build artifacts.
+export const readSources = (paths) => invoke('read_sources', { paths });
 export const renamePath = (from, to) => invoke('rename_path', { from, to });
 export const removePath = (path) => invoke('remove_path', { path });
 export const createFile = (path) => invoke('create_file', { path });

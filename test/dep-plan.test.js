@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { analyzePython } from '../js/editor/py-deps.js';
-import { planRun, downstreamOf } from '../js/editor/dep-plan.js';
+import {
+  planRun, downstreamOf, setStarNames, clearStarNames, unknownStarModules,
+} from '../js/editor/dep-plan.js';
 import { createExecState } from '../js/editor/exec-state.js';
 
 const set = (s) => [...s].sort();
@@ -47,14 +49,54 @@ describe('py-deps: what a cell defines and reads', () => {
   });
 
   it('constructs it cannot follow make the cell opaque', () => {
-    expect(analyzePython('%timeit f()').opaque).toBeTruthy();
-    expect(analyzePython('!pip install x').opaque).toBeTruthy();
+    expect(analyzePython('%run otro.py').opaque).toBeTruthy();
+    expect(analyzePython('%cd ..').opaque).toBeTruthy();
+    expect(analyzePython('%env CLAVE=1').opaque).toBeTruthy();
+    expect(analyzePython('%%sql\nSELECT 1').opaque).toBeTruthy();
     expect(analyzePython('exec("a = 1")').opaque).toBeTruthy();
-    expect(analyzePython('from math import *').opaque).toBeTruthy();
+    // A star import is not opaque by itself: the planner asks the kernel what
+    // it binds, and until then treats it as opaque (see the plan tests).
+    expect(analyzePython('from math import *').stars).toEqual(['math']);
+    expect(analyzePython('def f():\n    from math import *').opaque).toBeTruthy();
     expect(analyzePython('def f():\n    global G\n    G = 1').opaque).toBeTruthy();
     expect(analyzePython('x = (').opaque).toBeTruthy();
-    // The handcalcs header is Pyx's own: not opaque.
+    // The handcalcs header is Pyx's own: not opaque, also after setup lines.
     expect(analyzePython('%%render\nM = q * L**2 / 8').opaque).toBe(false);
+    expect(analyzePython('import handcalcs.render\n%%render\nM = q * L**2 / 8').opaque).toBe(false);
+  });
+
+  it('IPython magics are read for what they do to the namespace', () => {
+    const noop = analyzePython('%matplotlib inline\n%config InlineBackend.figure_format = "svg"\n!pip install x\nimport numpy as np');
+    expect(noop.opaque).toBe(false);
+    expect(set(noop.defs)).toEqual(['np']);
+    // %time / %timeit run the statement they wrap.
+    const t = analyzePython('%time x = f(a)\n%timeit -n 10 -r 2 g(b)');
+    expect(t.opaque).toBe(false);
+    expect(set(t.defs)).toEqual(['x']);
+    expect(set(t.reads)).toEqual(['a', 'b', 'f', 'g']);
+    // Assignment forms define the name.
+    expect(set(analyzePython('files = !dir\nr = %timeit -o h(c)').defs)).toEqual(['files', 'r']);
+    // Cell magics: Python body, or a body that is not Python run here.
+    expect(set(analyzePython('%%time\ny = z + 1').reads)).toEqual(['z']);
+    expect(set(analyzePython('%%capture salida\nprint(1)').defs)).toEqual(['salida']);
+    const html = analyzePython('%%html\n<b>%hola</b>\n!no');
+    expect(html.opaque).toBe(false);
+    expect(set(html.defs)).toEqual([]);
+    // Inside brackets or strings, % and ! are Python, not IPython.
+    const mod = analyzePython('y = (a\n% b)\ns = """\n%matplotlib inline\n"""');
+    expect(mod.opaque).toBe(false);
+    expect(set(mod.reads)).toEqual(['a', 'b']);
+  });
+
+  it('records which imports bind a name, and which names are bound otherwise', () => {
+    const i = analyzePython('import numpy as np\nfrom math import sqrt as raiz\nimport os.path\nx = 1\ndel x');
+    expect(i.binds.get('np')).toBe('numpy');
+    expect(i.binds.get('raiz')).toBe('math:sqrt');
+    expect(i.binds.get('os')).toBe('os');
+    expect(i.plain.has('x')).toBe(true);
+    expect(i.plain.has('np')).toBe(false);
+    // Imported AND assigned in the cell: bound otherwise too.
+    expect(analyzePython('import numpy as np\nnp = None').plain.has('np')).toBe(true);
   });
 });
 
@@ -150,11 +192,47 @@ describe('dep-plan: only what a change reaches', () => {
   });
 
   it('an opaque cell falls back to the exact prefix rule', () => {
-    const before = ['a = 1', '%timeit a', 'b = 2'];
-    const after = ['a = 1', '%timeit a', 'b = 2', 'c = 3'];
+    const before = ['a = 1', '%run otro.py', 'b = 2'];
+    const after = ['a = 1', '%run otro.py', 'b = 2', 'c = 3'];
     expect(plan(before, after)).toMatchObject({ mode: 'prefix', run: [3] });
-    const edited = ['a = 9', '%timeit a', 'b = 2'];
+    const edited = ['a = 9', '%run otro.py', 'b = 2'];
     expect(plan(before, edited).mode).toBe('full');
+  });
+
+  it('IPython magics with a known effect no longer turn the document opaque', () => {
+    const before = ['%matplotlib inline\nimport numpy as np', 'a = 1', 'b = a + 1', 'c = 5'];
+    const after = ['%matplotlib inline\nimport numpy as np', 'a = 2', 'b = a + 1', 'c = 5'];
+    expect(plan(before, after)).toMatchObject({ mode: 'graph', run: [1, 2] });
+  });
+
+  it('a star import is followed once the kernel says what it binds', () => {
+    clearStarNames();
+    const before = ['from math import *', 'r = 2', 'A = pi * r**2', 'z = 0'];
+    const after = ['from math import *', 'r = 3', 'A = pi * r**2', 'z = 0'];
+    // Unknown module: as opaque as ever.
+    expect(plan(before, after).mode).toBe('full');
+    expect(unknownStarModules(after.map(analyzePython))).toEqual(['math']);
+    setStarNames('math', ['pi', 'e', 'sqrt', 'floor']);
+    const p = plan(before, after);
+    expect(p.mode).toBe('graph');
+    expect(p.run).toEqual([1, 2]);
+    // Shadowing a name the star binds is an ordinary redefinition.
+    const shadow = ['from math import *', 'e = 5', 'y = e + 1'];
+    const shadow2 = ['from math import *', 'e = 6', 'y = e + 1'];
+    expect(plan(shadow, shadow2).run).toEqual([1, 2]);
+    clearStarNames();
+  });
+
+  it('the same import in many cells does not re-run the document', () => {
+    const before = ['import numpy as np\na = np.pi', 'import numpy as np\nb = 2', 'import numpy as np\nc = np.e'];
+    const after = ['import numpy as np\na = np.pi', 'import numpy as np\nb = 3', 'import numpy as np\nc = np.e'];
+    const p = plan(before, after);
+    expect(p.mode).toBe('graph');
+    expect([...p.seeds]).toEqual([1]);
+    // A different module under the same name is not stable: order matters again.
+    const mixed = ['import numpy as np\na = np.pi', 'import cupy as np\nb = 2', 'import numpy as np\nc = np.e'];
+    const mixed2 = ['import numpy as np\na = np.pi', 'import cupy as np\nb = 3', 'import numpy as np\nc = np.e'];
+    expect(plan(mixed, mixed2).run).toEqual([1, 2]);
   });
 
   it('forced cells run even when unchanged, with what depends on them', () => {

@@ -63,22 +63,163 @@ export function analyzePython(code) {
 }
 
 function emptyInfo() {
-  return { defs: new Set(), reads: new Set(), imports: new Map(), muts: [], fns: new Map(), opaque: false };
+  return {
+    defs: new Set(), reads: new Set(), imports: new Map(), muts: [], fns: new Map(), opaque: false,
+    // Module-level names bound by an import, with WHAT they import
+    // ("numpy", "math:sqrt"), and names bound any other way (assignment,
+    // def, for, del…). A name only ever bound by the same import is the same
+    // object in every cell: re-importing it changes nothing (dep-plan.js).
+    binds: new Map(), plain: new Set(),
+    // Modules star-imported at module level (`from math import *`).
+    stars: [],
+  };
+}
+
+/* ---------------- IPython syntax ----------------
+   A notebook cell is Python plus IPython's line syntax: `%magic …`, `!cmd`,
+   `x = !cmd` and, on the first line, `%%cellmagic`. One such line used to
+   make the whole cell — and so the whole document — unanalyzable, and every
+   edit anywhere re-ran every cell from scratch. That is the price of
+   `%matplotlib inline` at the top of a notebook: reading the 500 000-row CSV
+   again after changing a plot title.
+
+   The magics whose effect on the namespace is known are rewritten into the
+   Python that has that effect (nothing, the statement they wrap, or the name
+   they assign); every other magic still makes the cell opaque. Only lines
+   that START a logical line are IPython syntax — `a\n% b` inside brackets is
+   Python's modulo — so a small scanner tracks brackets, strings and line
+   continuations first. */
+
+// Line magics that never touch the namespace (display, environment of the
+// interpreter, package installs).
+const NOOP_LINE_MAGICS = new Set(['matplotlib', 'config', 'precision', 'xmode', 'pdb', 'autosave', 'who',
+  'whos', 'lsmagic', 'pwd', 'pip', 'conda', 'mamba', 'quickref', 'magic', 'colors', 'pinfo', 'pinfo2',
+  'page', 'tb', 'killbgscripts']);
+// Line magics that run the Python statement they are given, in the namespace.
+const STMT_LINE_MAGICS = new Set(['time', 'timeit', 'prun']);
+// Cell magics whose body is Python run in the namespace.
+const PY_CELL_MAGICS = new Set(['time', 'timeit', 'prun', 'capture']);
+// Cell magics whose body is not Python run here at all (displayed, written
+// to a file, or run by another program).
+const FOREIGN_CELL_MAGICS = new Set(['html', 'HTML', 'latex', 'markdown', 'javascript', 'js', 'svg',
+  'writefile', 'file', 'bash', 'sh', 'cmd', 'powershell', 'script', 'perl', 'ruby', 'python', 'python3']);
+// Options of %time/%timeit/%prun (with their argument, when they take one).
+const MAGIC_OPTS = /^(?:\s*-(?:[nrpsTDl]\s+\S+|[qotcl]))*\s*/;
+
+/** For every line, whether it starts a logical line (not inside brackets, a
+ *  triple-quoted string or a backslash continuation). */
+function logicalStarts(lines) {
+  const starts = [];
+  let depth = 0;
+  let triple = null; // '"""' or "'''" while inside one
+  let cont = false;
+  for (const ln of lines) {
+    starts.push(depth === 0 && !triple && !cont);
+    cont = false;
+    let i = 0;
+    while (i < ln.length) {
+      if (triple) {
+        const e = ln.indexOf(triple, i);
+        if (e < 0) { i = ln.length; break; }
+        i = e + 3;
+        triple = null;
+        continue;
+      }
+      const ch = ln[i];
+      if (ch === '#') break;
+      if (ch === '"' || ch === "'") {
+        if (ln.startsWith(ch.repeat(3), i)) { triple = ch.repeat(3); i += 3; continue; }
+        // A one-line string: skip to its closing quote (escapes honoured).
+        let j = i + 1;
+        while (j < ln.length && ln[j] !== ch) j += ln[j] === '\\' ? 2 : 1;
+        i = j + 1;
+        continue;
+      }
+      if (ch === '(' || ch === '[' || ch === '{') depth++;
+      else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1);
+      else if (ch === '\\' && i === ln.length - 1) cont = true;
+      i++;
+    }
+  }
+  return starts;
+}
+
+/**
+ * The cell as plain Python, with IPython syntax replaced by its effect on the
+ * namespace. `{ code, opaque, foreign }`: opaque = a reason when some line
+ * cannot be accounted for; foreign = the body is not Python run here.
+ */
+export function ipythonToPython(raw) {
+  const lines = raw.split('\n');
+  const starts = logicalStarts(lines);
+  let opaque = false;
+  let first = true; // the first non-blank line (where a cell magic may sit)
+  let hcSeen = false;
+  const out = lines.map((ln, idx) => {
+    const t = ln.trim();
+    const isFirst = first && t !== '';
+    if (t !== '') first = false;
+    if (!starts[idx]) return ln;
+    const indent = ln.slice(0, ln.length - ln.trimStart().length);
+    // Pyx's handcalcs header: it may follow setup lines (`import
+    // handcalcs.render` above it), and only decides how the body is shown.
+    if (!hcSeen && HANDCALCS_HEADER.test(ln)) { hcSeen = true; return ''; }
+    let m;
+    if (isFirst && (m = /^%%([A-Za-z_]\w*)\s*(.*)$/.exec(t))) {
+      const [, name, args] = m;
+      if (FOREIGN_CELL_MAGICS.has(name) && !/--(out|err|proc)\b/.test(args)) return { foreign: true };
+      if (PY_CELL_MAGICS.has(name)) {
+        if (name === 'capture') {
+          // %%capture [--no-stdout --no-stderr --no-display] [var]
+          const v = args.replace(/--?[\w-]+/g, '').trim();
+          if (!v) return '';
+          if (/^[A-Za-z_]\w*$/.test(v)) return `${v} = None`;
+          opaque = 'magia de IPython';
+          return '';
+        }
+        return '';
+      }
+      opaque = 'magia de IPython';
+      return ln;
+    }
+    if (t.startsWith('!')) return `${indent}pass`;
+    if ((m = /^%([A-Za-z_]\w*)(.*)$/.exec(t))) {
+      const [, name, rest] = m;
+      if (NOOP_LINE_MAGICS.has(name)) return `${indent}pass`;
+      // `%env` / `%env NAME` only show; `%env NAME=valor` changes os.environ.
+      const arg = rest.trim();
+      if (name === 'env' && !arg.includes('=') && !/\s/.test(arg)) return `${indent}pass`;
+      if (STMT_LINE_MAGICS.has(name)) {
+        const stmt = rest.replace(MAGIC_OPTS, '');
+        return stmt.trim() ? `${indent}${stmt.trim()}` : `${indent}pass`;
+      }
+      opaque = 'magia de IPython';
+      return ln;
+    }
+    // `x = !cmd`, `x = %sx cmd`, `r = %timeit -o f()`: x is assigned.
+    if ((m = /^([A-Za-z_]\w*)\s*=\s*([!%])\s*(\w*)(.*)$/.exec(t))) {
+      const [, name, kind, magic, rest] = m;
+      if (kind === '!' || ['sx', 'system'].includes(magic)) return `${indent}${name} = None`;
+      if (STMT_LINE_MAGICS.has(magic)) {
+        const stmt = rest.replace(MAGIC_OPTS, '').trim();
+        return stmt ? `${indent}${name} = (${stmt})` : `${indent}${name} = None`;
+      }
+      opaque = 'magia de IPython';
+      return ln;
+    }
+    if (t.startsWith('%')) { opaque = 'magia de IPython'; return ln; }
+    return ln;
+  });
+  if (out.some((l) => l && typeof l === 'object')) return { code: '', opaque: false, foreign: true };
+  return { code: out.join('\n'), opaque, foreign: false };
 }
 
 function analyze(raw) {
   const info = emptyInfo();
-  // IPython syntax: the handcalcs header is Pyx's own and only decides how the
-  // body is shown; any other magic or shell escape can do anything at all.
-  let headerSeen = false;
-  const lines = raw.split('\n').map((ln) => {
-    const t = ln.trim();
-    if (!headerSeen && HANDCALCS_HEADER.test(ln)) { headerSeen = true; return ''; }
-    if (t.startsWith('%') || t.startsWith('!')) info.opaque = 'magia de IPython';
-    return ln;
-  });
-  if (info.opaque) return info;
-  const code = lines.join('\n');
+  const py = ipythonToPython(raw);
+  if (py.foreign) return info; // %%html, %%writefile, %%bash…: nothing in the namespace
+  if (py.opaque) { info.opaque = py.opaque; return info; }
+  const code = py.code;
   const tree = parser.parse(code);
   let broken = false;
   tree.iterate({ enter: (n) => { if (n.type.isError) broken = true; } });
@@ -113,11 +254,19 @@ function analyze(raw) {
     const fn = fnOf(scope);
     if (fn && r !== 'local') fn.refs.add(name);
   }
+  // What the import statement being walked binds the next stored name to
+  // (null: the name is bound by something else).
+  let importing = null;
   function store(name, scope, phase) {
     let s = scope;
     if (s.kind === 'module') {
       if (phase !== 'resolve') return;
       info.defs.add(name);
+      if (importing !== null) {
+        // Two DIFFERENT imports of one name in a cell: not one stable object.
+        if (info.binds.has(name) && info.binds.get(name) !== importing) info.plain.add(name);
+        info.binds.set(name, importing);
+      } else info.plain.add(name);
       if (s.cond === 0) s.bound.add(name);
       return;
     }
@@ -383,11 +532,23 @@ function analyze(raw) {
       i++;
       for (; i < k.length; i++) {
         const c = k[i];
-        if (c.name === '*' || isTok(c, '*')) { info.opaque = 'from … import *'; return; }
+        if (c.name === '*' || isTok(c, '*')) {
+          // What `from math import *` binds is only known to the kernel: the
+          // planner asks it (dep-plan.js setStarNames) and, until it knows,
+          // treats the document as it treats an opaque cell.
+          if (scope.kind !== 'module' || !mod || mod.startsWith('.')) { info.opaque = 'from … import *'; return; }
+          if (phase === 'resolve' && !info.stars.includes(mod)) info.stars.push(mod);
+          continue;
+        }
         if (c.name !== 'VariableName') continue;
-        let name = text(c);
+        const member = text(c);
+        let name = member;
         if (k[i + 1] && isTok(k[i + 1], 'as') && k[i + 2]) { name = text(k[i + 2]); i += 2; }
+        // A relative import (`from . import x`) depends on the package it
+        // runs in: never treated as one stable object.
+        importing = mod.startsWith('.') ? null : `${mod}:${member}`;
         store(name, scope, phase);
+        importing = null;
         if (phase === 'resolve' && scope.kind === 'module') info.imports.set(name, mod);
       }
       return;
@@ -403,7 +564,9 @@ function analyze(raw) {
       let name = first;
       // `import a.b` binds `a` (the package); `import a.b as c` binds the submodule.
       if (k[j] && isTok(k[j], 'as') && k[j + 1]) { name = text(k[j + 1]); j += 2; } else mod = first;
+      importing = mod;
       store(name, scope, phase);
+      importing = null;
       if (phase === 'resolve' && scope.kind === 'module') info.imports.set(name, mod);
       i = j;
     }

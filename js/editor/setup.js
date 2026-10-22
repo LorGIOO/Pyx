@@ -39,7 +39,7 @@ import { state as appState } from '../core/state.js';
 import { docIdFacet } from './doc-id.js';
 import { cellsExtension, selectCellOrAll, refreshCells } from './cells.js';
 import {
-  toggleLineComment, smartEnter, moveCellOrLineUp, moveCellOrLineDown,
+  toggleLineComment, smartEnter, smartTab, moveCellOrLineUp, moveCellOrLineDown,
 } from './commands.js';
 import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from './bookmarks.js';
 import { calcCompletions } from './autocomplete.js';
@@ -50,7 +50,6 @@ import { latexExtras } from './latex-extras.js';
 import { pySignatures } from './py-signature.js';
 import { parseCells as parseCellsFor, cellAtLine } from './cell-parse.js';
 import { pasteTables } from './paste-table.js';
-import { cellControls } from './controls.js';
 import { cursorHistory, historyBack, historyForward } from './cursor-history.js';
 import { runMacroIndex } from './macros.js';
 import { lintKeymap, previousDiagnostic } from '@codemirror/lint';
@@ -302,8 +301,6 @@ export function createDocState(docId, content) {
       pySignatures,
       // A table copied from Excel or a web page pastes as a tabular.
       pasteTables,
-      // MATLAB-style controls: `x = 5  # @slider(0, 10)` shows a slider.
-      cellControls,
       // Alt+← / Alt+→: back and forward through the places you jumped from.
       cursorHistory,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:
@@ -343,6 +340,8 @@ export function createDocState(docId, content) {
         ...searchKeymap,
         ...historyKeymap,
         ...foldKeymap,
+        // Tab in a \begin name steps into the body (latex-env.js); else indent.
+        { key: 'Tab', run: smartTab },
         indentWithTab,
       ]),
     ],
@@ -419,10 +418,27 @@ export function forEachEditorView(fn) {
 }
 
 /** Dispatch a cells-refresh to every pane so shared outputs repaint everywhere. */
-export function broadcastCellRefresh() {
+/* Cell decorations are rebuilt at most once per frame. Every executed cell
+   asks twice (running, then its result), and each rebuild walks every cell
+   of every pane: a 300-cell document run in full spent ~2.4 s of the UI
+   thread on rebuilds nobody could see, between cells, delaying the next one.
+   Requests made before the frame is drawn now share one rebuild. The timer
+   covers a window that draws no frames (minimized). */
+let refreshQueued = false;
+let refreshTimer = 0;
+function flushCellRefresh() {
+  if (!refreshQueued) return;
+  refreshQueued = false;
+  clearTimeout(refreshTimer);
   for (const vw of paneViews.values()) {
     try { vw.dispatch({ effects: refreshCells.of(null) }); } catch (_) {}
   }
+}
+export function broadcastCellRefresh() {
+  if (refreshQueued) return;
+  refreshQueued = true;
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flushCellRefresh);
+  refreshTimer = setTimeout(flushCellRefresh, 50);
 }
 
 /** Re-run spell/grammar checking in every pane (after a setting change). */

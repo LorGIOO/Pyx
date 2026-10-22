@@ -38,13 +38,14 @@ import {
 import {
   runCellCode, withKernelLock, interruptKernel, recordRender, takeRestartReason,
   nsRecord, nsFail, nsMarkStale, nsIsStale, nsPlan, nsImmutable, execKey, programOf, forgetNames,
+  ensureStarNames,
 } from './cell-runner.js';
 import { analyzePython } from './py-deps.js';
 import { executePlan, downstreamOf } from './dep-plan.js';
 import { general } from '../solid/stores/settingsStore.js';
 import { broadcastCellRefresh } from './setup.js';
 import { getOutput, setOutput, deleteOutput, clearDoc, gcDoc } from './cell-outputs.js';
-import { createRichFrame, sanitizeFragment, needsIsolation, guardLinks } from './rich-frame.js';
+import { createRichFrame, sanitizeFragment, needsIsolation, guardLinks, stripPandasStyle } from './rich-frame.js';
 import { renderMath } from './math-render.js';
 import { ansiFragment, ansiRuns } from './ansi.js';
 // The shared icon set, for the cell's context menus (`MI` = menu icons).
@@ -234,6 +235,7 @@ async function runOne(view, cell) {
     const me = cells.findIndex((c) => cellKey(c) === cellKey(cell));
     if (me < 0) return;
     const { entries, program, owned } = docProgram(docId, cells);
+    await ensureStarNames(program, cwd);
     const plan = nsPlan(program, { dir: cwd, forced: [entries[me].key], interactive: true, owned });
     const meta = (i, watch) => ({ key: entries[i].key, D: plan.effects[i].D, watch });
     if (plan.mode !== 'graph' || general.reactiveCells === false) {
@@ -302,6 +304,7 @@ async function runRange(view, from, to) {
     const end = Math.min(to, cells.length);
     const { entries, program, owned } = docProgram(docId, cells);
     const keys = entries.slice(from, end).map((e) => e.key);
+    await ensureStarNames(program, cwd);
     const plan = nsPlan(program, { dir: cwd, forced: keys, interactive: true, owned });
     for (let i = from; i < end; i++) {
       const res = await execCell(docId, cells[i], cwd, { key: entries[i].key, D: plan.effects[i].D });
@@ -489,6 +492,7 @@ async function runAllCellsHeld(view, { force = false, cwd } = {}) {
   if (!cells.length) return;
   const dir = cwd !== undefined ? cwd : await activeCwd();
   const { entries, program } = docProgram(docId, cells);
+  if (!force) await ensureStarNames(program, dir);
   let plan = force ? null : nsPlan(program, { dir });
   if (!plan || plan.mode === 'full') {
     await runCellCode('', { cwd: dir, reset: true });
@@ -746,6 +750,40 @@ class CellToolbar extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+/* Printed text in an output, VS Code-style for the very long ones: a print
+   loop over a 500 000-row table gives tens of thousands of lines, and laying
+   them all out took the browser ~0.4 s and made the editor a 700 000 px
+   scroll. Beyond TEXT_LINES_MAX lines only the head and the tail are drawn,
+   with a button for the rest — nothing is lost, and the cell's "Copiar
+   salida" still copies everything. */
+const TEXT_LINES_MAX = 2000;
+const TEXT_HEAD = 1200;
+const TEXT_TAIL = 300;
+function appendLongText(body, text, view) {
+  let lines = 0;
+  for (let i = text.indexOf('\n'); i >= 0 && lines <= TEXT_LINES_MAX; i = text.indexOf('\n', i + 1)) lines++;
+  if (lines <= TEXT_LINES_MAX) { body.appendChild(ansiFragment(text)); return; }
+  const all = text.split('\n');
+  const hidden = all.length - TEXT_HEAD - TEXT_TAIL;
+  const head = ansiFragment(all.slice(0, TEXT_HEAD).join('\n') + '\n');
+  const tail = ansiFragment(all.slice(all.length - TEXT_TAIL).join('\n'));
+  const note = document.createElement('div');
+  note.className = 'out-note out-more';
+  const label = document.createElement('span');
+  label.textContent = `… ${hidden.toLocaleString('es-ES')} líneas más `;
+  const btn = document.createElement('button');
+  btn.className = 'out-more-btn';
+  btn.textContent = 'Mostrarlas todas';
+  btn.onmousedown = (e) => e.preventDefault();
+  btn.onclick = () => {
+    const rest = ansiFragment(all.slice(TEXT_HEAD, all.length - TEXT_TAIL).join('\n') + '\n');
+    note.replaceWith(rest);
+    view.requestMeasure();
+  };
+  note.append(label, btn);
+  body.append(head, note, tail);
+}
+
 /* ---------- output widget (replaces the %#end line, hiding it) ---------- */
 function fmtMs(ms) {
   if (ms == null) return '';
@@ -793,15 +831,18 @@ function renderDisplay(d, body, view) {
   }
   const holder = document.createElement('div');
   holder.className = 'out-rich-holder';
-  holder.appendChild(expandBtn('Abrir en otra pestaña', () => openHtmlTab(d.data)));
-  if (d.kind === 'html' && needsIsolation(d.data)) {
-    holder.appendChild(createRichFrame(d.data, () => view.requestMeasure()));
+  // A DataFrame without pandas' alignment-only <style> renders inline, with
+  // the app's table look (rich-frame.js explains why it went to a frame).
+  const html = d.kind === 'html' ? stripPandasStyle(d.data) : d.data;
+  holder.appendChild(expandBtn('Abrir en otra pestaña', () => openHtmlTab(html)));
+  if (d.kind === 'html' && needsIsolation(html)) {
+    holder.appendChild(createRichFrame(html, () => view.requestMeasure()));
   } else {
     // Static rich output (SVG, pandas tables, media markup): inline, themed,
     // and stripped of anything executable before it touches the app's DOM.
     const rich = document.createElement('div');
     rich.className = 'out-rich';
-    rich.appendChild(sanitizeFragment(d.data));
+    rich.appendChild(sanitizeFragment(html));
     guardLinks(rich, (url) => openExternal(url).catch(() => {}));
     holder.appendChild(rich);
   }
@@ -1069,7 +1110,7 @@ class CellOutput extends WidgetType {
     const displays = Array.isArray(out.displays) ? out.displays : [];
     let pos = 0;
     const flushText = (to) => {
-      if (to > pos) body.appendChild(ansiFragment(stdout.slice(pos, to)));
+      if (to > pos) appendLongText(body, stdout.slice(pos, to), view);
       pos = Math.max(pos, to);
     };
     for (const d of displays) {

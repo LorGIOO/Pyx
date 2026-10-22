@@ -400,9 +400,21 @@ fn spawn() -> Result<KernelProc, String> {
     })
 }
 
+/// Just the `id` of a response frame. Deserializing into this skips every
+/// other field without building it — a 1 MB response (a long print, a
+/// figure) is scanned once instead of being turned into a tree of values.
+#[derive(serde::Deserialize)]
+struct FrameId {
+    #[serde(default)]
+    id: Option<serde_json::Value>,
+}
+
 impl KernelProc {
-    /// Send one request object and return the matching response object.
-    fn request(&mut self, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    /// Send one request and return the matching response frame as its JSON
+    /// TEXT, untouched. The app parses it once; the old path parsed it here
+    /// into a value tree and Tauri serialized that tree back into text for
+    /// the window — twice the work on every result, megabytes for a figure.
+    fn request_raw(&mut self, req: &serde_json::Value) -> Result<String, String> {
         let line = serde_json::to_string(req).map_err(|e| e.to_string())?;
         {
             // Scoped: the stdin lock is released before we start waiting for
@@ -441,10 +453,10 @@ impl KernelProc {
             if trimmed.is_empty() {
                 continue;
             }
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Ok(frame) = serde_json::from_str::<FrameId>(trimmed) {
                 // Skip stray notices (e.g. a late "ready"); match the id we sent.
-                if want_id.is_none() || val.get("id") == want_id.as_ref() {
-                    return Ok(val);
+                if want_id.is_none() || frame.id.as_ref() == want_id.as_ref() {
+                    return Ok(trimmed.to_string());
                 }
             }
         }
@@ -466,14 +478,16 @@ pub fn start(state: &Mutex<Option<KernelProc>>) -> Result<serde_json::Value, Str
     Ok(serde_json::json!({ "ready": true, "python": python }))
 }
 
-pub fn exec(
+/// Run one request in the kernel; the answer is the response frame's JSON
+/// text as the kernel wrote it (see `request_raw`).
+pub fn exec_raw(
     state: &Mutex<Option<KernelProc>>,
     req: serde_json::Value,
-) -> Result<serde_json::Value, String> {
+) -> Result<String, String> {
     ensure(state)?;
     let mut guard = state.lock().map_err(|_| "kernel lock")?;
     let proc = guard.as_mut().ok_or("kernel no iniciado")?;
-    match proc.request(&req) {
+    match proc.request_raw(&req) {
         Ok(v) => Ok(v),
         Err(e) => {
             // A broken pipe means the interpreter died; drop it so the next
@@ -521,4 +535,41 @@ pub fn shutdown(state: &Mutex<Option<KernelProc>>) -> Result<(), String> {
         *g = None;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Matching a response reads its `id` and nothing else.
+    #[test]
+    fn frame_id_reads_only_the_id() {
+        let big = format!(
+            "{{\"id\": 7, \"stdout\": \"{}\", \"displays\": [{{\"kind\": \"html\", \"data\": \"<b>x</b>\"}}]}}",
+            "x".repeat(100_000)
+        );
+        let f: FrameId = serde_json::from_str(&big).unwrap();
+        assert_eq!(f.id, Some(serde_json::json!(7)));
+        let ready: FrameId = serde_json::from_str("{\"type\": \"ready\", \"python\": \"3.13\"}").unwrap();
+        assert_eq!(ready.id, None);
+    }
+
+    /// The real kernel, end to end: the response comes back as the kernel's
+    /// own JSON text, for the request that was sent. Skipped without Python.
+    #[test]
+    fn exec_raw_returns_the_kernels_frame() {
+        if chosen_python().is_none() {
+            return;
+        }
+        let state: Mutex<Option<KernelProc>> = Mutex::new(None);
+        let raw = exec_raw(&state, serde_json::json!({"id": 41, "code": "x = 2\nx * 21"})).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["id"], serde_json::json!(41));
+        assert_eq!(v["ok"], serde_json::json!(true));
+        assert_eq!(v["result"], serde_json::json!("42"));
+        let raw = exec_raw(&state, serde_json::json!({"id": 42, "evals": ["x + 1"]})).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["evals"]["x + 1"]["value"], serde_json::json!("3"));
+        shutdown(&state).unwrap();
+    }
 }

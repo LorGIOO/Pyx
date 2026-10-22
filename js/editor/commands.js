@@ -13,6 +13,7 @@ import {
 } from './latex-table.js';
 import { buildToSrcLine, srcToBuildLine } from '../compile/latex-bridge.js';
 import { lineMapFor, sourceToBuildPath } from '../compile/build-maps.js';
+import { envEnter, envTab } from './latex-env.js';
 
 const withView = (fn) => () => {
   const v = getView();
@@ -214,33 +215,23 @@ export function toggleLineComment(view) {
   return true;
 }
 
-// Smart Enter (TeXstudio-style): after `\begin{env}` open the body and add the
-// matching `\end{env}`; on an `\item` line continue with a new `\item`. Returns
-// false (so the editor's normal Enter runs) outside those cases and in cells.
+const inCellLine = (state, ln) => parseCells(state).some((c) => ln >= c.headerLine && ln <= c.endLine);
+
+// Smart Enter (TeXstudio-style), LaTeX only (never in cells):
+//  - on a \begin line, latex-env.js: into the body, with the \end added only
+//    when the environment has none yet (`\begin{document}` is left alone — a
+//    stray `\end{document}` mid-file breaks the compile);
+//  - at the end of an `\item` line, continue with a new `\item`.
+// Returns false (so the editor's normal Enter runs) outside those cases.
 export function smartEnter(view) {
   const { state } = view;
+  if (state.selection.ranges.length !== 1) return false;
   const sel = state.selection.main;
   if (!sel.empty) return false;
   const line = state.doc.lineAt(sel.head);
-  if (sel.head !== line.to) return false; // only at the end of the line
-  const ln = line.number;
-  if (parseCells(state).some((c) => ln >= c.headerLine && ln <= c.endLine)) return false;
-  const indent = (line.text.match(/^[ \t]*/) || [''])[0];
-
-  // `\begin{document}` is the document wrapper, not a block to auto-close — a
-  // stray `\end{document}` mid-file breaks the compile, so skip the auto-end
-  // for it (the user adds the single matching \end themselves).
-  const mb = line.text.match(/\\begin\{([^}]+)\}\s*$/);
-  if (mb && mb[1] !== 'document') {
-    const body = `\n${indent}  `;
-    const close = `\n${indent}\\end{${mb[1]}}`;
-    view.dispatch({
-      changes: { from: sel.head, insert: body + close },
-      selection: { anchor: sel.head + body.length },
-      scrollIntoView: true,
-    });
-    return true;
-  }
+  if (inCellLine(state, line.number)) return false;
+  if (envEnter(view)) return true;
+  if (sel.head !== line.to) return false; // \item: only at the end of the line
   const mItem = line.text.match(/^(\s*)\\item\b/);
   if (mItem) {
     const insert = `\n${mItem[1]}\\item `;
@@ -252,6 +243,15 @@ export function smartEnter(view) {
     return true;
   }
   return false;
+}
+
+// Tab with the cursor in a \begin name: into the body, like Enter (the old
+// snippet's Tab did that). Anywhere else Tab keeps its usual job.
+export function smartTab(view) {
+  const { state } = view;
+  if (state.selection.ranges.length !== 1) return false;
+  if (inCellLine(state, state.doc.lineAt(state.selection.main.head).number)) return false;
+  return envTab(view);
 }
 
 export function insertSnippet(text) {

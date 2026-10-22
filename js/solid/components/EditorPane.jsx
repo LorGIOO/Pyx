@@ -195,19 +195,20 @@ export default function EditorPane() {
 
   return (
     <>
-      <Show when={crumbs().length && !state.zenMode}>
-        <div class="breadcrumbs">
-          <For each={crumbs()}>
-            {(h, i) => (
-              <>
-                <Show when={i() > 0}><span class="crumb-sep">›</span></Show>
-                <span class="crumb" onClick={() => gotoLine(h.line)}
-                  title={t(`Línea ${h.line}`, `Line ${h.line}`)}>{h.title}</span>
-              </>
-            )}
-          </For>
-        </div>
-      </Show>
+      {/* Hidden, not removed, when empty or in zen mode: inserted before the
+          editor, it made Solid move the editor in the DOM, and the editor
+          lost its scroll position (back to the top). */}
+      <div class="breadcrumbs" classList={{ 'is-hidden': !crumbs().length || state.zenMode }}>
+        <For each={crumbs()}>
+          {(h, i) => (
+            <>
+              <Show when={i() > 0}><span class="crumb-sep">›</span></Show>
+              <span class="crumb" onClick={() => gotoLine(h.line)}
+                title={t(`Línea ${h.line}`, `Line ${h.line}`)}>{h.title}</span>
+            </>
+          )}
+        </For>
+      </div>
       <div class="editor-splits">
         <For each={state.panes}>{(pane) => <Pane pane={pane} />}</For>
       </div>

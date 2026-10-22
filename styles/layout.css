@@ -1,3 +1,9 @@
+/* Parts that zen mode (or the side-panel toggle) hides: always in the DOM,
+   so the work area never moves and keeps its scroll positions. `contents`
+   lays the children out exactly as if the wrapper were not there. */
+.keep-mounted { display: contents; }
+.keep-mounted.is-hidden, .breadcrumbs.is-hidden { display: none; }
+
 /* Main work area: editor pane | divider | PDF preview pane. */
 .content {
   display: flex;
@@ -472,6 +478,10 @@
   background: #fff;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
   overflow-anchor: none; /* never let a page become the browser's scroll anchor */
+  /* Nothing inside a page may widen the viewer: a raster still stretched to
+     the previous zoom used to add a horizontal scrollbar and push the page
+     aside. The shadow is outside the box and stays. */
+  overflow: hidden;
 }
 .pdf-page canvas { display: block; position: relative; z-index: 1; }
 /* Canvas + text layer wrapper: GPU-stretched during zoom, crisp after settle. */
@@ -862,32 +872,6 @@
 }
 @keyframes pdf-fwd-fade { from { opacity: 1; } to { opacity: 0; } }
 
-/* Variables (Jupyter's variable inspector) */
-.vars-panel { display: flex; flex-direction: column; min-height: 0; }
-.vars-bar { display: flex; gap: 4px; padding: 4px 8px 6px; }
-.vars-filter {
-  flex: 1; min-width: 0; height: 24px; padding: 0 6px;
-  font: inherit; font-size: 12px; color: var(--theme-text);
-  background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 4px;
-}
-.vars-refresh {
-  width: 24px; height: 24px; padding: 0; border: 1px solid var(--theme-border); border-radius: 4px;
-  background: transparent; color: var(--theme-text-secondary); cursor: pointer; font-size: 13px;
-}
-.vars-refresh:hover:not(:disabled) { background: var(--theme-hover); color: var(--theme-accent); }
-.vars-row { padding: 4px 10px; cursor: default; border-bottom: 1px solid var(--theme-border); }
-.vars-row:hover { background: var(--theme-hover); }
-.vars-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.vars-name {
-  font-family: "Cascadia Code", Consolas, monospace; font-weight: 600; color: var(--theme-accent);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.vars-type { margin-left: auto; flex-shrink: 0; font-size: 10.5px; color: var(--theme-text-secondary); }
-.vars-value {
-  margin-top: 1px; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px;
-  color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
 /* Buscar en el proyecto (ProjectSearch.jsx) */
 .psearch { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .psearch-row { display: flex; gap: 3px; align-items: center; padding: 4px 8px 0; }
@@ -961,17 +945,6 @@
 .status-missing { border: 0; background: transparent; color: var(--theme-warning, #d29922); font: inherit; cursor: pointer; }
 .status-missing:hover { text-decoration: underline; }
 
-/* Parámetros (ParamsPanel.jsx) */
-.params-panel { padding: 4px 0 10px; }
-.params-row { padding: 6px 10px; border-bottom: 1px solid var(--theme-border); }
-.params-head { display: flex; gap: 8px; align-items: baseline; cursor: default; }
-.params-name { font-family: var(--font-mono, monospace); font-weight: 600; font-size: 12px; color: var(--theme-accent); }
-.params-label { font-size: 12px; color: var(--theme-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.params-ctl { margin-top: 4px; }
-.params-ctl .pyx-ctl { margin-left: 0; }
-.params-ctl .pyx-ctl input[type=range] { width: 150px; }
-.params-example { margin: 8px 0 0; padding: 6px 8px; border-radius: 4px; background: var(--theme-bg); font-size: 11px; white-space: pre-wrap; text-align: left; }
-
 /* PDF bookmarks (PdfOutline.jsx) */
 .preview-body { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .preview-body > .preview-scroll { min-width: 0; }
@@ -1007,29 +980,3 @@
 }
 .macros-actions { display: flex; gap: 8px; align-items: center; }
 
-/* Historial (HistoryPanel.jsx) */
-.hist { padding: 4px 0 12px; }
-.hist .sym-cat-name { padding: 6px 10px 2px; }
-.hist-row { display: flex; gap: 8px; justify-content: space-between; padding: 4px 10px; font-size: 12px; cursor: default; }
-.hist-row:hover { background: var(--theme-hover); }
-.hist-size { color: var(--theme-text-secondary); font-size: 11px; white-space: nowrap; }
-.hist-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hist-btn {
-  height: 24px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--theme-border);
-  background: transparent; color: var(--theme-text); font: inherit; font-size: 12px; cursor: pointer;
-}
-.hist-btn.primary { background: var(--theme-accent); border-color: var(--theme-accent); color: #fff; }
-.hist-btn:disabled { opacity: .5; cursor: default; }
-.hist-git { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px; }
-.hist-git .hist-row { padding: 4px 0; }
-.hist-branch { font-size: 12px; color: var(--theme-text-secondary); }
-.hist-changes { max-height: 120px; overflow: auto; font: 11px var(--font-mono, monospace); color: var(--theme-text-secondary); }
-.hist-msg { resize: vertical; padding: 4px 6px; border-radius: 4px; border: 1px solid var(--theme-border); background: var(--theme-bg); color: var(--theme-text); font: inherit; font-size: 12px; }
-.hist-note { padding: 6px 10px; font-size: 11px; color: var(--theme-text-secondary); white-space: pre-wrap; }
-.hist-compare { margin: 0 6px 8px; border: 1px solid var(--theme-border); border-radius: 6px; overflow: hidden; }
-.hist-compare-bar { display: flex; gap: 6px; align-items: center; padding: 4px 6px; background: var(--theme-hover); font-size: 12px; }
-.hist-diff { max-height: 320px; overflow: auto; font: 11px/1.45 var(--font-mono, monospace); }
-.hist-line { padding: 0 6px; white-space: pre-wrap; word-break: break-all; }
-.hist-line.tdel { background: color-mix(in srgb, #e5534b 18%, transparent); }
-.hist-line.tadd { background: color-mix(in srgb, #2da44e 18%, transparent); }
-.hist-line.tgap { color: var(--theme-text-secondary); text-align: center; }

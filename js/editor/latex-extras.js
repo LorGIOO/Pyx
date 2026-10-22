@@ -4,19 +4,20 @@
 //     inside the formula shown as its LIVE VALUE — the formula as it will be
 //     printed, not as it is typed;
 //   - Ctrl+click on a \ref{…} jumps to its \label (TeXstudio "Definition");
-//   - renaming \begin{x} renames its matching \end{x} (TeXstudio does it as
-//     you type);
+//   - renaming \begin{x} renames its matching \end{x} as you type, and the
+//     other way round (latex-env.js knows which one matches);
 //   - the last compile's errors and warnings underlined on their lines
 //     (TeXstudio's log markers), F8 / Shift+F8 to walk them.
 
 import { hoverTooltip, EditorView } from '@codemirror/view';
-import { Prec, Annotation, EditorState } from '@codemirror/state';
+import { Prec } from '@codemirror/state';
 import katex from 'katex';
 import { findPyExprs } from '../compile/latex-bridge.js';
 import { ghostValue } from './py-ghost.js';
 import { gv } from '../solid/stores/settingsStore.js';
 import { state as appState } from '../core/state.js';
 import { t } from '../core/i18n.js';
+import { matchingEnd, envRenameFilter } from './latex-env.js';
 
 /* ---------------- where is the math? ---------------- */
 
@@ -183,62 +184,13 @@ const refClicks = Prec.high(EditorView.domEventHandlers({
   },
 }));
 
-/* ---------------- \begin{x} renamed → \end{x} renamed ---------------- */
+/* ---------------- \begin{x} ↔ \end{x}: renaming one renames the other ---------------- */
 
-const envSync = Annotation.define();
-const BEGIN_RE = /\\begin\s*\{([^}]*)\}/g;
+export { matchingEnd };
 
-/** The \begin name around `col` of `line`: { name, from, to } (name span). */
-function beginNameAt(line, col) {
-  BEGIN_RE.lastIndex = 0;
-  let m;
-  while ((m = BEGIN_RE.exec(line))) {
-    const from = m.index + m[0].indexOf('{') + 1;
-    const to = from + m[1].length;
-    if (col >= from && col <= to) return { name: m[1], from, to };
-  }
-  return null;
-}
-
-/** Position (name span) of the \end matching a \begin{name} that ends at
- *  `after`, counting nested environments of the same name. */
-export function matchingEnd(text, after, name) {
-  const re = new RegExp(`\\\\(begin|end)\\s*\\{${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\}`, 'g');
-  re.lastIndex = after;
-  let depth = 1, m;
-  while ((m = re.exec(text))) {
-    depth += m[1] === 'begin' ? 1 : -1;
-    if (depth === 0) {
-      const from = m.index + m[0].indexOf('{') + 1;
-      return { from, to: from + name.length };
-    }
-  }
-  return null;
-}
-
-// Part of the user's OWN transaction, not a follow-up one: the history only
-// joins adjacent edits, so a separate \end change made Ctrl+Z undo the two
-// names one at a time, leaving \begin{enumerate} … \end{enumerat}.
-const renameEnv = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || tr.annotation(envSync) || gv('envRename') === false) return tr;
-  if (!tr.isUserEvent('input') && !tr.isUserEvent('delete')) return tr;
-  let edit = null;
-  tr.changes.iterChanges((fromA, toA, fromB, toB) => { edit = edit === null ? { fromA, toA, fromB, toB } : false; });
-  if (!edit) return tr; // several edits at once (a paste, a replace-all): not a rename
-  const oldLine = tr.startState.doc.lineAt(edit.fromA);
-  const old = beginNameAt(oldLine.text, edit.fromA - oldLine.from);
-  // An empty name is followed too: select "itemize", delete it, type
-  // "enumerate" — the \end has to go through \end{} on the way.
-  if (!old || edit.toA - oldLine.from > old.to) return tr;
-  const newLine = tr.newDoc.lineAt(edit.fromB);
-  const now = beginNameAt(newLine.text, edit.fromB - newLine.from);
-  if (!now || now.name === old.name || !/^[A-Za-z*@]*$/.test(now.name)) return tr;
-  const end = matchingEnd(tr.startState.doc.toString(), oldLine.from + old.to + 1, old.name);
-  if (!end) return tr;
-  const from = tr.changes.mapPos(end.from), to = tr.changes.mapPos(end.to);
-  if (tr.newDoc.sliceString(from, to) !== old.name) return tr;
-  return [tr, { changes: { from, to, insert: now.name }, sequential: true, annotations: envSync.of(true) }];
-});
+// The filter itself lives in latex-env.js, with the rest of the environment
+// logic; here it only reads the user's setting.
+const renameEnv = envRenameFilter(() => gv('envRename') !== false);
 
 /* ---------------- the last compile's problems, on their lines ---------------- */
 

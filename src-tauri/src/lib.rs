@@ -1,4 +1,3 @@
-mod history;
 mod kernel;
 mod latex;
 mod pltx;
@@ -444,6 +443,35 @@ async fn read_dir(path: String) -> Result<Vec<DirItem>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// The document source of several files at once (null where unreadable): a
+/// `.pltx` gives only its `source.tex` (pltx::read_source), anything else its
+/// text. One round trip for the whole batch — the root-document search reads
+/// every candidate in a folder.
+#[tauri::command]
+async fn read_sources(paths: Vec<String>) -> Result<Vec<Option<String>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|p| {
+                let is_pltx = p.to_lowercase().ends_with(".pltx");
+                let source = if is_pltx { pltx::read_source(p).ok()? } else { None };
+                match source {
+                    Some(s) => Some(s),
+                    // UTF-8, or else the Windows code page the app's own
+                    // reader falls back to (accents in a cp1252 file must
+                    // survive: `\input{_Preámbulo}` has to match).
+                    None => std::fs::read(p).ok().map(|b| match String::from_utf8(b) {
+                        Ok(s) => s,
+                        Err(e) => e.into_bytes().iter().map(|&c| c as char).collect(),
+                    }),
+                }
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// One searchable file of a project: its path and its text.
 #[derive(serde::Serialize)]
 struct ProjectText {
@@ -489,7 +517,13 @@ async fn project_texts(root: String) -> Result<Vec<ProjectText>, String> {
                 let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
                 let p = path.to_string_lossy().to_string();
                 let text = if ext == "pltx" {
-                    pltx::read(&p, false).ok().and_then(|r| r.source)
+                    // Only the source: the container's results and build
+                    // artifacts are never inflated for a search.
+                    match pltx::read_source(&p) {
+                        Ok(Some(s)) => Some(s),
+                        Ok(None) => std::fs::read(&path).ok().map(|b| String::from_utf8_lossy(&b).into_owned()),
+                        Err(_) => None,
+                    }
                 } else if EXTS.contains(&ext.as_str()) && !name.contains(".build.") {
                     std::fs::read(&path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
                 } else {
@@ -584,36 +618,6 @@ async fn languagetool_check(server: String, language: String, text: String, disa
     .map_err(|e| e.to_string())?
 }
 
-/* ---------- version history and Git (history.rs) ---------- */
-#[tauri::command]
-async fn history_save(path: String, content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || history::save(&path, &content)).await.map_err(|e| e.to_string())?
-}
-#[tauri::command]
-async fn history_list(path: String) -> Vec<history::Version> {
-    tauri::async_runtime::spawn_blocking(move || history::list(&path)).await.unwrap_or_default()
-}
-#[tauri::command]
-async fn history_read(path: String, id: u64) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || history::read(&path, id)).await.map_err(|e| e.to_string())?
-}
-#[tauri::command]
-async fn git_status(dir: String) -> Result<history::GitStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || history::status(&dir)).await.map_err(|e| e.to_string())
-}
-#[tauri::command]
-async fn git_init(dir: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || history::init(&dir)).await.map_err(|e| e.to_string())?
-}
-#[tauri::command]
-async fn git_commit(dir: String, message: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || history::commit(&dir, &message)).await.map_err(|e| e.to_string())?
-}
-#[tauri::command]
-async fn git_show(dir: String, rev: String, file: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || history::show(&dir, &rev, &file)).await.map_err(|e| e.to_string())?
-}
-
 #[tauri::command]
 async fn kernel_start(state: tauri::State<'_, KernelState>) -> Result<serde_json::Value, String> {
     let k = state.handle();
@@ -626,11 +630,15 @@ async fn kernel_start(state: tauri::State<'_, KernelState>) -> Result<serde_json
 async fn kernel_exec(
     state: tauri::State<'_, KernelState>,
     req: serde_json::Value,
-) -> Result<serde_json::Value, String> {
+) -> Result<tauri::ipc::Response, String> {
     let k = state.handle();
-    tauri::async_runtime::spawn_blocking(move || kernel::exec(&k, req))
+    // The kernel's response frame crosses to the window as RAW BYTES (an
+    // ArrayBuffer there, parsed once by platform.js) — never re-parsed and
+    // re-serialized on the way, which doubled the cost of every big result.
+    let raw = tauri::async_runtime::spawn_blocking(move || kernel::exec_raw(&k, req))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(raw.into_bytes()))
 }
 
 #[tauri::command]
@@ -1010,19 +1018,13 @@ pub fn run() {
             path_exists,
             read_dir,
             project_texts,
-            history_save,
-            history_list,
-            history_read,
-            git_status,
-            git_init,
-            git_commit,
-            git_show,
             languagetool_check,
             runtime_info,
             install_tectonic,
             setup_python,
             install_packages,
             file_stamps,
+            read_sources,
             kernel_start,
             kernel_exec,
             kernel_reset,

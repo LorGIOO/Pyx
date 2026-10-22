@@ -78,6 +78,7 @@ let activeTask = null;     // the PDF.js RenderTask in flight — cancellable
 let scrollRaf = 0;
 let resizeObs = null;
 let lastWidth = 0;
+let lastHeight = 0;
 let resizeTimer = null;
 
 const GAP = 14;            // vertical space between pages — must match the CSS
@@ -217,15 +218,25 @@ export function setPreviewContainer(el) {
   // Events must attach to EVERY new container element, not once per module.
   attachEvents(el);
   if (resizeObs) resizeObs.disconnect();
-  lastWidth = el.clientWidth;
+  // The pane's OUTER size (scrollbars included). The inner one also changes
+  // when a scrollbar appears or goes, and re-fitting on that made the fit
+  // chase its own scrollbar. Width AND height: "Ajustar al alto" ignored every
+  // change of height — leaving zen mode, opening the terminal, a smaller
+  // window — and the page no longer fitted.
+  lastWidth = el.offsetWidth;
+  lastHeight = el.offsetHeight;
   resizeObs = new ResizeObserver(() => {
-    if (Math.abs(container.clientWidth - lastWidth) < 2) return;
-    lastWidth = container.clientWidth;
-    if (getFitMode() === 'none') { recomputeGeometry(); scheduleVisible(); return; }
+    const w = container.offsetWidth, h = container.offsetHeight;
+    const dw = Math.abs(w - lastWidth) >= 2, dh = Math.abs(h - lastHeight) >= 2;
+    if (!dw && !dh) return;
+    lastWidth = w;
+    lastHeight = h;
+    const mode = getFitMode();
+    if (mode === 'none' || (!dw && mode === 'width')) { recomputeGeometry(); scheduleVisible(); return; }
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { fitToView(); renderVisible(); }, 120);
+    resizeTimer = setTimeout(refitKeepingPlace, 120);
   });
-  resizeObs.observe(el);
+  resizeObs.observe(el, { box: 'border-box' });
   if (currentBytes) openDoc();
 }
 
@@ -366,6 +377,32 @@ function fitToView() {
   syncWindow();
 }
 
+/** Centre the pages horizontally, from the layout model — never from
+ *  scrollWidth, which a page still being re-rasterized can inflate. */
+function centerHorizontally() {
+  if (!container) return;
+  container.scrollLeft = Math.max(0, (innerW + padX - container.clientWidth) / 2);
+}
+
+/** "Ajustar al alto": the page on screen, whole and centred in the view. */
+function showWholePage(i) {
+  if (!container || i < 0 || i >= pageCount()) return;
+  const free = container.clientHeight - pageHpx(i);
+  container.scrollTop = Math.max(0, padTop + tops[i] - Math.max(0, free / 2));
+}
+
+/** The pane changed size: fit again and stay on the same spot of the same
+ *  page (a new scale moves every page; the old scrollTop pointed elsewhere). */
+function refitKeepingPlace() {
+  if (!container || !pageCount()) return;
+  const anchor = topAnchor();
+  fitToView();
+  restoreTopAnchor(anchor);
+  centerHorizontally();
+  syncWindow();
+  renderVisible();
+}
+
 /* Rendering: the pages you can see FIRST, then the scroll buffer; canvases
  * FIRST, then the text, link and annotation layers.
  *
@@ -488,6 +525,14 @@ async function renderPage(n, wrap, s, seq) {
   // GPU-stretch them together while the crisp re-render is in flight.
   const content = document.createElement('div');
   content.className = 'pdf-page-content';
+  // The box is exactly its raster. Left to fill the page wrapper, it grew
+  // with the wrapper on every zoom and the provisional GPU stretch
+  // (placeWrap) then scaled it AGAIN: a page waiting in the scroll buffer was
+  // 1.7× too wide, the viewer gained a horizontal scrollbar and "fit" centred
+  // on that phantom width — the page slid off to one side (leaving zen mode
+  // or switching from "alto" back to "ancho").
+  content.style.width = canvas.style.width;
+  content.style.height = canvas.style.height;
   content.appendChild(canvas);
   wrap.replaceChildren(content);
   wrap.dataset.rscale = String(s);
@@ -785,12 +830,17 @@ export function zoomBy(factor) {
   }
 }
 export function setFit(mode) {
-  setFitMode(mode);
+  if (!container) { setFitMode(mode); return; }
   const page = currentVisiblePage();
+  const anchor = topAnchor();
+  setFitMode(mode);
   fitToView();
-  // Re-centre horizontally and keep the current page at the top of the view.
-  container.scrollLeft = Math.max(0, (container.scrollWidth - container.clientWidth) / 2);
-  if (mode === 'height') container.scrollTop = Math.max(0, padTop + tops[page - 1] - 8);
+  centerHorizontally();
+  // Fit to height shows the page you were on, whole and centred; fit to
+  // width keeps you on the same line of the same page.
+  if (mode === 'height' || mode === 'page') showWholePage(page - 1);
+  else restoreTopAnchor(anchor);
+  syncWindow();
   renderVisible();
 }
 export function rerender() { recomputeGeometry(); renderVisible(); }

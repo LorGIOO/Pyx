@@ -135,20 +135,6 @@ describe.skipIf(!python)('kernel protocol guarantees', { timeout: 60000 }, () =>
     expect(found.find((f) => f.cell === 1).line).toBe(3);
   });
 
-  it('the Variables panel lists data, not modules or functions, and never prints big objects', async () => {
-    await k.run('', { reset: true });
-    await k.run('import math\nfrom math import sqrt\nL = 2.5\nn = 3\nnombre = "viga"\n'
-      + 'cargas = [1, 2, 3]\n_privada = 1\ndef f(x):\n    return x\nclass C: pass\nobj = C()');
-    const vars = await k.send({ vars: true }).then((f) => f.vars);
-    const names = vars.map((v) => v.name);
-    expect(names).toEqual(['cargas', 'L', 'n', 'nombre', 'obj']);
-    const by = Object.fromEntries(vars.map((v) => [v.name, v]));
-    expect(by.L).toMatchObject({ type: 'float', value: '2.5' });
-    expect(by.cargas).toMatchObject({ type: 'list', size: '3', value: '[1, 2, 3]' });
-    expect(by.nombre).toMatchObject({ type: 'str', size: '4' });
-    expect(by.obj.type).toBe('C');
-  });
-
   it('a monkeypatched library makes the next reset ask for a new process', async () => {
     const clean = await k.run('', { reset: true });
     expect(clean.restart).toBeUndefined();

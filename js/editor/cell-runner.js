@@ -7,6 +7,7 @@ import { general, setGeneral } from '../solid/stores/settingsStore.js';
 import { createExecState } from './exec-state.js';
 import { analyzePython } from './py-deps.js';
 import { cellKey } from './cell-parse.js';
+import { setStarNames, clearStarNames, unknownStarModules } from './dep-plan.js';
 
 let reqId = 1;
 let started = false;
@@ -79,6 +80,30 @@ export async function forgetNames(names) {
   await kernelExec({ id: reqId++, forget: names });
 }
 
+/** Ask the kernel what `from X import *` binds for the modules a program
+ *  star-imports and the planner does not know yet (dep-plan.js). Call it
+ *  holding the kernel lock, before planning. Never fails: a module it cannot
+ *  answer for just keeps its cells as unanalyzable. */
+export async function ensureStarNames(program, cwd) {
+  if (!isTauri()) return;
+  const mods = unknownStarModules(program.map((p) => p.info));
+  if (!mods.length) return;
+  try {
+    await ensureKernel();
+    const r = await kernelExec({ id: reqId++, starnames: mods, cwd });
+    for (const [mod, names] of Object.entries((r && r.starnames) || {})) setStarNames(mod, names);
+  } catch (_) { /* the planner falls back to the exact rule */ }
+}
+
+/** The interpreter process changed: what it had imported, and what modules
+ *  export (a library may have been upgraded), is no longer known. */
+function forgetProcess() {
+  warmed.clear();
+  missing.clear();
+  state.missingModules = [];
+  clearStarNames();
+}
+
 /* ---------------- handcalcs output, whichever way a cell ran ----------------
    A cell may inject LaTeX into the document ONLY when it declares one of the
    handcalcs cell magics on its own line. Anything else (stdout, results,
@@ -117,7 +142,7 @@ export async function ensureKernel() {
     const path = general.pythonPath;
     const res = path ? await kernelSetPython(path) : await kernelStart();
     if (res && res.python) state.env.python = res.python;
-    started = true; warmed.clear(); missing.clear(); state.missingModules = [];
+    started = true; forgetProcess();
     nsReset(undefined);
     state.kernelStatus = 'ready';
   } catch (e) {
@@ -135,7 +160,7 @@ export async function setKernelPython(path) {
   state.kernelStatus = 'starting';
   try {
     const res = await kernelSetPython(path);
-    started = true; warmed.clear(); missing.clear(); state.missingModules = [];
+    started = true; forgetProcess();
     nsReset(undefined);
     state.kernelStatus = 'ready';
     if (res && res.python) state.env.python = res.python;
@@ -182,7 +207,7 @@ export async function interruptKernel() {
   try { await kernelInterrupt(hard); } catch (_) { /* best effort */ }
   if (hard) {
     // The process is gone: the next request respawns an empty kernel.
-    started = false; warmed.clear(); missing.clear(); state.missingModules = [];
+    started = false; forgetProcess();
     nsInvalidate();
     state.kernelStatus = 'ready';
   } else {
@@ -225,7 +250,7 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
       // inside the caller's sequence, keeps the compile's promise — every
       // result comes from the document as it is now.
       await kernelReset();
-      started = true; warmed.clear(); missing.clear(); state.missingModules = [];
+      started = true; forgetProcess();
       lastRestart = res.restart;
       if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd, watch: watch || [] });
       else res = { ...res, restarted: true };
@@ -292,20 +317,6 @@ export async function evalExpressions(exprs, { cwd, silent } = {}) {
    holds, so switching tabs does not ask twice; it is forgotten whenever the
    process is replaced. */
 const warmed = new Set();
-/** The kernel's variables for the Variables panel (JupyterLab's variable
- *  inspector): name, type, size and a short value. Read-only and cheap on
- *  the kernel side; never starts a kernel, and returns null while one is
- *  busy (the panel keeps what it showed). */
-export async function listVariables() {
-  if (!isTauri() || !started || state.kernelStatus !== 'ready') return null;
-  try {
-    const r = await withKernelLock(() => kernelExec({ id: reqId++, vars: true }));
-    return (r && Array.isArray(r.vars)) ? r.vars : [];
-  } catch (_) {
-    return null;
-  }
-}
-
 /* ---------------- completion and signatures (jedi) ----------------
    Read-only questions about the live namespace. They never start a kernel,
    never wait behind a running cell (the answer would come too late to be of
@@ -383,14 +394,14 @@ export async function restartKernel() {
     interrupting = true;
     lastInterruptAt = Date.now();
     try { await kernelInterrupt(true); } catch (_) { /* best effort */ }
-    started = false; warmed.clear(); missing.clear(); state.missingModules = [];
+    started = false; forgetProcess();
     nsInvalidate();
   }
   return withKernelLock(async () => {
     state.kernelStatus = 'starting';
     try {
       await kernelReset();
-      started = true; warmed.clear(); missing.clear(); state.missingModules = [];
+      started = true; forgetProcess();
       nsReset(undefined);
       state.kernelStatus = 'ready';
     } catch (e) {

@@ -5,7 +5,7 @@ import { state, activeDoc } from '../core/state.js';
 import { getDocContent, getViewOfDoc } from '../editor/setup.js';
 import {
   writeTextFile, readTextFile, readDir, pathExists, compileLatex, emitToWindow,
-  pltxRead, fileStamps, buildDirFor, createDir, compileCancel,
+  pltxRead, fileStamps, buildDirFor, createDir, compileCancel, readSources,
 } from '../core/platform.js';
 import { relativeTo, normalizePath, samePath } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
@@ -14,7 +14,7 @@ import { docIdOf } from '../editor/doc-id.js';
 import {
   runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
-  execKey, programOf, forgetNames,
+  execKey, programOf, forgetNames, ensureStarNames,
 } from '../editor/cell-runner.js';
 import { executePlan } from '../editor/dep-plan.js';
 import { importsOf } from './py-imports.js';
@@ -227,6 +227,11 @@ const isPltx = (p) => /\.pltx$/i.test(p || ''); // ZIP container — never write
 // as text. Every disk read in this module uses this — never readTextFile.
 async function readSourceFile(path) {
   if (isPltx(path)) {
+    // Only the document source (read_sources): the container's saved results
+    // — megabytes of figures — and its build artifacts are not inflated just
+    // to compile a chapter.
+    const [src] = await readSources([path]).catch(() => [null]);
+    if (src != null) return src;
     // A zip is read as a zip or not at all. A damaged one used to fall
     // through to a TEXT read, and the engine was handed binary garbage. Only
     // a legacy plain-text .pltx (is_zip false) is read as text; pltx_read
@@ -236,6 +241,10 @@ async function readSourceFile(path) {
   }
   return readTextFile(path);
 }
+
+// Folder scans for the root document, by document: what the folders held
+// (`sig`: every candidate's path, mtime and size) and what was found.
+const scanCache = new Map(); // doc path -> { sig, found }
 
 async function resolveRootPath(doc, content) {
   if (!doc.path || /\\documentclass/.test(content)) return doc.path;
@@ -260,17 +269,41 @@ async function resolveRootPath(doc, content) {
       if (/\\documentclass/.test(c) && needle.test(c)) { found = d.path; break; }
     }
     if (!found) {
+      // The child's folder, then the one above. A document with no root at
+      // all — a Python-only notebook, above all — used to READ every .tex
+      // and .pltx there (whole containers, saved results included) on every
+      // Mayús+Intro once the 20 s cache expired. Now the folders' listing and
+      // stamps decide: unchanged folders cost two cheap calls and no reads,
+      // and a change re-reads only the sources, in one round trip.
       const parent = dirOf(dir);
-      for (const scan of parent && parent !== dir ? [dir, parent] : [dir]) {
-        let entries = [];
-        try { entries = await readDir(scan); } catch (_) {}
+      const scans = parent && parent !== dir ? [dir, parent] : [dir];
+      const lists = await Promise.all(scans.map((d) => readDir(d).catch(() => [])));
+      const cands = [];
+      for (const entries of lists) {
         for (const en of entries) {
-          if (en.is_dir || !/\.(tex|pltx)$/i.test(en.name) || en.path === doc.path) continue;
-          let c = null;
-          try { c = await readSourceFile(en.path); } catch (_) { continue; }
-          if (/\\documentclass/.test(c) && needle.test(c)) { found = en.path; break; }
+          if (en.is_dir || !/\.(tex|pltx)$/i.test(en.name) || /\.build\.tex$/i.test(en.name)) continue;
+          if (samePath(en.path, doc.path)) continue;
+          cands.push(en.path);
         }
-        if (found) break;
+      }
+      let stamps = [];
+      try { stamps = await fileStamps(cands); } catch (_) { stamps = []; }
+      const sig = stemOf(doc.path) + '\n' + cands.map((p, i) => {
+        const s = stamps[i] || {};
+        return `${p}|${s.mtime}|${s.size}`;
+      }).join('\n');
+      const hit = scanCache.get(doc.path);
+      if (hit && hit.sig === sig && stamps.length === cands.length) {
+        found = hit.found;
+      } else {
+        let texts = [];
+        try { texts = await readSources(cands); } catch (_) { texts = []; }
+        for (let i = 0; i < cands.length && !found; i++) {
+          let c = texts[i];
+          if (c == null) { try { c = await readSourceFile(cands[i]); } catch (_) { continue; } }
+          if (/\\documentclass/.test(c) && needle.test(c)) found = cands[i];
+        }
+        scanCache.set(doc.path, { sig, found });
       }
     }
     if (found) root = found;
@@ -819,6 +852,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       // Says whether everything ran from a clean namespace, and whether a cell failed.
       const runTree = async (force) => {
         problems = '';
+        if (!force) await ensureStarNames(program, cwd);
         let plan = force ? null : nsPlan(program, { dir: cwd });
         if (plan && plan.mode !== 'full') {
           const mustRun = (i) => (plan.seeds ? plan.seeds.has(i) : plan.run.includes(i));

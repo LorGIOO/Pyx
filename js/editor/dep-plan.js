@@ -77,6 +77,40 @@ timestamp weekday isoweekday corr cov nlargest nsmallest between isin where mask
 cummax cummin explode stack unstack crosstab sample select_dtypes memory_usage equals compare
 get_xlim get_ylim get_figure get_legend_handles_labels`.split(/\s+/));
 
+/* ---------------- star imports ----------------
+   `from math import *` binds whatever the module exports — its __all__, or
+   its public names — and only the kernel can say which. It does, for
+   installed libraries (cell-runner.js ensureStarNames), and they are kept
+   here per module. A module still unknown (or the project's own, whose names
+   change as it is edited) leaves the cell as opaque as it always was. */
+const starNames = new Map(); // module -> Set of names `from module import *` binds
+export function setStarNames(mod, names) {
+  if (typeof mod === 'string' && Array.isArray(names)) starNames.set(mod, new Set(names));
+}
+export function clearStarNames() { starNames.clear(); }
+/** Star-imported modules the planner cannot follow yet. */
+export function unknownStarModules(infos) {
+  const out = new Set();
+  for (const info of infos) for (const m of info.stars || []) if (!starNames.has(m)) out.add(m);
+  return [...out];
+}
+/** A cell the planner cannot reason about: opaque, or star-importing a module
+ *  whose names it does not know. */
+function opaqueReason(info) {
+  if (info.opaque) return info.opaque;
+  if ((info.stars || []).some((m) => !starNames.has(m))) return 'from … import *';
+  return false;
+}
+/** The import that binds `n` in this cell ("numpy", "math:sqrt"), or
+ *  undefined when it is not bound by exactly one import. */
+function importTarget(info, n) {
+  const explicit = info.binds && info.binds.get(n);
+  const viaStar = (info.stars || []).filter((m) => starNames.has(m) && starNames.get(m).has(n));
+  if (explicit !== undefined && viaStar.length) return undefined;
+  if (explicit !== undefined) return explicit;
+  return viaStar.length === 1 ? `${viaStar[0]}:${n}` : undefined;
+}
+
 const randomish = (mod, path) => /(^|\.)random(\.|$)/.test(mod || '') || (path || []).includes('random');
 const topPackage = (mod) => String(mod || '').replace(/^\.+/, '').split('.')[0];
 
@@ -175,6 +209,8 @@ const RNG = '@rng';
 export function effective(info, ctx) {
   const D = new Set(info.defs);
   const U = new Set(info.reads);
+  // `from math import *` defines what the module exports.
+  for (const m of info.stars || []) for (const n of starNames.get(m) || []) D.add(n);
   const mutated = (n, strong) => {
     if (!strong && ctx.immutable.has(n)) return; // an int or a str cannot change in place
     D.add(n);
@@ -189,6 +225,33 @@ export function effective(info, ctx) {
     if (eff.rng) rng();
   }
   return { D, U };
+}
+
+/**
+ * Names that hold the SAME object whichever cell bound them: every cell that
+ * defines (or modifies) the name does it with the same import — `import
+ * numpy as np` in ten cells — and nothing else binds it. Python hands back
+ * the one module object every time, so re-running any of those imports
+ * changes nothing anyone can see.
+ *
+ * Without this, a notebook that imports what it uses in each cell — the
+ * usual way — had every cell "redefine" np: R2 pulled every later importer
+ * into the run, R3 every earlier one, and one Mayús+Intro re-ran the whole
+ * document.
+ */
+export function stableNames(infos, effects) {
+  const target = new Map(); // name -> import target | false
+  infos.forEach((info, i) => {
+    for (const n of effects[i].D) {
+      const t = info.plain && !info.plain.has(n) && !effects[i].U.has(n) ? importTarget(info, n) : undefined;
+      const prev = target.get(n);
+      if (t === undefined || (prev !== undefined && prev !== t)) target.set(n, false);
+      else if (prev === undefined) target.set(n, t);
+    }
+  });
+  const out = new Set();
+  for (const [n, t] of target) if (t) out.add(n);
+  return out;
 }
 
 /* ---------------- the plan ---------------- */
@@ -208,7 +271,7 @@ export function effective(info, ctx) {
  */
 export function planRun({ program, ran, history, forced = [], immutable = [], interactive = false, owned = null }) {
   const n = program.length;
-  const opaque = program.find((c) => c.info.opaque);
+  const opaque = program.find((c) => opaqueReason(c.info));
   const ctx = buildContext(program.map((c) => c.info), immutable);
   const effects = program.map((c) => effective(c.info, ctx));
   const all = () => Array.from({ length: n }, (_, i) => i);
@@ -221,11 +284,12 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
       && history[m].hash === program[m].hash) m++;
     const firstForced = program.findIndex((c) => forcedSet.has(c.key));
     if (m !== history.length || (firstForced >= 0 && firstForced < m)) {
-      return { mode: 'full', run: all(), forget: [], reason: `celda ${program.indexOf(opaque) + 1}: ${opaque.info.opaque}`, effects };
+      return { mode: 'full', run: all(), forget: [], reason: `celda ${program.indexOf(opaque) + 1}: ${opaqueReason(opaque.info)}`, effects };
     }
     return { mode: 'prefix', run: all().slice(m), forget: [], effects };
   }
 
+  const stable = stableNames(program.map((c) => c.info), effects);
   const definers = new Map();
   const readers = new Map();
   const push = (map, k, i) => { let a = map.get(k); if (!a) map.set(k, a = []); a.push(i); };
@@ -247,6 +311,16 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
   const forget = new Set();
   const dropName = (name) => {
     if (forget.has(name)) return;
+    const defs = stable.has(name) ? definers.get(name) || [] : [];
+    const rdrs = readers.get(name) || [];
+    if (defs.length && rdrs.every((j) => defs.some((k) => k < j))) {
+      // Still imported, above every cell that reads it: running those
+      // imports again binds what a full run would; whoever reads the name
+      // runs only if the kernel then reports a different object.
+      for (const i of defs) add(i);
+      for (const i of rdrs) add(i, false);
+      return;
+    }
     forget.add(name);
     for (const i of definers.get(name) || []) add(i);      // re-create it
     for (const i of readers.get(name) || []) add(i, false); // runs: the name is in `changed`
@@ -272,6 +346,7 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
     // Names the old version of this cell defined and the new one does not.
     if (r && r.hash !== program[i].hash && r.D) for (const d of r.D) if (!effects[i].D.has(d)) dropName(d);
     for (const d of effects[i].D) {
+      if (stable.has(d)) continue; // the same module again: nothing to propagate
       for (const j of readers.get(d) || []) if (j > i) add(j, false);   // R1
       for (const j of definers.get(d) || []) if (j > i) add(j, false);  // R2
     }
@@ -283,6 +358,10 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
         for (const k of defs) if (k < i && !ran.has(program[k].key)) add(k);
       }
       if (!defs.some((k) => k >= i)) continue;                         // R3
+      // A stable name imported above already holds the object a full run
+      // would give this cell. (With no import above, a full run would fail
+      // here: that case keeps the rule below.)
+      if (stable.has(u) && defs.some((k) => k < i)) continue;
       let prev = -1;
       for (const k of defs) if (k < i && k > prev) prev = k;
       if (prev >= 0) add(prev);
@@ -293,7 +372,7 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
     }
   }
   forget.delete(RNG);
-  return { mode: 'graph', run: [...S].sort((a, b) => a - b), seeds, forget: [...forget], effects };
+  return { mode: 'graph', run: [...S].sort((a, b) => a - b), seeds, forget: [...forget], effects, stable };
 }
 
 const anyIn = (names, set) => { for (const n of names) if (set.has(n)) return true; return false; };
@@ -312,6 +391,15 @@ const anyIn = (names, set) => { for (const n of names) if (set.has(n)) return tr
 export async function executePlan(plan, io) {
   const changed = new Set(plan.forget || []);
   if (plan.forget && plan.forget.length) await io.forget(plan.forget);
+  // "Unchanged" compares the namespace before and after the cell ran. That
+  // is what the cells reading the name last saw only when this cell is the
+  // name's ONLY definer: with several, the value in the namespace may come
+  // from another one (`import cmath as mm` below the reader, `import math as
+  // mm` above it), and the reader saw something else. So a name defined in
+  // more than one cell always counts as changed.
+  const definerCount = new Map();
+  for (const e of plan.effects || []) for (const d of e.D) definerCount.set(d, (definerCount.get(d) || 0) + 1);
+  const trustUnchanged = (n) => definerCount.get(n) === 1;
   const ran = [];
   const skipped = [];
   const order = plan.run;
@@ -325,7 +413,7 @@ export async function executePlan(plan, io) {
     if (!res || res.ok === false) return { ok: false, ran, skipped, failedAt: i, notRun: order.slice(k + 1) };
     ran.push(i);
     const same = new Set(res.unchanged || []);
-    for (const n of e.D) if (!same.has(n)) changed.add(n);
+    for (const n of e.D) if (!(same.has(n) && trustUnchanged(n))) changed.add(n);
   }
   return { ok: true, ran, skipped, notRun: [] };
 }
@@ -338,16 +426,20 @@ export async function executePlan(plan, io) {
 export function downstreamOf(infos, changed, immutable = []) {
   const out = new Set();
   if (!changed.size) return out;
-  if (infos.some((i) => i.opaque)) {
+  if (infos.some((i) => opaqueReason(i))) {
     const first = Math.min(...changed);
     infos.forEach((_, i) => { if (i > first && !changed.has(i)) out.add(i); });
     return out;
   }
   const ctx = buildContext(infos, immutable);
   const eff = infos.map((i) => effective(i, ctx));
+  const stable = stableNames(infos, eff); // re-importing np outdates nothing
   const users = new Map(); // name -> cells that read or define it
   eff.forEach((e, i) => {
-    for (const n of [...e.U, ...e.D]) { let a = users.get(n); if (!a) users.set(n, a = new Set()); a.add(i); }
+    for (const n of [...e.U, ...e.D]) {
+      if (stable.has(n)) continue;
+      let a = users.get(n); if (!a) users.set(n, a = new Set()); a.add(i);
+    }
   });
   const queue = [...changed];
   const seen = new Set(changed);

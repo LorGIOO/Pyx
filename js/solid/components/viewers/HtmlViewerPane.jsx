@@ -1,5 +1,5 @@
 import { onMount } from 'solid-js';
-import { createRichFrame } from '../../../editor/rich-frame.js';
+import { createRichFrame, tableCss } from '../../../editor/rich-frame.js';
 
 // Interactive HTML output (plotly, bokeh, video, big tables…) as a document
 // tab. Rendered in a SANDBOXED iframe so its scripts execute — hover
@@ -16,14 +16,13 @@ export default function HtmlViewerPane(props) {
     const surface = v('--theme-surface', '#fff');
     const text = v('--theme-text', '#111');
     const border = v('--theme-border', '#d0d0d0');
-    const header = v('--theme-panel-bg', '#f0f0f0');
+    // The same table look as in the cell (rich-frame.js), with the header
+    // pinned while a long table scrolls in the tab.
     return `
       body { margin: 12px; background: ${surface}; color: ${text};
              font: 13px system-ui, sans-serif; overflow: auto; }
-      table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-      th, td { border: 1px solid ${border}; padding: 4px 12px; text-align: right; }
-      th { background: ${header}; position: sticky; top: 0; }
-      tr:nth-child(even) td { background: color-mix(in srgb, ${surface} 92%, ${text} 8%); }
+      ${tableCss(text, border)}
+      thead th { position: sticky; top: 0; background: ${surface}; box-shadow: inset 0 -1px ${border}; }
       video, img, audio { max-width: 100%; }
     `;
   };

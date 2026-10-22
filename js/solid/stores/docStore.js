@@ -18,7 +18,6 @@ import {
   pltxWrite,
   askDialog,
   messageDialog,
-  historySave,
 } from '../../core/platform.js';
 import { general } from './settingsStore.js';
 import { baseName } from '../../core/paths.js';
@@ -102,8 +101,6 @@ async function readSource(path) {
  * at all, and cell-outputs.js caps how much figure data may go in so the file
  * stays close to the size of its text. */
 async function writeSource(path, content, doc) {
-  // Every save keeps a version (Historial). Never in the way of the save.
-  historySave(path, content).catch(() => {});
   if (isPltxPath(path)) {
     let outputs = null;
     if (doc && general.saveOutputs !== false) {

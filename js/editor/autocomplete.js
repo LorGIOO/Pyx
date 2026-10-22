@@ -2,7 +2,8 @@
 // Accepting a LaTeX command that takes an argument inserts the braces ready to
 // type inside (\subsection → \subsection{▮}), TeXstudio/VSCode-style, via
 // CodeMirror snippet completions (${} marks where the cursor lands).
-import { snippetCompletion, snippet } from '@codemirror/autocomplete';
+import { snippetCompletion, snippet, startCompletion } from '@codemirror/autocomplete';
+import { insertEnvSkeleton, envIsClosed } from './latex-env.js';
 import LATEX_DATA from '../data/latex-completions.json';
 import { parseCells } from './cell-parse.js';
 import { analyzePython } from './py-deps.js';
@@ -92,12 +93,18 @@ function envOption(row, loaded) {
   });
 }
 
-// First/primary \begin option: a GENERIC environment where YOU type the name,
-// and \end mirrors it automatically (linked ${1}). Listed before the predefined
-// environments so you can always introduce a custom one.
-const beginGeneric = snippetCompletion('\\begin{${1:entorno}}\n\t${2}\n\\end{${1}}', {
+// First/primary \begin option: a GENERIC environment where YOU type the name.
+// ONE cursor, in \begin{▮}: the \end follows what you type (the rename filter,
+// latex-extras.js) and Enter or Tab step into the body (latex-env.js). It used
+// to be a snippet with a linked field — two cursors, which outlived the name:
+// Enter split both lines and everything typed afterwards came out twice.
+const beginGeneric = {
   label: '\\begin{ }', detail: 'entorno personalizado (escribe el nombre)', type: 'class', boost: 60,
-});
+  apply: (view, c, from, to) => {
+    insertEnvSkeleton(view, from, to);
+    startCompletion(view); // the environment names, for the name being typed
+  },
+};
 
 /** Commands the documents define themselves (\newcommand, \DeclareMathOperator, \def). */
 function userCommands(text) {
@@ -281,11 +288,44 @@ function consumeBrace(view, to) {
 // Picking a \begin{NAME} also opens the body and adds \end{NAME} — with the
 // arguments and body the data file gives it (a table's column spec, a
 // figure's \includegraphics and \caption…), Tab moving between them.
+//
+// When that \begin is already closed (renaming an existing environment, or
+// the generic "\begin{ }" skeleton), only the NAME changes — the \end follows
+// through the rename filter. Inserting the whole template there added a
+// second \end{NAME}.
 function beginApply(env) {
   const row = ENV_ROWS.get(env) || [env, '', '', '', '\t${}'];
   const tpl = envTemplate(row).slice('\\begin{'.length);
   const base = snippet(tpl);
-  return (view, c, from, to) => base(view, c, from, consumeBrace(view, to));
+  return (view, c, from, to) => {
+    const line = view.state.doc.lineAt(from);
+    const close = line.text.indexOf('}', to - line.from);
+    if (close >= 0) {
+      const nameTo = line.from + close;
+      const oldName = view.state.doc.sliceString(from, nameTo);
+      if (/^[A-Za-z*@]*$/.test(oldName) && envIsClosed(view.state.doc.toString(), nameTo + 1, oldName)) {
+        // Still the empty "\begin{ }" skeleton (a blank body line, then its
+        // \end): replace it whole with this environment's template, so a
+        // figure still brings its \includegraphics and \caption.
+        const doc = view.state.doc;
+        const body = line.number + 2 <= doc.lines ? doc.line(line.number + 1) : null;
+        const endLine = body ? doc.line(line.number + 2) : null;
+        if (line.text.slice(close + 1).trim() === '' && body && body.text.trim() === ''
+          && endLine.text.trim() === `\\end{${oldName}}`) {
+          base(view, c, from, endLine.to);
+          return;
+        }
+        // An environment with content: only the name changes.
+        view.dispatch({
+          changes: { from, to: nameTo, insert: env },
+          selection: { anchor: nameTo + env.length - oldName.length + 1 }, // past the `}`
+          userEvent: 'input.complete',
+        });
+        return;
+      }
+    }
+    base(view, c, from, consumeBrace(view, to));
+  };
 }
 function endApply(env) {
   return (view, c, from, to) => {

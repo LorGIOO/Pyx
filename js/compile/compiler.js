@@ -15,10 +15,14 @@ import {
   runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
   execKey, programOf, forgetNames, ensureStarNames, resolveNotebook, runLinkEntry,
-  saveNotebookValues, notebookNote, nsHasRun,
+  saveNotebookValues, notebookNote, nsHasRun, captureScope, scopeCurrent,
 } from '../editor/cell-runner.js';
 import { executePlan } from '../editor/dep-plan.js';
-import { notebookPath, loadNotebook, documentReads, documentDefs } from '../editor/notebooks.js';
+import { scopeExpressions, applyScopeTags, occurrencesOf, stripScopeTag } from './py-scope.js';
+import { setScopedValues, refreshGhostIn } from '../editor/py-ghost.js';
+import {
+  notebookPath, loadNotebook, documentReads, documentDefs, LINK_CMD_SRC, hasLinkCmd,
+} from '../editor/notebooks.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
 import { setBuildMaps, persistBuildMaps, ensureBuildMaps } from './build-maps.js';
@@ -334,7 +338,7 @@ export async function activeRootDir() {
 
 /* ---- multi-file gather / run / build (document order, depth ≤ 3) ---- */
 const INPUT_SRC = '\\\\(input|include)\\s*\\{([^}]+)\\}';
-const NOTEBOOK_RE = /\\pynotebook\s*\{([^}]+)\}/g;
+const NOTEBOOK_RE = new RegExp(LINK_CMD_SRC, 'g'); // \pynotebook{…} / \pyfile{…}
 const isPyxPath = (p) => !/\.tex$/i.test(p); // per-FILE rule: .tex = pure LaTeX…
 // …UNLESS it actually contains Python cells: a .tex with %#python cells is
 // processed (cells run, \py{} resolved) just like a .pltx, so cells can be
@@ -435,15 +439,21 @@ function analyzeFile(path, content) {
   const inVerb = createVerbatimTracker();
   const inputRe = new RegExp(INPUT_SRC, 'g');
   let inCell = false, code = [], headerLn = 0, lineNo = 0;
-  let cellIdx = -1, cellId = null;
+  let cellIdx = -1, cellId = null, cellAt = 0;
   let notebooks = 0;
+  // Offset of the current line in `content`: every event records where it
+  // stands, so a \py{} can be placed between them (scopeExpressions).
+  let pos = 0;
+  let next = 0;
 
   for (const line of content.split(/\r?\n/)) {
     lineNo++;
+    pos = next;
+    next = pos + line.length + (content.charCodeAt(pos + line.length) === 13 ? 2 : 1);
     const verb = inCell ? false : inVerb(line);
     if (!inCell) {
       if (!verb && line.indexOf('%#') >= 0 && line.trim().startsWith('%#python')) {
-        inCell = true; code = []; headerLn = lineNo;
+        inCell = true; code = []; headerLn = lineNo; cellAt = pos;
         // Same SHAPE as the cells the editor's parser produces ({id, index}),
         // so `cellKey` resolves identically on both paths — the compiler files
         // a result under exactly the key the editor reads it back from.
@@ -461,11 +471,11 @@ function analyzeFile(path, content) {
         if (!verb) {
           inputRe.lastIndex = 0;
           let m;
-          while ((m = inputRe.exec(code))) events.push({ kind: 'input', raw: m[2] });
+          while ((m = inputRe.exec(code))) events.push({ kind: 'input', raw: m[2], at: pos + m.index });
           // \pynotebook{cuaderno.ipynb}: the notebook's code cells run HERE.
-          if (code.indexOf('\\pynotebook') >= 0) {
+          if (hasLinkCmd(code)) {
             NOTEBOOK_RE.lastIndex = 0;
-            while ((m = NOTEBOOK_RE.exec(code))) { events.push({ kind: 'notebook', raw: m[1].trim() }); notebooks++; }
+            while ((m = NOTEBOOK_RE.exec(code))) { events.push({ kind: 'notebook', raw: m[1].trim(), at: pos + m.index }); notebooks++; }
           }
         }
       }
@@ -478,7 +488,7 @@ function analyzeFile(path, content) {
         code: body, headerLn, id: cellId, index: cellIdx, codeHash: hashString(body),
       };
       cells.push(cell);
-      events.push({ kind: 'cell', cell });
+      events.push({ kind: 'cell', cell, at: cellAt });
       continue;
     }
     code.push(line);
@@ -494,12 +504,14 @@ function analyzeFile(path, content) {
   const isPyx = isPyxPath(path) || cells.length > 0 || notebooks > 0;
   const pyExprs = isPyx ? findPyExprs(content) : [];
   const conds = isPyx ? collectPyIfConds(content) : [];
-  const hasPyIf = isPyx && findPyIfExprs(content).length > 0;
+  const pyIfs = isPyx ? findPyIfExprs(content) : [];
+  const hasPyIf = pyIfs.length > 0;
   return {
     events,
     cells,
     isPyx,
     pyExprs,
+    pyIfs,
     conds,
     verbEnvs: verbUse.envs,
     verbStyles: verbUse.styles,
@@ -823,14 +835,14 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     const isPyx = rootF.isPyx;
     const pythonOnly = isPyx && !/\\documentclass|\\begin\s*\{document\}/.test(rootContent);
     const pyFiles = [...files.keys()].filter((p) => files.get(p).isPyx);
-    const pyValExprs = pythonOnly ? [] : [
+    let pyValExprs = pythonOnly ? [] : [
       ...new Set(pyFiles.flatMap((p) => files.get(p).pyExprs.map((e) => e.expr))),
     ];
     // \pyif{cond}{…}{…} conditions are evaluated as bool(cond) alongside \py{}.
-    const condExprs = pythonOnly ? [] : [
+    let condExprs = pythonOnly ? [] : [
       ...new Set(pyFiles.flatMap((p) => files.get(p).conds)),
     ];
-    const exprs = [...pyValExprs, ...condExprs.map(pyifKey)];
+    let exprs = [...pyValExprs, ...condExprs.map(pyifKey)];
     let valueMap = {};
     const nbFiles = [...files.values()].filter((f) => f.notebooks);
     const anyCells = pyFiles.some((p) => files.get(p).cells.length > 0)
@@ -841,7 +853,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     const nbNotes = []; // where each linked notebook's values came from (log)
     for (const f of nbFiles) {
       for (const [raw, nb] of f.notebooks) {
-        if (nb.error) nbProblems += `\n[\\pynotebook{${raw}}] No se pudo leer el cuaderno: ${nb.error}`;
+        if (nb.error) nbProblems += `\n[${baseName(nb.path || raw)}] No se pudo leer: ${nb.error}`;
       }
     }
 
@@ -863,6 +875,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
          Runs inside the kernel lock: resolving a notebook asks the kernel. */
       let runOrder = [];
       let program = [];
+      let scope = { scopes: {}, captures: new Map() }; // py-scope.js
       const nbRan = new Set();   // notebooks whose cells ran in this compile
       const nbSaved = new Set(); // ... and whose values were then saved
       const prepare = async (fresh) => {
@@ -876,34 +889,57 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         runOrder = [];
         const seen = new Set();
         const placed = new Set(); // a notebook linked twice takes part once, where it first appears
+        const visits = []; // [path, entries before the file] — where each \py{} stands
         const walkOrder = (path) => {
           if (seen.has(path)) return;
           seen.add(path);
           const f = files.get(path);
           if (!f) return;
+          visits.push([path, runOrder.length]);
           let n = 0;
           for (const ev of f.events) {
-            if (ev.kind === 'input') {
-              const child = f.raws.get(ev.raw);
-              if (child) walkOrder(child);
-              continue;
-            }
-            if (ev.kind === 'notebook') {
-              // The notebook's values (one entry) or its code cells, here.
-              const nb = f.notebooks && f.notebooks.get(ev.raw);
-              const plan = nb && !placed.has(nb.path) && nbPlans.get(nb.path);
-              if (nb) placed.add(nb.path);
-              for (const e of (plan && plan.entries) || []) {
-                runOrder.push({ path: nb.path, file: f, cell: e.cell, nth: e.cell.nth, notebook: true, link: e.link, info: e.info });
-              }
-              continue;
-            }
-            runOrder.push({ path, file: f, cell: ev.cell, nth: ++n });
+            walkEvent(path, f, ev, () => ++n);
+            ev.end = runOrder.length;
           }
+        };
+        const walkEvent = (path, f, ev, nth) => {
+          if (ev.kind === 'input') {
+            const child = f.raws.get(ev.raw);
+            if (child) walkOrder(child);
+            return;
+          }
+          if (ev.kind === 'notebook') {
+            // The notebook's values (one entry) or its code cells, here.
+            const nb = f.notebooks && f.notebooks.get(ev.raw);
+            const plan = nb && !placed.has(nb.path) && nbPlans.get(nb.path);
+            if (nb) placed.add(nb.path);
+            for (const e of (plan && plan.entries) || []) {
+              runOrder.push({ path: nb.path, file: f, cell: e.cell, nth: e.cell.nth, notebook: true, link: e.link, info: e.info });
+            }
+            return;
+          }
+          runOrder.push({ path, file: f, cell: ev.cell, nth: nth() });
         };
         walkOrder(rootPath);
         phase.total = runOrder.filter((e) => !e.link).length;
         program = programOf(runOrder.map((e) => ({ key: execKey(e.path, null, e.cell), cell: e.cell, info: e.info })));
+        // \py{x} reads the x of the nearest file or cell above it when x is
+        // given more than once (py-scope.js): mark those, in a tagged copy of
+        // each file's text, and re-list the expressions to evaluate.
+        for (const f of files.values()) f.tagged = null;
+        if (!pythonOnly) {
+          const occ = visits.flatMap(([p, start]) => occurrencesOf(p, files.get(p), start));
+          const sc = scopeExpressions(program, occ);
+          scope = sc;
+          for (const [p, list] of sc.tags) files.get(p).tagged = applyScopeTags(files.get(p).content, list);
+        }
+        // The expressions to evaluate are the ones the build will look up —
+        // marked or not — every time (a second prepare may mark none).
+        const fileOf = (p) => files.get(p).tagged || files.get(p).content;
+        if (pythonOnly) return;
+        pyValExprs = [...new Set(pyFiles.flatMap((p) => findPyExprs(fileOf(p)).map((e) => e.expr)))];
+        condExprs = [...new Set(pyFiles.flatMap((p) => collectPyIfConds(fileOf(p))))];
+        exprs = [...pyValExprs, ...condExprs.map(pyifKey)];
       };
 
       /* Run only the cells a change reaches.
@@ -924,6 +960,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       // Says whether everything ran from a clean namespace, and whether a cell failed.
       const runTree = async (force) => {
         problems = '';
+        phase.ran = 0; // "N ejecutadas de M" speaks of THIS run (a self-heal is a second one)
         await prepare(force);
         if (!force) await ensureStarNames(program, cwd);
         let plan = force ? null : nsPlan(program, { dir: cwd });
@@ -951,6 +988,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
               plan = null;
             }
           }
+          // An entry whose copy of what it gave a name is missing (a \py{}
+          // between two definers needs it): run it once more to keep it.
+          for (const k of scope.captures.keys()) if (!scopeCurrent(k)) forced.push(k);
           if (plan && forced.length) plan = nsPlan(program, { dir: cwd, forced });
         }
         let fromScratch = false;
@@ -992,6 +1032,17 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
                     /\b(line|línea)\s+(\d+)/gi, (a, w, m2) => `${w} ${cell.headerLn + +m2}`)}`
                 : res.stderr;
               cellProblem(`${baseName(path)} · celda ${nth}`, emsg, el);
+            } else {
+              const keep = new Set(scope.captures.get(program[i].key) || []);
+              // A linked file run here: what its cell gave the file's names,
+              // NOW — a file linked further down may give them other values
+              // before its snapshot is taken (saveNotebookValues).
+              const nbp = notebook ? nbPlans.get(path) : null;
+              if (nbp && nbp.mode === 'run') {
+                const want = new Set([...(nbp.names || []), ...(nbp.extras || [])]);
+                for (const d of program[i].info.defs) if (want.has(d)) keep.add(d);
+              }
+              if (keep.size) await captureScope(program[i].key, [...keep], cwd);
             }
             return res;
           },
@@ -1030,7 +1081,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         const { fromScratch, failed } = await runTree(fresh);
 
         // 2) Resolve \py{...} expressions against that exact namespace.
-        if (exprs.length && !cancelRequested) valueMap = await evalExpressions(exprs, { cwd });
+        if (exprs.length && !cancelRequested) valueMap = await evalExpressions(exprs, { cwd, scopes: scope.scopes });
 
         // Self-heal: if an incremental run met a namespace that had drifted
         // (the kernel was restarted between compiles, a cell was interrupted),
@@ -1056,7 +1107,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // of that cell, and running everything again cannot change it.
         if (!cancelRequested && !fromScratch && !failed && exprs.some((x) => valueMap[x] && !valueMap[x].ok)) {
           await runTree(true);
-          if (exprs.length) valueMap = await evalExpressions(exprs, { cwd });
+          if (exprs.length) valueMap = await evalExpressions(exprs, { cwd, scopes: scope.scopes });
         }
       });
       phase.cells = performance.now() - tCells;
@@ -1073,12 +1124,35 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         if (bad.length) {
           nbProblems += `\n[${name}] No se pudieron copiar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`;
         }
-        if (nbRan.has(nbPath) && nbPlan.mode === 'run' && !nbSaved.has(nbPath) && nbPlan.names && nbPlan.names.length) {
+        // (A notebook that FAILED is not saved, on purpose: its error is listed.)
+        if (nbRan.has(nbPath) && nbPlan.mode === 'run' && !nbSaved.has(nbPath) && nbPlan.names && nbPlan.names.length
+          && nsHasRun(nbPlan.entries)) {
           nbNotes.push(`${name}: no se pudieron guardar sus valores; la próxima vez se tomarán de Jupyter si está abierto`);
         }
       }
     }
     problems += nbProblems;
+
+    // The editor's ghost value of a \py{} that reads the value of the file or
+    // cell above it shows THAT value, as the PDF does (py-ghost.js).
+    for (const [p, f] of files) {
+      const od = state.documents.find((d) => !d.kind && samePath(d.path, p));
+      const key = od ? od.path : p;
+      if (!f.tagged) { setScopedValues(key, []); continue; }
+      const orig = findPyExprs(f.content);
+      const tagged = findPyExprs(f.tagged);
+      const count = new Map();
+      const list = [];
+      orig.forEach((o, i) => {
+        const n = count.get(o.expr) || 0;
+        count.set(o.expr, n + 1);
+        const t = tagged[i];
+        if (t && t.expr !== o.expr && valueMap[t.expr]) list.push({ expr: o.expr, ordinal: n, value: valueMap[t.expr] });
+      });
+      setScopedValues(key, list);
+      const v = od ? getViewOfDoc(od.id) : null;
+      if (v) refreshGhostIn(v);
+    }
 
     if (cancelRequested) {
       state.lastLog = '===== Avisos de Pyx =====\n[Pyx] Compilación detenida por el usuario.';
@@ -1090,17 +1164,17 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       state.lastLog =
         (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') +
         'Documento sin LaTeX: se han ejecutado las celdas Python (no se genera PDF).'
-        + (nbNotes.length ? `\n\nCuadernos:\n${nbNotes.map((n) => `  ${n}`).join('\n')}` : '');
+        + (nbNotes.length ? `\n\nArchivos vinculados:\n${nbNotes.map((n) => `  ${n}`).join('\n')}` : '');
       state.lastCompileOk = !problems;
       return;
     }
 
     for (const e of pyValExprs) {
-      if (valueMap[e] && !valueMap[e].ok) problems += `\n[\\py{${e}}] ${valueMap[e].value}`;
+      if (valueMap[e] && !valueMap[e].ok) problems += `\n[\\py{${stripScopeTag(e)}}] ${valueMap[e].value}`;
     }
     for (const c of condExprs) {
       const v = valueMap[pyifKey(c)];
-      if (v && !v.ok) problems += `\n[\\pyif{${c}}] ${v.value}`;
+      if (v && !v.ok) problems += `\n[\\pyif{${stripScopeTag(c)}}] ${v.value}`;
     }
 
     // 3) Write a processed .build copy of every file that needs one (cells,
@@ -1198,7 +1272,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // The build is CLEAN LaTeX (cells removed, \py{} substituted): it
         // compiles standalone in TeXstudio. Removing lines shifts everything
         // below a cell, so keep the build↔source map for SyncTeX and the log.
-        const neut = neutralizeCells(f.content, f.renders);
+        const neut = neutralizeCells(f.tagged || f.content, f.renders);
         processed = resolvePyText(resolvePyIf(neut.text, valueMap), valueMap);
         if (neut.srcLines) lineMaps[mapKey] = neut.srcLines;
       }
@@ -1410,7 +1484,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       + `Total         : ${Math.round(performance.now() - t0)} ms`
       + (fresh ? '\nModo          : desde cero (kernel nuevo, sin datos auxiliares)' : '')
       + (pythonNote ? `\nPython        : ${pythonNote}` : '')
-      + nbNotes.map((n) => `\nCuaderno      : ${n}`).join('');
+      + nbNotes.map((n) => `\nVinculado     : ${n}`).join('');
     // Three outcomes, not two. A PDF that LaTeX produced while recovering from
     // errors is not a failed compile — the document IS there, with its
     // problems listed — and painting it with the same red as "no PDF at all"

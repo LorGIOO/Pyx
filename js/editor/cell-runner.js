@@ -142,6 +142,9 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   try {
     r = await notebookLink('fetch', {
       notebook: nbPath, names, extra: extras, codeHash, required: defs ? names : [], cwd,
+      // Its code: where a function's definition is found when its kernel
+      // cannot give it (kernel.py _from_cells).
+      cells: cells.map((c) => c.code),
     });
   } catch (e) {
     r = { source: null, reason: String((e && e.message) || e) };
@@ -155,7 +158,9 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   if (ranHere && r.source !== 'jupyter') return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
   const got = r.names || {};
   const avail = names.filter((n) => Object.prototype.hasOwnProperty.call(got, n));
-  const token = hashString(avail.map((n) => `${n}:${got[n]}`).join('|'));
+  // What its values ARE — the names the document uses and what their
+  // functions need (r.deps): a helper edited in Jupyter loads them again.
+  const token = hashString([...avail, '|', ...(r.deps || [])].map((n) => `${n}:${got[n]}`).join('|'));
   const modules = new Map();
   for (const n of avail) if (String(got[n]).startsWith('module:')) modules.set(n, String(got[n]).slice(7));
   const cell = {
@@ -171,6 +176,8 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   };
 }
 
+const kindOf = (p) => (/\.py$/i.test(String(p)) ? 'archivo' : 'cuaderno');
+
 /** One line for the log: where a linked notebook's values came from. */
 export function notebookNote(nbPath, plan, ran) {
   const name = String(nbPath).split(/[\\/]/).pop();
@@ -180,10 +187,10 @@ export function notebookNote(nbPath, plan, ran) {
     const n = plan.names.length;
     const what = `${n} variable${n === 1 ? '' : 's'}`;
     const t = plan.ms != null ? ` en ${Math.round(plan.ms)} ms` : '';
-    if (plan.source === 'jupyter') return `${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el cuaderno`;
+    if (plan.source === 'jupyter') return `${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el ${kindOf(nbPath)}`;
     const when = plan.when ? ` del ${new Date(plan.when * 1000).toLocaleString()}` : '';
     const of = plan.from === 'jupyter' ? `de Jupyter${when}` : `de la última ejecución en Pyx${when}`;
-    return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el cuaderno`;
+    return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el ${kindOf(nbPath)}`;
   }
   if (!ran) return `${name}: ya cargado en esta sesión, sin ejecutar nada`;
   const why = plan.reason ? ` (${plan.reason})` : '';
@@ -196,12 +203,13 @@ export async function runLinkEntry(entry, cwd, meta = {}) {
   const key = meta.key || entry.key;
   let res;
   try {
-    res = await notebookLink('apply', { notebook: entry.cell.notebook, names: entry.link.names, cwd });
+    res = await notebookLink('apply', { notebook: entry.cell.notebook, names: entry.link.names, key, cwd });
   } catch (e) {
     res = { ok: false, error: String((e && e.message) || e) };
   }
   if (res && res.ok) {
     nsRecord(key, entry.cell.codeHash, cwd, [], meta.D);
+    markScope(key); // the apply kept what it gave each name (kernel _SCOPES)
     const bad = Object.entries(res.errors || {});
     return {
       ok: true,
@@ -223,10 +231,40 @@ export async function saveNotebookValues(nbPath, plan, cwd) {
   try {
     return await notebookLink('save', {
       notebook: nbPath, names: plan.names, extra: plan.extras || [], codeHash: plan.codeHash, reads, cwd,
+      // What each of its cells gave its names when it ran (captureScope):
+      // the file's own values, not what a later file left in their place.
+      scopes: plan.entries.map((e) => e.key),
+      cells: plan.entries.map((e) => e.cell.code),
     });
   } catch (_) {
     return null;
   }
+}
+
+/* ---------------- what each cell or file gave a name, where it stands ----------------
+   \py{x} between two linked files (or cells) that both define x shows the
+   x of the one ABOVE it (compiler.js scopeExpressions). The kernel keeps,
+   per entry, the values it gave those names (`_SCOPES`); this remembers
+   which entries' copies belong to the run the ledger describes, so an entry
+   whose copy is missing — or older than its last run — is run again (a
+   linked file's values: just loaded again). */
+const scopeMarks = new Map(); // entry key -> the ledger record it was taken from
+function markScope(key) {
+  const r = ns.state().ran.get(key);
+  if (r) scopeMarks.set(key, r);
+}
+/** Is the kernel's copy of what this entry gave its names current? */
+export function scopeCurrent(key) {
+  const r = ns.state().ran.get(key);
+  return !!r && scopeMarks.get(key) === r;
+}
+/** Right after a cell ran: keep what it gave these names, for the \py{} below it. */
+export async function captureScope(key, names, cwd) {
+  if (!isTauri() || !names || !names.length) return;
+  try {
+    await kernelExec({ id: reqId++, nblink: 'capture', key, names, cwd });
+    markScope(key);
+  } catch (_) { /* the \py{} falls back to the final value */ }
 }
 
 /** Delete names from the namespace (a removed cell's, before its readers re-run). */
@@ -440,7 +478,7 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
  * Evaluate a list of \py{...} expressions in the kernel namespace.
  * @returns {Promise<Record<string,{ok:boolean,value:string}>>}
  */
-export async function evalExpressions(exprs, { cwd, silent } = {}) {
+export async function evalExpressions(exprs, { cwd, silent, scopes } = {}) {
   if (!isTauri() || !exprs.length) return {};
   await ensureKernel();
   // `silent` (the editor's live ghost values) must not flip the status indicator
@@ -450,7 +488,7 @@ export async function evalExpressions(exprs, { cwd, silent } = {}) {
   // run every half second and shift the values the next compile prints.
   if (!silent) state.kernelStatus = 'busy';
   try {
-    const res = await kernelExec({ id: reqId++, evals: exprs, cwd, pure: !!silent });
+    const res = await kernelExec({ id: reqId++, evals: exprs, cwd, pure: !!silent, scopes: scopes || {} });
     if (!silent) state.kernelStatus = 'ready';
     return res.evals || {};
   } catch (e) {
@@ -480,6 +518,23 @@ const warmed = new Set();
 function kernelIdle() {
   return isTauri() && started && state.kernelStatus === 'ready' && !kernelSequenceActive();
 }
+/** The variables a linked notebook or script offers right now ({name: type}):
+ *  its live Jupyter kernel's, else its snapshot's — for \py{} completion.
+ *  Never waits behind a running cell; cached for a few seconds. */
+const linkedCache = new Map(); // path -> { t, names }
+export async function linkedNames(nbPath) {
+  const hit = linkedCache.get(nbPath);
+  if (hit && Date.now() - hit.t < 5000) return hit.names;
+  if (!kernelIdle()) return hit ? hit.names : {};
+  let names = {};
+  try {
+    const r = await kernelExec({ id: reqId++, nblink: 'names', notebook: nbPath });
+    names = (r && r.names) || {};
+  } catch (_) { /* static names only */ }
+  linkedCache.set(nbPath, { t: Date.now(), names });
+  return names;
+}
+
 export async function kernelComplete(code, line, col, cwd) {
   if (!kernelIdle()) return null;
   try {

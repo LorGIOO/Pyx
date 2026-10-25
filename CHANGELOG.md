@@ -3,6 +3,69 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.6.4] — 2026-10-25
+
+Los cuadernos de Jupyter vinculados funcionan como las celdas: una función
+del cuaderno se puede llamar desde `\py{}` (con todo lo que usa por dentro),
+una tabla de pandas sale como tabla, y también se pueden vincular archivos
+`.py`.
+
+### Añadido
+
+- **Archivos `.py` vinculados: `\pyfile{calculos/datos.py}`** (o
+  `\pynotebook{…}`, que acepta los dos tipos). Un `.py` se ejecuta entero o por
+  bloques `# %%` (VS Code, Spyder, PyCharm, Jupytext); con bloques, solo se
+  repiten los que cambian. Igual que un cuaderno, no se vuelve a ejecutar si
+  hay valores que tomar.
+- **El valor del archivo más próximo.** Si dos archivos vinculados (o dos
+  celdas) dan valor a la misma variable, cada `\py{}` y `\pyif{}` muestra el
+  del que tiene encima, como al leer un cuaderno de arriba abajo; las celdas
+  que hay entre ellos, también. Un `\py{}` anterior a todos sigue mostrando el
+  valor final. El valor gris del editor coincide con el del PDF.
+- **`\py{df}` con una tabla de pandas** (`DataFrame` o `Series`) escribe un
+  `tabular` completo: números alineados a la derecha, celdas vacías para los
+  valores que faltan, el índice cuando dice algo. Más de 500 filas dan un
+  aviso en lugar de una tabla interminable.
+- **Autocompletado dentro de `\py{…}`**: al escribir `\py{` se abre la lista de
+  todas las variables disponibles, las de las celdas y las de los cuadernos y
+  archivos vinculados (lo que definen en su código y lo que tiene su kernel de
+  Jupyter), con el archivo de cada una. Funciona en cualquier punto de la
+  expresión y, tras un punto, ofrece los atributos del valor.
+- El manual de usuario en PDF se publica junto a los instaladores de cada
+  versión.
+
+### Corregido
+
+- **Una función de un cuaderno vinculado fallaba al llamarla desde `\py{}`**
+  (`\py{filas_ln(rumbo_estudio, len(dict_lognormal[rumbo_estudio]))}`): Pyx
+  copiaba la función pero no lo que usa por dentro (otras funciones,
+  diccionarios, `np`). Ahora se lleva todo lo que necesita, a un espacio de
+  nombres propio del cuaderno (no se mezcla con el del documento). También
+  viajan las clases definidas en el cuaderno y los objetos de esas clases, y
+  una función cuyo código Jupyter no sabe dar se toma del propio cuaderno. Los
+  valores guardados con la 1.6.3, que no traían esas dependencias, se
+  descartan una vez.
+- Si se edita en Jupyter una función auxiliar, lo que depende de ella en el
+  documento se vuelve a calcular (antes se daba por igual).
+- **Pegar.** El código con sangría de tabuladores (LaTeX o Python copiado de
+  otro editor) y el código copiado de GitHub o de una web de documentación ya
+  no se convierten en un `tabular` de texto escapado. Se quitan los caracteres
+  invisibles (espacios de anchura cero, guiones blandos, BOM, marcas de
+  dirección) y las ligaduras de los PDF; en una celda de Python, los espacios
+  de no separación, que Python rechaza. Una celda pegada junto a la original
+  recibe otro identificador: antes compartían la salida. Lo mismo al pegar con
+  el botón de la cinta.
+- Dos celdas con el mismo identificador (por duplicar una línea, por ejemplo)
+  se separan solas: la copia recibe uno nuevo.
+- Los valores de un archivo ejecutado en Pyx se guardaban con lo que quedaba al
+  final de la compilación, que podía ser lo que otro archivo posterior había
+  puesto en la misma variable.
+- El registro decía «5 ejecutadas de 2» cuando la compilación se reparaba sola.
+- Un documento sin celdas propias, solo con archivos vinculados, no mostraba
+  los valores grises de `\py{}`.
+- El terminal integrado perdía en Windows las líneas con acentos que algunos
+  programas escriben en la codificación de la consola.
+
 ## [1.6.3] — 2026-10-22
 
 Un cuaderno de Jupyter vinculado ya no se vuelve a ejecutar: el documento
@@ -1030,6 +1093,7 @@ ha cambiado, y que abrir un informe no dependa de tener Python instalado.
 - Instaladores para Windows, macOS y Linux.
 - Soporte de interfaz en inglés.
 
+[1.6.4]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.4
 [1.6.3]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.3
 [1.6.2]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.2
 [1.6.0]: https://github.com/LorGIOO/Pyx/releases/tag/v1.6.0

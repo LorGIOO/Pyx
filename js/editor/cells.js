@@ -158,9 +158,23 @@ async function activeCwd() {
 export function ensureCellIds(view) {
   const cells = parseCells(view.state);
   const changes = [];
+  const seen = new Set();
   for (const c of cells) {
-    if (c.id) continue;
     const header = view.state.doc.line(c.headerLine);
+    if (c.id && !seen.has(c.id)) { seen.add(c.id); continue; }
+    if (c.id) {
+      // A copy of another cell (pasted, duplicated line): two cells sharing an
+      // id share one output. The later one gets its own.
+      const m = /\bid\s*=\s*([A-Za-z0-9_-]{1,32})/.exec(header.text);
+      if (m) {
+        let fresh = randomId();
+        while (seen.has(fresh)) fresh = randomId();
+        seen.add(fresh);
+        const from = header.from + m.index + m[0].length - m[1].length;
+        changes.push({ from, to: from + m[1].length, insert: fresh });
+      }
+      continue;
+    }
     const at = header.from + header.text.indexOf(CELL_OPEN) + CELL_OPEN.length;
     changes.push({ from: at, insert: ` id=${randomId()}` });
   }

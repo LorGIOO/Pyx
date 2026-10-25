@@ -42,7 +42,7 @@ import {
   toggleLineComment, smartEnter, smartTab, moveCellOrLineUp, moveCellOrLineDown,
 } from './commands.js';
 import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from './bookmarks.js';
-import { calcCompletions } from './autocomplete.js';
+import { calcCompletions, pyBraceTrigger } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
 import { pyLint } from './py-lint.js';
 import { latexLint } from './latex-lint-ext.js';
@@ -299,8 +299,11 @@ export function createDocState(docId, content) {
       latexExtras,
       // Python cells: signatures while typing a call, docs on hover (jedi).
       pySignatures,
-      // A table copied from Excel or a web page pastes as a tabular.
+      // A table copied from Excel or a web page pastes as a tabular; any other
+      // paste is cleaned of what should not travel (paste-table.js).
       pasteTables,
+      // \py{ opens the list of variables there are (cells, notebooks, .py).
+      pyBraceTrigger,
       // Alt+← / Alt+→: back and forward through the places you jumped from.
       cursorHistory,
       // Cell shortcuts (run / run+advance / new cell) and save are DYNAMIC:

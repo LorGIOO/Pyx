@@ -10,7 +10,7 @@ import { pathExists, readBinaryFile, openExternal } from '../core/platform.js';
 import { dirOf, joinPath, baseName } from '../core/paths.js';
 
 const FILE_CMD =
-  /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting|pynotebook)\s*(?:\[[^\]]*\])?\{([^{}]+)\}/g;
+  /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting|pynotebook|pyfile)\s*(?:\[[^\]]*\])?\{([^{}]+)\}/g;
 
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 
@@ -44,7 +44,7 @@ async function openHit(hit) {
   if (!/\.[a-z0-9]+$/i.test(p)) {
     if (hit.cmd === 'includegraphics') candidates.push(p + '.pdf', p + '.png', p + '.jpg', p + '.jpeg');
     else if (hit.cmd === 'bibliography' || hit.cmd === 'addbibresource') candidates.push(p + '.bib');
-    else if (hit.cmd === 'pynotebook') candidates.push(p + '.ipynb');
+    else if (hit.cmd === 'pynotebook' || hit.cmd === 'pyfile') candidates.push(p + '.ipynb', p + '.py');
     else candidates.push(p + '.tex', p + '.pltx');
   }
   for (const c of candidates) {

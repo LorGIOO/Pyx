@@ -988,16 +988,24 @@ fn run_command(app: tauri::AppHandle, command: String, cwd: Option<String>) -> R
     if let Some(out) = child.stdout.take() {
         let a = app.clone();
         std::thread::spawn(move || {
-            for line in BufReader::new(out).lines().flatten() {
-                let _ = a.emit("terminal:line", line);
+            // Bytes, not `lines()`: a line in the console's code page (not
+            // UTF-8, as Windows tools print accents) was dropped; and an I/O
+            // error ends the loop instead of spinning on it.
+            for line in BufReader::new(out).split(b'\n').map_while(Result::ok) {
+                let text = String::from_utf8_lossy(&line);
+                let _ = a.emit("terminal:line", text.trim_end_matches('\r').to_string());
             }
         });
     }
     if let Some(err) = child.stderr.take() {
         let a = app.clone();
         std::thread::spawn(move || {
-            for line in BufReader::new(err).lines().flatten() {
-                let _ = a.emit("terminal:line", line);
+            // Bytes, not `lines()`: a line in the console's code page (not
+            // UTF-8, as Windows tools print accents) was dropped; and an I/O
+            // error ends the loop instead of spinning on it.
+            for line in BufReader::new(err).split(b'\n').map_while(Result::ok) {
+                let text = String::from_utf8_lossy(&line);
+                let _ = a.emit("terminal:line", text.trim_end_matches('\r').to_string());
             }
         });
     }

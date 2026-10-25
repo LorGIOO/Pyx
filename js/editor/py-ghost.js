@@ -11,10 +11,28 @@ import { evalExpressions } from './cell-runner.js';
 import { parseCells, cellAtLine, refreshCells } from './cells.js';
 import { state as appState } from '../core/state.js';
 import { general } from '../solid/stores/settingsStore.js';
+import { docIdOf } from './doc-id.js';
+import { hasLinkCmd } from './notebooks.js';
 
 // expr -> { ok, value }. Module-level so every pane shares the same values.
 const cache = new Map();
 const refreshGhost = StateEffect.define();
+
+/* A \py{x} that reads the x of the file or cell ABOVE it (x given twice:
+   compiler.js / py-scope.js) does not show the namespace's final x: it shows
+   what the last compile computed for it there. path -> Map("expr
+ordinal" -> value),
+   the ordinal counting that same expression's occurrences in the file. */
+const scoped = new Map();
+export function setScopedValues(path, list) {
+  if (!path) return;
+  if (!list || !list.length) { scoped.delete(path); return; }
+  scoped.set(path, new Map(list.map((x) => [`${x.expr}\n${x.ordinal}`, x.value])));
+}
+/** Redraw the ghosts of a view (after a compile set new scoped values). */
+export function refreshGhostIn(view) {
+  try { view.dispatch({ effects: refreshGhost.of(null) }); } catch (_) { /* destroyed */ }
+}
 
 /** The last live value of a \py{} expression, if it has one (read-only, for
  *  the math hover preview). */
@@ -75,9 +93,17 @@ function ghostDecos(view) {
       && pos < view.state.doc.line(c.endLine).from;
   };
   const b = [];
+  const docId = docIdOf(view.state);
+  const doc = appState.documents.find((d) => d.id === docId);
+  const sc = doc && doc.path ? scoped.get(doc.path) : null;
   for (const e of exprs) {
     if (inCell(e.start)) continue;
-    const v = cache.get(e.expr);
+    let v = cache.get(e.expr);
+    if (sc) {
+      const ordinal = findPyExprs(view.state.doc.sliceString(0, e.start)).filter((x) => x.expr === e.expr).length;
+      const at = sc.get(`${e.expr}\n${ordinal}`);
+      if (at) v = at;
+    }
     if (!v || !v.ok) continue;
     // A typeset value (pint, sympy) reads better without its math wrapper.
     let val = String(v.value).replace(/^\\ensuremath\{([\s\S]*)\}$/, '$1');
@@ -124,7 +150,7 @@ export const pyGhost = ViewPlugin.fromClass(class {
     const d = appState.documents[appState.activeIndex];
     if (!d || d.kind) return;
     // Only documents that actually have cells — a pure .tex has no kernel values.
-    if (!parseCells(view.state).length) return;
+    if (!parseCells(view.state).length && !hasLinkCmd(view.state.doc.toString())) return;
     // Evaluate only what can actually be shown (the viewport), not every \py{}
     // in the file: on a thousand-page document that was thousands of kernel
     // round-trips for values nobody could see.

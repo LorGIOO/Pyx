@@ -3,11 +3,14 @@
 // type inside (\subsection → \subsection{▮}), TeXstudio/VSCode-style, via
 // CodeMirror snippet completions (${} marks where the cursor lands).
 import { snippetCompletion, snippet, startCompletion } from '@codemirror/autocomplete';
+import { EditorView } from '@codemirror/view';
 import { insertEnvSkeleton, envIsClosed } from './latex-env.js';
 import LATEX_DATA from '../data/latex-completions.json';
 import { parseCells } from './cell-parse.js';
 import { analyzePython } from './py-deps.js';
-import { kernelComplete } from './cell-runner.js';
+import { kernelComplete, linkedNames } from './cell-runner.js';
+import { notebookRefs, notebookPath, loadNotebook } from './notebooks.js';
+import { pyExprBefore } from './py-expr.js';
 import { state as appState } from '../core/state.js';
 import { dirOf, joinPath } from '../core/paths.js';
 import { getDocContent } from './setup.js';
@@ -190,7 +193,6 @@ const CITE_CMDS = 'cite|citep|citet|citeauthor|citeyear|textcite|parencite|footc
 const reRef = new RegExp(`\\\\(?:${REF_CMDS})\\{([^}]*)$`);
 const reCite = new RegExp(`\\\\(?:${CITE_CMDS})\\{([^}]*)$`);
 const reEnv = /\\(begin|end)\{([a-zA-Z*]*)$/;
-const rePy = /\\py\{([\w.]*)$/; // \py{ → live kernel variable names
 const reGls = /\\(?:gls|Gls|GLS|glspl|Glspl|GLSpl|glsdesc|glssymbol|glsname|glstext|acrshort|acrlong|acrfull|Acrshort|Acrlong|Acrfull|ac|Ac|acs|acl|acf|acp|acsp|aclp|acfp)\{([^}]*)$/;
 
 // Glossary entries and acronyms defined in the open documents (and .tex/.bib
@@ -420,6 +422,77 @@ async function pythonCompletions(context) {
 
 export { cellSource };
 
+/* ---------- inside \py{…} / \pyif{…}: the variables there are ----------
+   Typing in \py{ lists every variable the document can use there — its own
+   cells' and those of the notebooks and .py files it links (\pynotebook,
+   \pyfile), what they define in their code and what their live Jupyter kernel
+   or saved values hold — exactly as in a cell. After a dot, the attributes of
+   the live value (jedi). Works anywhere in the expression, not only right
+   after the brace: \py{filas_ln(rumbo_▮ completes too. */
+
+const linkedStatic = new Map(); // notebook path -> { cells, names: Map }
+async function linkedFileNames(state) {
+  const out = new Map(); // name -> detail
+  const refs = notebookRefs(state.doc.toString());
+  if (!refs.length) return out;
+  const root = await activeCwdQuick();
+  for (const ref of refs) {
+    const p = notebookPath(root, ref.raw);
+    if (!p) continue;
+    const file = p.split(/[\\/]/).pop();
+    try {
+      const cells = await loadNotebook(p);
+      let hit = linkedStatic.get(p);
+      if (!hit || hit.cells !== cells) {
+        const names = new Map();
+        for (const c of cells) for (const d of analyzePython(c.code).defs) names.set(d, file);
+        hit = { cells, names };
+        linkedStatic.set(p, hit);
+      }
+      for (const [n, f] of hit.names) if (!out.has(n)) out.set(n, f);
+    } catch (_) { /* unreadable: nothing from it */ }
+    try {
+      const live = await linkedNames(p);
+      for (const [n, t] of Object.entries(live || {})) if (!out.has(n)) out.set(n, t ? `${file} · ${t}` : file);
+    } catch (_) { /* no kernel */ }
+  }
+  return out;
+}
+
+async function pyExprCompletions(context, expr) {
+  const { pos } = context;
+  const word = /[A-Za-z_]\w*$/.exec(expr);
+  const typed = word ? word[0] : '';
+  const afterDot = /\.\s*[A-Za-z_]?\w*$/.test(expr) && /\.\w*$/.test(expr);
+  if (afterDot) {
+    // Attributes: jedi on the live value (the kernel's namespace).
+    const res = await kernelComplete(expr, 1, expr.length, await activeCwdQuick());
+    if (context.aborted || !res || !res.items.length) return null;
+    const first = res.items[0];
+    const done = Math.max(0, first.name.length - first.complete.length);
+    return { from: pos - done, options: res.items.map(jediOption), validFor: /^\w*$/ };
+  }
+  if (!typed && !context.explicit && !/[({,[\s]$|^$/.test(expr)) return null;
+  const opts = new Map();
+  for (const n of docDefinedNames(context.state)) opts.set(n, { label: n, type: 'variable', detail: 'documento', boost: 40 });
+  for (const [n, detail] of await linkedFileNames(context.state)) {
+    if (!opts.has(n)) opts.set(n, { label: n, type: /función|function/.test(detail) ? 'function' : 'variable', detail, boost: 35 });
+  }
+  if (context.aborted) return null;
+  // What the live namespace holds too (names run in this session).
+  const res = await kernelComplete(expr, 1, expr.length, await activeCwdQuick());
+  if (res && res.items.length) {
+    for (const it of res.items) {
+      // Dunders and jedi's own interpreter names only when asked for (`\py{_`).
+      if (opts.has(it.name) || it.type === 'keyword' || (it.name.startsWith('_') && !typed.startsWith('_'))
+        || /^jedi\b/.test(it.module || '')) continue;
+      opts.set(it.name, jediOption(it));
+    }
+  }
+  if (!opts.size) return null;
+  return { from: pos - typed.length, options: [...opts.values()], validFor: /^\w*$/ };
+}
+
 export async function calcCompletions(context) {
   if (inCell(context.state, context.pos)) return pythonCompletions(context);
 
@@ -443,15 +516,10 @@ export async function calcCompletions(context) {
     const opts = (m[1] === 'begin' ? beginEnvOptions() : endEnvOptions()).filter((o) => !partial || o.label !== partial);
     return { from: context.pos - partial.length, options: opts, validFor: /^[a-zA-Z*]*$/ };
   }
-  if ((m = before.match(rePy))) {
-    const names = [...docDefinedNames(context.state)];
-    if (names.length) {
-      return {
-        from: context.pos - m[1].length,
-        options: names.map((n) => ({ label: n, type: 'variable' })),
-        validFor: /^[\w.]*$/,
-      };
-    }
+  const pyExpr = pyExprBefore(before);
+  if (pyExpr !== null) {
+    const res = await pyExprCompletions(context, pyExpr);
+    if (res) return res;
   }
 
   // Otherwise: complete a command after a backslash.
@@ -459,3 +527,14 @@ export async function calcCompletions(context) {
   if (!cmd) return null;
   return { from: cmd.from, options: latexOptions(), validFor: /^\\[a-zA-Z]*$/ };
 }
+
+/* Typing (or completing) `\py{` / `\pyif{` opens the variable list at once,
+   the way typing a `.` opens the attributes in a cell. */
+export const pyBraceTrigger = EditorView.updateListener.of((u) => {
+  if (!u.docChanged || !u.transactions.some((t) => t.isUserEvent('input'))) return;
+  const sel = u.state.selection.main;
+  if (!sel.empty) return;
+  const line = u.state.doc.lineAt(sel.head);
+  const before = line.text.slice(Math.max(0, sel.head - line.from - 8), sel.head - line.from);
+  if (/\\py(?:if)?\{$/.test(before)) setTimeout(() => startCompletion(u.view), 0);
+});

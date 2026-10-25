@@ -56,6 +56,7 @@ import re
 import ast
 import time
 import types
+import builtins
 import ctypes
 import base64
 import queue
@@ -2346,6 +2347,65 @@ def _texesc_text(s):
     return "".join(rep.get(c, c) for c in s)
 
 
+_DF_MAX_ROWS = 500
+
+
+def _df_cell(v):
+    """One cell of a typeset DataFrame: numbers under \\py{}'s strict rules
+    (a missing value is an empty cell, not an error), anything else as text."""
+    import math
+    _np = sys.modules.get("numpy")
+    if v is None:
+        return ""
+    if _np is not None and isinstance(v, _np.generic):
+        v = v.item()
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return "" if math.isnan(v) else ("\\ensuremath{\\infty}" if v > 0 else "\\ensuremath{-\\infty}")
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return _fmt(v)
+    try:
+        if v != v:  # pandas NA / NaT
+            return ""
+    except Exception:
+        pass
+    return _texesc_text(_safe_str(v))
+
+
+def _df_tabular(obj):
+    """A pandas DataFrame (or Series) as a tabular — what \\py{df} gives, like
+    the table Jupyter shows under a cell. Numeric columns align right; the
+    index is shown when it says something (not 0, 1, 2…)."""
+    pd = sys.modules["pandas"]
+    df = obj.to_frame() if isinstance(obj, pd.Series) else obj
+    if len(df) > _DF_MAX_ROWS:
+        raise ValueError(
+            "la tabla tiene %d filas; muestra una parte, por ejemplo \\py{df.head(20)}, "
+            "o usa \\py{tabletex(df)} si de verdad quieres todas" % len(df))
+    idx = df.index
+    show_index = not (isinstance(idx, pd.RangeIndex) and idx.start == 0 and idx.step == 1 and idx.name is None)
+
+    def head(c):
+        return " / ".join(_texesc_text(_safe_str(x)) for x in c) if isinstance(c, tuple) else _texesc_text(_safe_str(c))
+
+    cols = list(df.columns)
+    spec = []
+    if show_index:
+        spec.append("l")
+    for c in cols:
+        try:
+            num = pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_bool_dtype(df[c])
+        except Exception:
+            num = False
+        spec.append("r" if num else "l")
+    header = ([head(idx.name) if idx.name is not None else ""] if show_index else []) + [head(c) for c in cols]
+    lines = ["\\begin{tabular}{%s}" % "".join(spec), "\\hline", " & ".join(header) + " \\\\", "\\hline"]
+    for i, row in enumerate(df.itertuples(index=False, name=None)):
+        cells = ([head(idx[i])] if show_index else []) + [_df_cell(v) for v in row]
+        lines.append(" & ".join(cells) + " \\\\")
+    lines += ["\\hline", "\\end{tabular}"]
+    return "\n".join(lines)
+
+
 def _fmt(value):
     """Format an evaluated \\py{} value for SAFE insertion into LaTeX.
 
@@ -2453,6 +2513,10 @@ def _fmt(value):
                 return "\\ensuremath{%s}" % _sp.latex(value)
         except Exception:
             pass
+    # A pandas table is typeset as a table, the way Jupyter shows it.
+    _pd = sys.modules.get("pandas")
+    if _pd is not None and isinstance(value, (_pd.DataFrame, _pd.Series)):
+        return _df_tabular(value)
     if isinstance(value, str):
         # A str is the user's own LaTeX and goes in as is — except an
         # unescaped `%` on a one-line value: TeX would take it for a comment
@@ -3175,6 +3239,10 @@ def _reset_session(cwd):
     _MAGICS_ACTIVE.clear()
     _LAST_SHOWN[0] = None
     NS.clear()
+    # What linked files and cells gave each name at their place belongs to
+    # the session that is ending.
+    _SCOPES.clear()
+    _NB_NS.clear()
     _init_user_ns()
     if _REAL is not None:
         try:
@@ -3190,10 +3258,37 @@ def _reset_session(cwd):
     _reset_library_state()
 
 
+# `\py{x #@s3}`: the compile marks an expression whose names must be read
+# where it stands in the document — x defined by two linked files (or cells)
+# and this \py{} between them. `scopes` says, for each mark, which file or
+# cell gave each name its value there (_SCOPES).
+_SCOPE_TAG = re.compile(r"\s?#@(s\d+)")
+
+
+def _scoped(expr, scopes):
+    """(code, globals) to evaluate `expr` with: NS, or NS with the names its
+    mark reads from the file or cell above the \\py{}."""
+    m = _SCOPE_TAG.search(expr)
+    if not m:
+        return expr, NS
+    code = _SCOPE_TAG.sub("", expr)
+    over = {}
+    for name, k in ((scopes or {}).get(m.group(1)) or {}).items():
+        sc = _SCOPES.get(k)
+        if sc is not None and name in sc:
+            over[name] = sc[name]
+    if not over:
+        return code, NS
+    g = dict(NS)
+    g.update(over)
+    return code, g
+
+
 def _evals(req):
     """\\py{...} values. One bad expression never costs the others — not even
     a SystemExit or an exception whose message cannot be printed."""
     results = {}
+    scopes = req.get("scopes") or {}
     pure = bool(req.get("pure"))
     interrupted = False
     sink = _CellIO()
@@ -3209,8 +3304,9 @@ def _evals(req):
                                  "value": "se calcula al compilar (la expresión modifica datos)"}
                 continue
             try:
+                code, g = _scoped(expr, scopes)
                 with _USER_CODE:
-                    value = _fmt(eval(expr, NS, NS))
+                    value = _fmt(eval(code, g, g))
                 results[expr] = {"ok": True, "value": value}
             except KeyboardInterrupt:
                 interrupted = True
@@ -3390,58 +3486,187 @@ _JUPYTER_PROBE = ("(globals().get('__vsc_ipynb_file__') or globals().get('__sess
 _JUPYTER_COUNT = "'%d:%s' % (__import__('os').getpid(), get_ipython().execution_count)"
 
 # Run in the user's Jupyter kernel, in a PRIVATE namespace (nothing is left
-# in theirs; silent and outside the history): each requested variable is
-# pickled to `OUT` unless its hash is the one Pyx already holds; modules go by
-# name, functions and classes of the notebook by source.
-_JUPYTER_TAKE = r'''
-import pickle, hashlib, json, os, sys, types, inspect, time, builtins
+# in theirs; silent and outside the history) — and in Pyx's own kernel after
+# Pyx ran a notebook itself (_nb_save). Each requested variable is written to
+# `OUT` unless its hash is the one Pyx already holds; modules go by name,
+# functions and classes of the notebook by source.
+#
+# WITH WHAT THEY NEED: a function of the notebook reads other variables of the
+# notebook when it is called (`def filas_ln(r, n): ... dict_lognormal[r] ...
+# np.log(...)`), and a value of a class defined in the notebook needs that
+# class. Copying only the names the document writes gave a function that
+# failed with NameError the moment \py{} called it. Every item records the
+# names it depends on ("deps", read from its source or its pickle), and those
+# are taken too, transitively — role "dep": they go to the notebook's own
+# namespace in Pyx, not to the document's.
+_NB_COLLECT = r'''
+import pickle, pickletools, hashlib, json, os, sys, types, inspect, time, builtins, ast, textwrap, linecache
 res = {}
-t_end = time.perf_counter() + BUDGET
-for i, n in enumerate(list(NAMES) + list(EXTRA)):
-    extra = i >= len(NAMES)
-    if extra and time.perf_counter() > t_end:
-        break
-    if n not in NS:
-        if not extra and not hasattr(builtins, n):
-            res[n] = {"missing": True}
-        continue
-    v = NS[n]
-    if isinstance(v, types.ModuleType):
-        res[n] = {"module": v.__name__}
-        continue
-    if isinstance(v, (types.FunctionType, type)) and getattr(v, "__module__", None) == "__main__":
-        try:
-            src = inspect.getsource(v)
-            res[n] = {"source": src, "hash": hashlib.blake2b(src.encode("utf-8"), digest_size=16).hexdigest()}
+CELLS = globals().get("CELLS") or []
+
+def _class_source(cls):
+    # inspect cannot find a class typed in a Jupyter cell (its module has no
+    # file); its methods know their cell, and the cell holds the class.
+    for v in list(vars(cls).values()):
+        f = getattr(v, "__func__", v)
+        f = getattr(f, "fget", f)
+        code = getattr(f, "__code__", None)
+        if code is None:
             continue
+        lines = linecache.getlines(code.co_filename)
+        if not lines:
+            continue
+        try:
+            tree = ast.parse("".join(lines))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.ClassDef) and node.name == cls.__name__
+                    and node.lineno <= code.co_firstlineno <= (node.end_lineno or node.lineno)):
+                start = min([d.lineno for d in node.decorator_list] + [node.lineno])
+                return "".join(lines[start - 1:node.end_lineno])
+    raise OSError("sin código fuente")
+
+def _from_cells(name):
+    # The definition in the notebook's own code (Pyx sends its cells): the
+    # last top-level `def name` / `class name`, decorators included.
+    found = None
+    for code in CELLS:
+        lines = code.splitlines(True)
+        clean = "".join("pass\n" if l.lstrip().startswith(("%", "!")) else l for l in lines)
+        try:
+            tree = ast.parse(clean)
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
+                start = min([d.lineno for d in node.decorator_list] + [node.lineno])
+                found = "".join(lines[start - 1:node.end_lineno])
+    if found is None:
+        raise OSError("sin código fuente")
+    return found
+
+def _source(v):
+    try:
+        return inspect.getsource(v)
+    except Exception:
+        pass
+    if isinstance(v, type):
+        try:
+            return _class_source(v)
         except Exception:
             pass
+    return _from_cells(v.__name__)
+t_end = time.perf_counter() + BUDGET
+SKIP = {"In", "Out", "get_ipython", "exit", "quit", "display"}
+
+def _src_deps(src):
     try:
-        if extra and sys.getsizeof(v) > LIMIT:
+        tree = ast.parse(textwrap.dedent(src))
+    except SyntaxError:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id not in out:
+            out.append(node.id)
+    return out
+
+def _pickle_deps(b):
+    # Classes and functions of __main__ a pickle refers to by name.
+    if b"__main__" not in b:
+        return []
+    out, strs = [], []
+    try:
+        for op, arg, _pos in pickletools.genops(b):
+            if isinstance(arg, str):
+                strs.append(arg)
+            if op.name == "STACK_GLOBAL" and len(strs) >= 2 and strs[-2] == "__main__":
+                out.append(strs[-1])
+            elif op.name in ("GLOBAL", "INST") and isinstance(arg, str) and arg.startswith("__main__ "):
+                out.append(arg.split(" ", 1)[1])
+    except Exception:
+        pass
+    return [n.split(".")[0] for n in out]
+
+# What the document needs (and what that needs) first; the optional extras
+# after, so a name both needed and extra is never cut by the extras' limits.
+queue = [(n, "need") for n in NAMES]
+later = [(n, "extra") for n in EXTRA]
+seen = set()
+k = 0
+while True:
+    if k >= len(queue):
+        if later is None:
+            break
+        queue.extend(later)
+        later = None
+        continue
+    n, role = queue[k]
+    k += 1
+    if n in seen or not isinstance(n, str):
+        continue
+    seen.add(n)
+    extra = role == "extra"
+    if extra and time.perf_counter() > t_end:
+        continue
+    if n not in NS:
+        if role == "need" and not hasattr(builtins, n):
+            res[n] = {"missing": True, "role": role}
+        continue
+    v = NS[n]
+    item = None
+    deps = []
+    if isinstance(v, types.ModuleType):
+        item = {"module": v.__name__}
+    elif isinstance(v, (types.FunctionType, type)) and getattr(v, "__module__", None) == "__main__":
+        try:
+            src = textwrap.dedent(_source(v))
+            item = {"source": src, "hash": hashlib.blake2b(src.encode("utf-8"), digest_size=16).hexdigest()}
+            deps = _src_deps(src)
+        except Exception:
+            item = None
+    if item is None:
+        try:
+            if extra and sys.getsizeof(v) > LIMIT:
+                continue
+            b = pickle.dumps(v, protocol=5)
+        except Exception as e:
+            if not extra:
+                res[n] = {"error": "%s: %s" % (type(e).__name__, e), "role": role}
             continue
-        b = pickle.dumps(v, protocol=5)
-    except Exception as e:
-        if not extra:
-            res[n] = {"error": "%s: %s" % (type(e).__name__, e)}
-        continue
-    if extra and len(b) > LIMIT:
-        continue
-    h = hashlib.blake2b(b, digest_size=16).hexdigest()
-    if KNOWN.get(n) == h:
-        res[n] = {"hash": h, "same": True, "type": type(v).__name__}
-        continue
-    f = os.path.join(OUT, "v%d-%s.pkl" % (i, h))
-    with open(f, "wb") as fh:
-        fh.write(b)
-    res[n] = {"hash": h, "file": f, "type": type(v).__name__}
-with open(os.path.join(OUT, "manifest.json"), "w", encoding="utf-8") as fh:
-    json.dump(res, fh)
+        if extra and len(b) > LIMIT:
+            continue
+        h = hashlib.blake2b(b, digest_size=16).hexdigest()
+        deps = _pickle_deps(b)
+        if getattr(type(v), "__module__", None) == "__main__":
+            deps.append(type(v).__name__)
+        if KNOWN.get(n) == h:
+            item = {"hash": h, "same": True, "type": type(v).__name__}
+        else:
+            f = os.path.join(OUT, "v-%s.pkl" % h)
+            if not os.path.exists(f):
+                with open(f, "wb") as fh:
+                    fh.write(b)
+            item = {"hash": h, "file": f, "type": type(v).__name__}
+    deps = [d for d in deps if d != n and d in NS and d not in SKIP and not d.startswith("_")]
+    item["deps"] = deps
+    item["role"] = role
+    res[n] = item
+    for d in deps:
+        if d not in seen:
+            queue.append((d, "extra" if extra else "dep"))
+if WRITE:
+    with open(os.path.join(OUT, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
 '''
+_JUPYTER_TAKE = _NB_COLLECT
 
 # The notebook's OTHER values ("extra": not used by the document today) are
 # kept in the snapshot too when they are small, so a \py{} added later is
 # served with Jupyter closed instead of running the notebook. Bounded in size
 # per value and in total time, so a compile never pays for them.
+# 2: items carry what they need ("deps"): a function travels with its helpers.
+_NB_FORMAT = 2
 _NB_EXTRA_LIMIT = 1_000_000  # bytes per value
 _NB_EXTRA_BUDGET = 0.3       # seconds for all of them
 
@@ -3704,8 +3929,8 @@ def _jupyter_find(nb):
         return by_cwd[0][0], "Jupyter"
     for other, _p in by_cwd:
         other.close()
-    return None, ("el kernel de Jupyter de este cuaderno está ocupado" if busy
-                  else "Jupyter no tiene abierto este cuaderno")
+    return None, ("su kernel de Jupyter está ocupado" if busy
+                  else "no está abierto en Jupyter")
 
 
 def _nb_write_meta(d, meta):
@@ -3765,7 +3990,7 @@ def _nb_fetch(req):
                 # the ones staged here. No pickling, no files: just the question.
                 if cur.get("codeHash") != code_hash:
                     cur["codeHash"] = code_hash
-                    _nb_write_meta(d, {"notebook": nb, "codeHash": code_hash, "source": "jupyter",
+                    _nb_write_meta(d, {"v": _NB_FORMAT, "notebook": nb, "codeHash": code_hash, "source": "jupyter",
                                        "label": cur.get("label") or label, "when": cur.get("when") or time.time(),
                                        "items": cur["items"]})
                 live = True
@@ -3779,8 +4004,9 @@ def _nb_fetch(req):
                 except OSError:
                     pass
                 code = ("exec(%r, {'__builtins__': __builtins__, 'NS': globals(), 'NAMES': %r, 'EXTRA': %r, "
-                        "'KNOWN': %r, 'OUT': %r, 'LIMIT': %d, 'BUDGET': %r})") % (
-                    _JUPYTER_TAKE, names, extra, known, d, _NB_EXTRA_LIMIT, _NB_EXTRA_BUDGET)
+                        "'KNOWN': %r, 'OUT': %r, 'LIMIT': %d, 'BUDGET': %r, 'WRITE': True, 'CELLS': %r})") % (
+                    _JUPYTER_TAKE, names, extra, known, d, _NB_EXTRA_LIMIT, _NB_EXTRA_BUDGET,
+                    [c for c in (req.get("cells") or []) if isinstance(c, str)])
                 mid = kc.execute(code)
                 reply = kc.reply(mid, float(req.get("timeout") or 600))
                 status = ((reply or {}).get("content") or {}).get("status")
@@ -3792,16 +4018,17 @@ def _nb_fetch(req):
                 items = {}
                 for n, r in man.items():
                     if r.get("same"):
-                        items[n] = dict(staged["items"][n])
+                        items[n] = dict(staged["items"][n], deps=r.get("deps") or [], role=r.get("role"))
                     elif r.get("file"):
-                        items[n] = {"hash": r["hash"], "path": r["file"], "type": r.get("type")}
+                        items[n] = {"hash": r["hash"], "path": r["file"], "type": r.get("type"),
+                                    "deps": r.get("deps") or [], "role": r.get("role")}
                     else:
                         items[n] = r
                 now = time.time()
                 _NB_STAGE[key] = {"source": "jupyter", "label": label, "when": now, "items": items,
                                   "codeHash": code_hash}
                 _JUPYTER_TAKEN[key] = (kc.run_id, frozenset(names) | frozenset(extra))
-                _nb_write_meta(d, {"notebook": nb, "codeHash": code_hash, "source": "jupyter",
+                _nb_write_meta(d, {"v": _NB_FORMAT, "notebook": nb, "codeHash": code_hash, "source": "jupyter",
                                    "label": label, "when": now, "items": items})
                 _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
                 live = True
@@ -3823,7 +4050,10 @@ def _nb_fetch(req):
         # values were taken is not (it is reported missing, as it was then).
         lacking = [n for n in required if n not in snap]
         if meta is None:
-            snap_why = "no hay valores guardados de este cuaderno"
+            snap_why = "aún no hay valores guardados"
+        elif (meta.get("v") or 1) < _NB_FORMAT:
+            # Saved by an older Pyx: its functions came without what they use.
+            snap_why = "los valores guardados son de una versión anterior de Pyx"
         elif not code_hash or meta.get("codeHash") != code_hash:
             snap_why = "su código ha cambiado desde los valores guardados"
         elif lacking:
@@ -3854,110 +4084,244 @@ def _nb_fetch(req):
         "source": "snapshot" if st.get("snapshot") else st["source"],
         "from": st["source"], "label": st.get("label") or "", "when": st.get("when") or 0,
         "names": {n: (it.get("hash") or ("module:" + it["module"] if it.get("module") else "")) for n, it in items.items()
-                  if not it.get("missing") and not it.get("error")},
-        "missing": [n for n, it in items.items() if it.get("missing")],
+                  if _nb_usable(it)},
+        # What loading the requested names brings along (what their functions use).
+        "deps": [n for n in _nb_closure(items, names) if n not in names],
+        "missing": [n for n in names if (items.get(n) or {}).get("missing")],
         "errors": {n: it["error"] for n, it in items.items() if it.get("error")},
         "why": why,
         "ms": round((time.perf_counter() - t0) * 1000),
     }
 
 
+def _nb_usable(it):
+    return bool(it) and not it.get("missing") and not it.get("error")
+
+
+def _nb_closure(items, names):
+    """`names` and everything they need (items' "deps"), in a stable order."""
+    out, seen = [], set()
+    todo = [n for n in names if _nb_usable(items.get(n))]
+    while todo:
+        n = todo.pop(0)
+        if n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+        for d in items[n].get("deps") or []:
+            if d not in seen and _nb_usable(items.get(d)):
+                todo.append(d)
+    return out
+
+
+def _nb_token(items, n):
+    """What a name IS, for "unchanged": its own hash and those of everything
+    it uses (a function whose helper changed is not the same function)."""
+    return "|".join(
+        (items[d].get("hash") or ("module:" + items[d]["module"] if items[d].get("module") else ""))
+        for d in _nb_closure(items, [n]))
+
+
+def _nb_load(path, ns):
+    """A fresh object from a value file. A class or function the pickle names
+    in `__main__` is looked up in the notebook's own namespace first: that is
+    where its classes live in Pyx."""
+    import pickle
+
+    class _Unpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module == "__main__":
+                root, _sep, rest = name.partition(".")
+                obj = ns[root] if root in ns else NS.get(root)
+                if obj is not None:
+                    for part in rest.split(".") if rest else []:
+                        obj = getattr(obj, part)
+                    return obj
+            return super().find_class(module, name)
+
+    with open(path, "rb") as fh:
+        return _Unpickler(fh).load()
+
+
+# Each linked file's own namespace in Pyx: its functions run against ITS
+# globals (as they did in Jupyter), with what they need — which never spills
+# into the document's namespace. The document receives only the names it uses.
+_NB_NS = {}
+# What a linked file — or a cell — gave each name at its place in the
+# document: \py{x} reads the x of the nearest file or cell ABOVE it when x is
+# defined more than once (see _evals). entry key -> {name: value}
+_SCOPES = {}
+
+
 def _nb_apply(req):
     """Put the staged values of a notebook into the namespace: modules by
     import, the notebook's functions and classes from their source, data as
-    fresh unpickled objects. Reports which names hold what they held after
-    the previous apply (the dependency graph's early cutoff)."""
+    fresh unpickled objects — everything first into the notebook's own
+    namespace, then the names the document uses into the document's. Reports
+    which names hold what they held after the previous apply (the dependency
+    graph's early cutoff)."""
     import importlib
-    import pickle
     nb = req.get("notebook") or ""
     key = _nb_key(nb)
     st = _NB_STAGE.get(key)
     if not st:
         return {"ok": False, "error": "los valores del cuaderno no están preparados"}
     items = st["items"]
-    names = [n for n in (req.get("names") or list(items)) if n in items]
-    last = _NB_APPLIED.setdefault(key, {})
-    errors, unchanged = {}, []
-    order = sorted(names, key=lambda n: 0 if items[n].get("module") else 1 if items[n].get("source") else 2)
+    names = [n for n in (req.get("names") or []) if _nb_usable(items.get(n))]
+    todo = _nb_closure(items, names)
+    # A module or a pickled function of the project next to the notebook
+    # (`from utilidades import f`) imports from the notebook's folder.
+    folder = os.path.dirname(os.path.abspath(nb))
+    if folder and os.path.isdir(folder) and folder not in sys.path:
+        sys.path.append(folder)
+    fns = {"__builtins__": builtins, "__name__": "__main__"}
+    _NB_NS[key] = fns
+    errors = {}
+    label = "<%s>" % os.path.basename(nb)
     with _USER_CODE:
-        for n in order:
+        for n in todo:
             it = items[n]
-            try:
-                if it.get("module"):
-                    NS[n] = importlib.import_module(it["module"])
-                elif it.get("source"):
-                    exec(compile(it["source"], "<cuaderno %s>" % os.path.basename(nb), "exec"), NS)
-                elif it.get("path"):
-                    with open(it["path"], "rb") as fh:
-                        NS[n] = pickle.load(fh)
-                else:
-                    continue
-                token = it.get("hash") or ("module:" + it["module"] if it.get("module") else "")
-                if token and last.get(n) == token:
-                    unchanged.append(n)
-                last[n] = token
-            except Exception as e:
-                errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+            if it.get("module"):
+                try:
+                    fns[n] = importlib.import_module(it["module"])
+                except Exception as e:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+        # Functions and classes: a class built on another, or a decorator,
+        # needs that one first — passes until nothing more can be defined.
+        pending = [n for n in todo if items[n].get("source")]
+        while pending:
+            failed = []
+            for n in pending:
+                try:
+                    exec(compile(items[n]["source"], label, "exec"), fns)
+                except NameError as e:
+                    failed.append((n, e))
+                except Exception as e:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+            if len(failed) == len(pending):
+                for n, e in failed:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+                break
+            pending = [n for n, _e in failed]
+        for n in todo:
+            it = items[n]
+            if it.get("path") and not it.get("module") and not it.get("source"):
+                try:
+                    fns[n] = _nb_load(it["path"], fns)
+                except Exception as e:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+    last = _NB_APPLIED.setdefault(key, {})
+    unchanged, given = [], {}
+    for n in names:
+        if n not in fns:
+            continue
+        NS[n] = fns[n]
+        given[n] = fns[n]
+        # Unchanged only if what it uses is unchanged too: a function whose
+        # helper was edited in Jupyter behaves differently with the same code.
+        token = _nb_token(items, n)
+        if token and last.get(n) == token:
+            unchanged.append(n)
+        last[n] = token
+    _SCOPES[req.get("key") or key] = given
     # A value that cannot be loaded is reported, and the rest still arrive:
     # a cell that reads it then fails with a NameError the report explains.
     return {"ok": True, "unchanged": unchanged, "errors": errors}
 
 
+def _nb_collect(ns, names, extra, out_dir, known=None, cells=None):
+    """The collector (_NB_COLLECT) over `ns`: the items for `names` and what
+    they need, plus the small extras."""
+    g = {"__builtins__": builtins, "NS": ns, "NAMES": list(names), "EXTRA": list(extra),
+         "KNOWN": dict(known or {}), "OUT": out_dir, "LIMIT": _NB_EXTRA_LIMIT,
+         "BUDGET": _NB_EXTRA_BUDGET, "WRITE": False, "CELLS": list(cells or [])}
+    exec(_NB_COLLECT, g)
+    items = {}
+    for n, r in g["res"].items():
+        if r.get("file"):
+            it = dict(r)
+            it["path"] = it.pop("file")
+            items[n] = it
+        else:
+            items[n] = r
+    return items
+
+
 def _nb_save(req):
-    """After Pyx itself ran the notebook: its values for the document, as the
-    notebook's snapshot (with the files they were computed from)."""
-    import hashlib
-    import inspect
-    import pickle
+    """After Pyx itself ran the notebook: its values for the document, with
+    what they need, as the notebook's snapshot (and the data files they were
+    computed from)."""
     nb = req.get("notebook") or ""
     key = _nb_key(nb)
     d = _nb_dir(nb)
     os.makedirs(d, exist_ok=True)
-    items = {}
     names = [n for n in (req.get("names") or []) if isinstance(n, str)]
     extra = [n for n in (req.get("extra") or []) if isinstance(n, str) and n not in names]
-    t_end = time.perf_counter() + _NB_EXTRA_BUDGET
-    for i, n in enumerate(names + extra):
-        is_extra = i >= len(names)
-        if n not in NS or (is_extra and time.perf_counter() > t_end):
-            continue
-        v = NS[n]
-        try:
-            if isinstance(v, types.ModuleType):
-                items[n] = {"module": v.__name__}
-                continue
-            if isinstance(v, (types.FunctionType, type)) and getattr(v, "__module__", None) == "__main__":
-                try:
-                    src = inspect.getsource(v)
-                    items[n] = {"source": src, "hash": hashlib.blake2b(src.encode("utf-8"), digest_size=16).hexdigest()}
-                    continue
-                except Exception:
-                    pass
-            if is_extra and sys.getsizeof(v) > _NB_EXTRA_LIMIT:
-                continue
-            b = pickle.dumps(v, protocol=5)
-            if is_extra and len(b) > _NB_EXTRA_LIMIT:
-                continue
-            h = hashlib.blake2b(b, digest_size=16).hexdigest()
-            p = os.path.join(d, "v%d-%s.pkl" % (i, h))
-            if not os.path.exists(p):
-                with open(p, "wb") as fh:
-                    fh.write(b)
-            items[n] = {"hash": h, "path": p, "type": type(v).__name__}
-        except Exception as e:
-            if not is_extra:
-                items[n] = {"error": "%s: %s" % (type(e).__name__, _safe_str(e))}
+    # The file's own values: what its cells gave each name when they ran
+    # (_scope_capture), over what the namespace holds now — a file linked
+    # further down may have given the same names other values since.
+    ns = NS
+    own = {}
+    for k in req.get("scopes") or []:
+        own.update(_SCOPES.get(k) or {})
+    if own:
+        ns = dict(NS)
+        ns.update(own)
+    with _USER_CODE:
+        items = _nb_collect(ns, names, extra, d, cells=[c for c in (req.get("cells") or []) if isinstance(c, str)])
     # The data files the notebook's cells read ([path, mtime ms, size]): a
     # snapshot computed from a spreadsheet that has changed since is stale.
     reads = [r for r in (req.get("reads") or []) if isinstance(r, list) and len(r) == 3]
-    meta = {"notebook": nb, "codeHash": req.get("codeHash"), "source": "pyx", "label": "Pyx",
+    meta = {"v": _NB_FORMAT, "notebook": nb, "codeHash": req.get("codeHash"), "source": "pyx", "label": "Pyx",
             "when": time.time(), "items": items, "reads": reads}
     _nb_write_meta(d, meta)
     _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
     _NB_STAGE[key] = {"source": "pyx", "label": "Pyx", "when": meta["when"], "items": items, "snapshot": True}
-    _NB_APPLIED[key] = {n: it.get("hash") for n, it in items.items() if it.get("hash")}
-    return {"saved": sorted(n for n, it in items.items() if not it.get("error")),
+    _NB_APPLIED[key] = {n: _nb_token(items, n) for n, it in items.items() if _nb_usable(it)}
+    return {"saved": sorted(n for n, it in items.items() if _nb_usable(it) and it.get("role") != "dep"),
             "errors": {n: it["error"] for n, it in items.items() if it.get("error")}}
+
+
+def _nb_names(req):
+    """The variables a linked notebook offers (for \\py{} completion): its live
+    Jupyter kernel's, else those of its snapshot. Nothing is copied."""
+    import json as _json
+    nb = req.get("notebook") or ""
+    out = {}
+    kc, _label = _jupyter_find(nb)
+    if kc is not None:
+        try:
+            expr = ("{k: type(v).__name__ for k, v in list(globals().items()) if not k.startswith('_') "
+                    "and k not in ('In', 'Out', 'get_ipython', 'exit', 'quit') "
+                    "and type(v).__name__ != 'module'}")
+            mid = kc.execute("", {"v": expr})
+            reply = kc.reply(mid, 1.5) or {}
+            data = ((reply.get("content") or {}).get("user_expressions") or {}).get("v") or {}
+            got = ast.literal_eval((data.get("data") or {}).get("text/plain", "{}"))
+            if isinstance(got, dict):
+                out = {str(k): str(v) for k, v in got.items()}
+        except Exception:
+            out = {}
+        finally:
+            kc.close()
+        if out:
+            return {"names": out, "source": "jupyter"}
+    try:
+        with open(os.path.join(_nb_dir(nb), "meta.json"), encoding="utf-8") as fh:
+            items = (_json.load(fh) or {}).get("items") or {}
+        out = {n: it.get("type") or ("función" if it.get("source") else "") for n, it in items.items()
+               if _nb_usable(it) and not it.get("module")}
+    except Exception:
+        out = {}
+    return {"names": out, "source": "snapshot" if out else None}
+
+
+def _scope_capture(req):
+    """After a cell (or a file's cells) ran: what it gave each name, for the
+    \\py{} below it when a later cell or file gives the name another value."""
+    names = [n for n in (req.get("names") or []) if isinstance(n, str) and n in NS]
+    _SCOPES[req.get("key") or ""] = {n: NS[n] for n in names}
+    return {"captured": names}
 
 
 def _nblink(req):
@@ -3972,6 +4336,10 @@ def _nblink(req):
             return _nb_apply(req)
         if op == "save":
             return _nb_save(req)
+        if op == "names":
+            return _nb_names(req)
+        if op == "capture":
+            return _scope_capture(req)
         return {"error": "operación desconocida: %s" % op}
     except BaseException as e:
         return {"source": None, "ok": False, "error": "%s: %s" % (type(e).__name__, _safe_str(e))}

@@ -54,14 +54,14 @@ from pyx import figure, figtex, tabletex, tex, texesc
 ## 🚀 Características
 
 - **Simbiosis LaTeX ↔ Python** — celdas `%#python … %#end` (el archivo sigue siendo un `.tex` válido) y el puente **`\py{expresión}`** que mete valores calculados en el documento.
-- **Cuadernos de Jupyter vinculados** — `\pynotebook{../calculos/modelo.ipynb}` pone las variables del cuaderno en ese punto del documento, y `\py{}`, `\pyif{}` y tus celdas las usan igual que siempre. **El cuaderno no se vuelve a ejecutar:** si lo tienes abierto en VS Code o Jupyter, Pyx copia los valores de ese kernel en una fracción de segundo; si está cerrado, usa los últimos valores guardados mientras el código del cuaderno no cambie. Solo cuando no hay ninguna de las dos cosas lo ejecuta Pyx una vez (desde la carpeta del cuaderno, como Jupyter) y guarda sus valores para la próxima.
+- **Cuadernos de Jupyter y archivos `.py` vinculados** — `\pynotebook{calculos/oleaje.ipynb}` o `\pyfile{calculos/datos.py}` ponen las variables del archivo en ese punto del documento, y `\py{}`, `\pyif{}` y tus celdas las usan igual que siempre: números, tablas de pandas, diccionarios y **funciones**, que se llevan con ellas lo que usan por dentro (`\py{filas_ln(rumbo, n)}` dentro de un `tabular`). **El archivo no se vuelve a ejecutar:** si lo tienes abierto en VS Code o Jupyter, Pyx copia los valores de ese kernel en unas décimas de segundo; si está cerrado, usa los últimos valores guardados mientras su código no cambie. Solo cuando no hay ninguna de las dos cosas lo ejecuta Pyx una vez y guarda sus valores. Con varios archivos que dan valor a la misma variable, cada `\py{}` muestra la del **más próximo por encima**.
 - **Texto que reacciona al cálculo** — `\pyif{condición}{…}{…}`: el informe se redacta solo según el resultado (p. ej. «CUMPLE / NO CUMPLE»).
 - **Valores en vivo** — el resultado de cada `\py{}` aparece en gris junto a él mientras escribes, sin compilar (estilo Mathcad / MATLAB Live).
 - **Kernel Python plano, como Jupyter** — el espacio de nombres arranca **vacío**: ninguna librería viene precargada ni tiene trato de favor, así que las actualizas, las cambias o las parcheas como en cualquier IDE. Lo que sí trae el kernel es el protocolo del cuaderno: `display()`, `get_ipython()`, las figuras de matplotlib capturadas solas y **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar).
 - **handcalcs igual que en Jupyter** — `import handcalcs.render` y las magias `%%render` / `%%tex` quedan disponibles; sin ese import no existen. Se usa la librería **real** (antes se sustituía por un sucedáneo interno, y no se podía ni actualizar).
 - **Los resultados viajan con el documento** — al abrir un informe ves sus números, tablas y figuras **sin ejecutar nada** (ni hace falta Python instalado). Si una celda cambió desde que se calculó, su resultado se marca **«desactualizado»** en vez de pasar por vigente: en una memoria de cálculo, un número que ya no corresponde a su fórmula es el error más caro que existe.
 - **Ejecución reactiva (grafo de dependencias)** — Pyx sabe qué variables define y usa cada celda, como marimo: al cambiar una, solo se ejecutan esa y las que dependen de ella, y si una celda vuelve a dar el mismo valor, la cadena se corta ahí. Editar la gráfica final no repite la simulación de arriba. Las celdas afectadas por un cambio se marcan **desactualizadas en cascada**. Para empezar de cero sin dudas, **Recompilar desde cero** (`Ctrl+Alt+Mayús+B`).
-- **Autocompletado de Python real (jedi)** — sobre las variables vivas del kernel, con la firma de cada función al escribir y su ayuda al pasar el ratón.
+- **Autocompletado de Python real (jedi)** — sobre las variables vivas del kernel, con la firma de cada función al escribir y su ayuda al pasar el ratón. Dentro de `\py{` se listan todas las variables que hay: las de las celdas y las de los cuadernos y archivos vinculados.
 - **Nada que instalar antes** — si el equipo no tiene Python o LaTeX, Pyx los prepara con un clic dentro de su propia carpeta: Python con **uv** (numpy, scipy, sympy, pandas, matplotlib, handcalcs, pint…) y LaTeX con **Tectonic**. Un `ModuleNotFoundError` trae el botón **Instalar**.
 - **Compilación casi instantánea (motor precalentado)** — tras cada compilación Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes) ya cargado, esperando. La siguiente solo compone el cuerpo: en un informe con fontspec, TikZ y hyperref, **0,7 s → 0,1 s**. Funciona con xelatex, lualatex y pdflatex.
 - **Bibliografías e índices sin pensar en ellos** — BibTeX, Biber y makeindex se ejecutan solos entre pasadas, y solo cuando cambia lo que leen (las reglas de latexmk).
@@ -85,25 +85,32 @@ from pyx import figure, figtex, tabletex, tex, texesc
 <img src="Manual de usuario/capturas/celda-figura.png" alt="Gráfica de matplotlib en la salida de una celda" width="45%">
 </div>
 
-**Ejecución reactiva.** Al cambiar la luz de la viga, las celdas que dependen de ella se marcan desactualizadas.
+**Ejecución reactiva.** Al editar una celda, su resultado y las celdas que dependen de ella se marcan desactualizados.
 
 <div align="center">
 <img src="Manual de usuario/capturas/desactualizadas.png" alt="Celdas desactualizadas en cascada" width="45%">
+<img src="Manual de usuario/capturas/autocompletado-py.png" alt="Autocompletado dentro de \py{}: variables del documento, del cuaderno y del .py" width="45%">
+</div>
+
+**Archivos vinculados.** El registro de cada compilación dice de dónde salieron los valores de cada cuaderno o `.py` (de Jupyter en vivo, de los valores guardados o de una ejecución en Pyx) y cuánto tardó.
+
+<div align="center">
+<img src="Manual de usuario/capturas/registro.png" alt="Registro de compilación con los archivos vinculados" width="80%">
 </div>
 
 Más capturas, con la explicación de cada función, en el [manual de usuario](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf).
 
 ## 📦 Instalación
 
-Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.6.3):
+Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.6.4):
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | [`Pyx_1.6.3_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_x64-setup.exe) · [`Pyx_1.6.3_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_x64_en-US.msi) |
-| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.3_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_universal.dmg) |
-| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx-1.6.3-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.3/Pyx_1.6.3_amd64.AppImage) (cualquier distro) |
+| **Windows** (x64) | [`Pyx_1.6.4_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.4/Pyx_1.6.4_x64-setup.exe) · [`Pyx_1.6.4_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.4/Pyx_1.6.4_x64_en-US.msi) |
+| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.4_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.4/Pyx_1.6.4_universal.dmg) |
+| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.4/Pyx_1.6.4_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.4/Pyx-1.6.4-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.4/Pyx_1.6.4_amd64.AppImage) (cualquier distro) |
 
-La carpeta [Instaladores](Instaladores/) del repositorio conserva los de la versión 1.6.0.
+Cada release incluye también el **manual de usuario en PDF** de esa versión (`Pyx_1.6.4_manual_de_usuario.pdf`). La carpeta [Instaladores](Instaladores/) del repositorio conserva los de la versión 1.6.0.
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.
 

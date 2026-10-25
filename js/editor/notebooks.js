@@ -14,7 +14,7 @@
 // As in Jupyter, a notebook's cells that do run here run with ITS folder as
 // the working directory (`pd.read_csv("datos.csv")` next to it keeps working).
 
-import { readNotebook, fileStamps } from '../core/platform.js';
+import { readNotebook, readTextFile, fileStamps } from '../core/platform.js';
 import { joinPath, dirOf } from '../core/paths.js';
 import { hashString } from '../core/hash.js';
 import { createVerbatimTracker, stripTexComment } from '../compile/latex-bridge.js';
@@ -84,13 +84,19 @@ export function linkInfo(names, modules = new Map()) {
   };
 }
 
-const CMD = /\\pynotebook\s*\{([^}]+)\}/g;
+/* \pynotebook{…} and \pyfile{…} are the same command: a Jupyter notebook
+   (.ipynb) or a Python script (.py) whose variables the document uses. */
+export const LINK_CMD_SRC = '\\\\py(?:notebook|file)\\s*\\{([^}]+)\\}';
+const CMD = new RegExp(LINK_CMD_SRC, 'g');
+const HAS_CMD = /\\py(?:notebook|file)\b/;
+/** Does this text call \pynotebook / \pyfile at all (cheap pre-check)? */
+export const hasLinkCmd = (text) => HAS_CMD.test(text || '');
 
-/** The \pynotebook{…} calls of a LaTeX text, outside comments, verbatim and
- *  Python cells: [{ raw, line }] (1-based line). */
+/** The \pynotebook{…} / \pyfile{…} calls of a LaTeX text, outside comments,
+ *  verbatim and Python cells: [{ raw, line }] (1-based line). */
 export function notebookRefs(text) {
   const out = [];
-  if (!text || text.indexOf('\\pynotebook') < 0) return out;
+  if (!text || !HAS_CMD.test(text)) return out;
   const inVerb = createVerbatimTracker();
   let inCell = false;
   let ln = 0;
@@ -100,7 +106,7 @@ export function notebookRefs(text) {
     if (inCell) { if (t.startsWith('%#end')) inCell = false; continue; }
     if (inVerb(line)) continue;
     if (t.startsWith('%#python')) { inCell = true; continue; }
-    if (line.indexOf('\\pynotebook') < 0) continue;
+    if (!HAS_CMD.test(line)) continue;
     const code = stripTexComment(line);
     CMD.lastIndex = 0;
     let m;
@@ -109,14 +115,49 @@ export function notebookRefs(text) {
   return out;
 }
 
-/** The notebook a \pynotebook argument names: relative to the ROOT
- *  document's folder (like \input), `.ipynb` added when left out. null for a
- *  relative path with no folder to resolve it from (an unsaved document). */
+/** The file a \pynotebook / \pyfile argument names: relative to the ROOT
+ *  document's folder (like \input), `.ipynb` added when no extension is given
+ *  (`.py` names a Python script). null for a relative path with no folder to
+ *  resolve it from (an unsaved document). */
 export function notebookPath(rootDir, raw) {
   let r = String(raw || '').trim();
-  if (!/\.ipynb$/i.test(r)) r += '.ipynb';
+  if (!/\.(ipynb|py)$/i.test(r)) r += '.ipynb';
   if (/^([a-zA-Z]:[\\/]|[\\/])/.test(r)) return r;
   return rootDir ? joinPath(rootDir, r) : null;
+}
+
+/** A Python script (`\pyfile{calculos.py}`), not a notebook. */
+export const isPyScript = (path) => /\.py$/i.test(String(path || ''));
+
+/* A script's cells: the `# %%` markers VS Code, Spyder, PyCharm and Jupytext
+   use (`#%%`, `# %% Título`, `# In[3]:` too) — or the whole file as one cell
+   when it has none. A `# %% [markdown]` cell is prose in comments: skipped.
+   Same shape as readNotebook's cells ({ source, id }). */
+const PY_CELL = /^\s*#\s*(?:%%|In\s*\[[^\]]*\]\s*:)(.*)$/;
+export function splitPyCells(text) {
+  const lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/);
+  const out = [];
+  let cur = [];
+  let markdown = false;
+  let n = 0;
+  const flush = () => {
+    if (!markdown) out.push({ source: cur.join('\n'), id: `py${++n}` });
+    else n++;
+    cur = [];
+  };
+  let started = false;
+  for (const line of lines) {
+    const m = PY_CELL.exec(line);
+    if (m) {
+      if (started || cur.some((l) => l.trim())) flush();
+      started = true;
+      markdown = /\[\s*(markdown|md|raw)\s*\]/i.test(m[1]);
+      continue;
+    }
+    cur.push(line);
+  }
+  flush();
+  return out;
 }
 
 const cache = new Map(); // path -> { mtime, size, cells }
@@ -129,10 +170,11 @@ const cache = new Map(); // path -> { mtime, size, cells }
  */
 export async function loadNotebook(path) {
   const [st] = await fileStamps([path]);
-  if (!st || st.mtime < 0) throw new Error(`no se encuentra el cuaderno ${path}`);
+  const isPy = isPyScript(path);
+  if (!st || st.mtime < 0) throw new Error(`no se encuentra ${isPy ? 'el archivo' : 'el cuaderno'} ${path}`);
   const hit = cache.get(path);
   if (hit && hit.mtime === st.mtime && hit.size === st.size) return hit.cells;
-  const raw = await readNotebook(path);
+  const raw = isPy ? splitPyCells(await readTextFile(path)) : await readNotebook(path);
   const dir = dirOf(path);
   const cells = [];
   (raw || []).forEach((c, i) => {

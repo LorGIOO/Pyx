@@ -91,7 +91,7 @@ jobs:
           # Sobre ESTE commit: lo que se lanzó a mano crea aquí la etiqueta.
           releaseCommitish: ${{ github.sha }}
           releaseBody: |
-            Instaladores adjuntos abajo: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`).
+            Instaladores adjuntos abajo: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`), y el **manual de usuario** de esta versión en PDF.
 
             Novedades de esta versión en el [CHANGELOG](https://github.com/LorGIOO/Pyx/blob/main/CHANGELOG.md).
 
@@ -112,6 +112,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      # El manual de usuario de ESTA versión, junto a sus instaladores.
+      - name: Adjuntar el manual de usuario
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          manual="Pyx_${RELEASE_TAG#v}_manual_de_usuario.pdf"
+          cp "Manual de usuario/Manual de usuario de Pyx.pdf" "$manual"
+          gh release upload "$RELEASE_TAG" "$manual" --repo "$GITHUB_REPOSITORY" --clobber
+
       - name: Publicar la release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

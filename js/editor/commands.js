@@ -14,6 +14,8 @@ import {
 import { buildToSrcLine, srcToBuildLine } from '../compile/latex-bridge.js';
 import { lineMapFor, sourceToBuildPath } from '../compile/build-maps.js';
 import { envEnter, envTab } from './latex-env.js';
+import { cleanPaste, freshCellIds } from './paste-table.js';
+import { cellAtLine } from './cell-parse.js';
 
 const withView = (fn) => () => {
   const v = getView();
@@ -45,9 +47,14 @@ export async function pasteClipboard() {
   const v = getView();
   if (!v) return;
   try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
+    const copied = await navigator.clipboard.readText();
+    if (copied) {
       const sel = v.state.selection.main;
+      // Cleaned as a Ctrl+V paste is (paste-table.js).
+      const cells = parseCells(v.state);
+      const python = !!cellAtLine(cells, v.state.doc.lineAt(sel.from).number);
+      const text = python ? cleanPaste(copied, { python })
+        : freshCellIds(cleanPaste(copied), cells.map((c) => c.id).filter(Boolean));
       v.dispatch({
         changes: { from: sel.from, to: sel.to, insert: text },
         selection: { anchor: sel.from + text.length },

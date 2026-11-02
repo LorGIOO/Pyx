@@ -878,6 +878,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       let scope = { scopes: {}, captures: new Map() }; // py-scope.js
       const nbRan = new Set();   // notebooks whose cells ran in this compile
       const nbSaved = new Set(); // ... and whose values were then saved
+      const nbFresh = new Map(); // notebook → names its cells that ran define
       const prepare = async (fresh) => {
         nbPlans.clear();
         for (const f of nbFiles) {
@@ -1013,7 +1014,12 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
               return res;
             }
             phase.ran++;
-            if (notebook) nbRan.add(path);
+            if (notebook) {
+              nbRan.add(path);
+              // What it (re)defines: only these are pickled again on save.
+              if (!nbFresh.has(path)) nbFresh.set(path, new Set());
+              for (const d of plan.effects[i].D || []) nbFresh.get(path).add(d);
+            }
             const od = notebook ? null : state.documents.find((d) => !d.kind && samePath(d.path, path));
             const view = od ? getViewOfDoc(od.id) : null;
             // A notebook's cells run from the notebook's folder, as in Jupyter.
@@ -1055,7 +1061,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // so the next compile (or the next session) loads them instead.
         for (const [nbPath, nbPlan] of nbPlans) {
           if (nbPlan.mode === 'run' && nbRan.has(nbPath) && !cancelRequested && nsHasRun(nbPlan.entries)) {
-            const saved = await saveNotebookValues(nbPath, nbPlan, cwd);
+            const saved = await saveNotebookValues(nbPath, nbPlan, cwd, (nbPlan.restored || nbPlan.ranHere) ? nbFresh.get(nbPath) : null);
             if (saved && saved.saved) nbSaved.add(nbPath);
           }
         }

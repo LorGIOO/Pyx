@@ -138,7 +138,9 @@ export function findPyExprs(text) {
   while (i < text.length) {
     const at = text.indexOf(needle, i);
     if (at === -1) break;
-    if (inRanges(skip, at)) { i = at + needle.length; continue; }
+    // Shown code (verbatim) and commented-out text (`% \py{x}`) are not
+    // evaluated: the engine would not print them either.
+    if (inRanges(skip, at) || inTexComment(text, at)) { i = at + needle.length; continue; }
     let depth = 1;
     let j = at + needle.length;
     while (j < text.length && depth > 0) {
@@ -195,7 +197,7 @@ export function findPyIfExprs(text) {
   while (i < text.length) {
     const at = text.indexOf(needle, i);
     if (at === -1) break;
-    if (inRanges(skip, at)) { i = at + needle.length; continue; }
+    if (inRanges(skip, at) || inTexComment(text, at)) { i = at + needle.length; continue; }
     const g1 = readGroup(text, at + needle.length - 1); // -1 → points at the first '{'
     if (!g1) break;
     if (text[g1.end] !== '{') { i = at + needle.length; continue; }
@@ -271,7 +273,7 @@ function escapePyStar(text) {
   while (i < text.length) {
     const at = text.indexOf(needle, i);
     if (at === -1) break;
-    if (inRanges(skip, at)) { i = at + needle.length; continue; }
+    if (inRanges(skip, at) || inTexComment(text, at)) { i = at + needle.length; continue; }
     const g = readGroup(text, at + needle.length - 1);
     if (!g) break;
     out += text.slice(cursor, at) + '\\texttt{\\detokenize{\\py{' + g.inner + '}}}';
@@ -435,12 +437,57 @@ const reStyleOpt = /(?:^|,)\s*style\s*=\s*([A-Za-z@][A-Za-z@0-9]*)/;
  *  a comment. `% \input{capitulo}` is a chapter the author switched OFF: the
  *  compiler must not gather it, run its cells or report it missing. */
 export function stripTexComment(line) {
-  for (let i = line.indexOf('%'); i >= 0; i = line.indexOf('%', i + 1)) {
-    let bs = 0;
-    for (let j = i - 1; j >= 0 && line.charCodeAt(j) === 92; j--) bs++;
-    if (bs % 2 === 0) return line.slice(0, i);
+  const at = texCommentStart(line);
+  return at < 0 ? line : line.slice(0, at);
+}
+
+/**
+ * Where a LaTeX comment starts on this line, or -1.
+ *
+ * A `%` starts one unless it is escaped (`\%`) or it is inside the argument of
+ * `\py{…}` / the condition of `\pyif{…}`: that is PYTHON, where `%` is an
+ * operator or a format (`\py{n % 97}`, `float_format="%.6f"`). Every layer —
+ * the compiler, the editor's coloring, the linter — must agree on this, or a
+ * `\py{}` with a `%` is evaluated by one and cut in half by another.
+ */
+export function texCommentStart(line) {
+  if (line.indexOf('%') < 0) return -1;
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charCodeAt(i);
+    if (c === 92) { // backslash
+      // \py{…} / \pyif{…}: jump over the Python argument.
+      if (line.startsWith('py', i + 1)) {
+        let k = i + 3;
+        if (line.startsWith('if', k)) k += 2;
+        if (line[k] === '{') {
+          const close = groupEndOnLine(line, k);
+          if (close > 0) { i = close; continue; }
+        }
+      }
+      i++; // \% \\ \{ …: the next character is escaped
+      continue;
+    }
+    if (c === 37) return i; // %
   }
-  return line;
+  return -1;
+}
+
+function groupEndOnLine(line, open) {
+  let depth = 0;
+  for (let j = open; j < line.length; j++) {
+    const ch = line[j];
+    if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return j;
+  }
+  return -1;
+}
+
+/** Is offset `at` of `text` inside a LaTeX comment (after an unescaped `%`
+ *  on its line, outside any \py{…})? */
+export function inTexComment(text, at) {
+  const ls = text.lastIndexOf('\n', at - 1) + 1;
+  const cs = texCommentStart(text.slice(ls, at));
+  return cs >= 0;
 }
 
 export function scanVerbatimUse(line, out) {

@@ -4,7 +4,6 @@ import RibbonDropdown from '../RibbonDropdown.jsx';
 import { icons } from '../icons.js';
 import { state } from '../../../../core/state.js';
 import { t } from '../../../../core/i18n.js';
-import { setGeneral } from '../../../stores/settingsStore.js';
 import {
   openFind, clip, wrap, changeCase, wrapInEnvironment,
   tblAddRow, tblAddCol, tblDelRow, tblDelCol, tblHline, tblAlign,
@@ -88,29 +87,17 @@ export default function HomeTab() {
                 'Compiling Python and LaTeX… Press again to recompile with your latest text when it ends.'))
             : `${t('Compilar Python y LaTeX y ver el PDF', 'Compile Python and LaTeX and view the PDF')}${comboOf('compile.run') ? ` (${comboOf('compile.run')})` : ''} · ${t('también al guardar', 'also on save')} (${comboOf('file.save') || 'Ctrl+S'})`}
           onClick={() => compileActive(true)} />
+        {/* TeXstudio's four: build & view, stop, view PDF, view log. "Desde
+            cero" lives on its shortcut and "Al escribir" in Configuración. */}
         <div class="ribbon-btn-stack">
-          <RibbonButton size="small" icon={icons.pdf} label={t('Compilar', 'Compile')} disabled={busy()} busy={state.compiling}
-            title={state.compiling
-              ? t('Compilando… Pulsa otra vez para recompilar al terminar.', 'Compiling… Press again to recompile when it ends.')
-              : t('Compilar Python y LaTeX sin abrir el visor', 'Compile Python and LaTeX without opening the viewer')}
-            onClick={() => compileActive(false, { force: true })} />
-          <RibbonButton size="small" icon={icons.preview} label={t('Visualizar', 'View')} disabled={!hasDoc()} onClick={showPreview} />
-          <RibbonButton size="small" icon={icons.live} label={t('Al escribir', 'On type')} active={state.liveCompile}
-            title={t('Compilación automática al dejar de escribir (no bloquea el editor)', "Auto-compile when you stop typing (doesn't block the editor)")}
-            onClick={() => { state.liveCompile = !state.liveCompile; setGeneral({ liveCompile: state.liveCompile }); }} />
-        </div>
-        <div class="ribbon-btn-stack">
-          {/* "Compilar" is incremental: it re-runs only the cells that changed
-              and keeps LaTeX's .aux. This is the escape hatch for when you
-              want to be sure nothing from earlier runs takes part. */}
-          <RibbonButton size="small" icon={icons.refresh} label={t('Desde cero', 'From scratch')} disabled={busy()}
-            title={`${t('Recompilar desde cero: kernel Python nuevo (se ejecutan todas las celdas) y sin datos auxiliares de LaTeX. Más lento; úsalo si sospechas que algo quedó desactualizado.',
-              'Recompile from scratch: fresh Python kernel (every cell runs) and no LaTeX auxiliary files. Slower; use it if you suspect something is stale.')}${comboOf('compile.fresh') ? ` (${comboOf('compile.fresh')})` : ''}`}
-            onClick={() => compileActive(true, { fresh: true })} />
           <RibbonButton size="small" icon={icons.stop} label={t('Detener', 'Stop')} disabled={!state.compiling}
-            title={t('Detener la compilación en curso (la celda Python o el motor LaTeX). El PDF anterior se conserva.',
-              'Stop the compile in progress (the Python cell or the LaTeX engine). The previous PDF is kept.')}
+            title={`${t('Detener la compilación en curso (la celda Python o el motor LaTeX). El PDF anterior se conserva.',
+              'Stop the compile in progress (the Python cell or the LaTeX engine). The previous PDF is kept.')}${comboOf('compile.stop') ? ` (${comboOf('compile.stop')})` : ''}`}
             onClick={() => cancelCompile()} />
+          <RibbonButton size="small" icon={icons.preview} label={t('Ver PDF', 'View PDF')} disabled={!hasDoc()} onClick={showPreview} />
+          <RibbonButton size="small" icon={icons.log} label={t('Registro', 'Log')} active={state.logVisible}
+            title={`${t('Registro de la compilación (errores, avisos y tiempos). Recompilar desde cero', 'Compile log (errors, warnings and timings). Recompile from scratch')}: ${comboOf('compile.fresh') || 'Ctrl+Alt+Shift+B'}`}
+            onClick={() => (state.logVisible = !state.logVisible)} />
         </div>
       </RibbonGroup>
 

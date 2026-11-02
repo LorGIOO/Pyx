@@ -6,6 +6,8 @@
 // directly — and these rules are subtle enough that they need to be. The same
 // split exists between `cells.js` and `cell-parse.js`, for the same reason.
 
+import { texCommentStart } from '../compile/latex-bridge.js';
+
 // Word = a run of letters (incl. accents); checked only when it has >= 2
 // letters, isn't ALL-CAPS (acronym) and has no digits.
 export const WORD = /\p{L}[\p{L}\p{M}]*/gu;
@@ -45,8 +47,9 @@ function blank(s, re) {
 // surviving words back onto the real document by their column.
 export function maskLine(text) {
   let t = text;
-  // Comment: from an unescaped % to end of line.
-  const cm = t.replace(/\\%/g, '  ').indexOf('%');
+  // Comment: from an unescaped % to end of line — not a `%` inside \py{…},
+  // which is Python (latex-bridge.js texCommentStart).
+  const cm = texCommentStart(t);
   if (cm >= 0) t = t.slice(0, cm) + ' '.repeat(t.length - cm);
   t = blank(t, /\\\([^)]*?\\\)/g);         // inline math \(…\)
   t = blank(t, /\\verb\*?(.).*?\1/g);      // inline verbatim \verb|…|

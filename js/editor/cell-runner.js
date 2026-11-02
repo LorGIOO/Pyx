@@ -151,7 +151,16 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   }
   const ms = performance.now() - t0;
   if (!r || !r.source) {
-    return { mode: 'run', ...base, ms, reason: ranHere ? 'ya ejecutado en esta sesión' : (r && (r.reason || r.error)) || '' };
+    if (ranHere) return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
+    // Its code (or a data file) changed and Jupyter is not there: put back
+    // everything Pyx's last run of it left, with the cells it came from, so
+    // the dependency graph runs ONLY what changed — not the whole notebook.
+    const restored = fresh ? null : await restoreNotebook(nbPath, entries, cwd);
+    const why = (r && (r.reason || r.error)) || '';
+    if (restored) {
+      return { mode: 'run', ...base, ms: performance.now() - t0, restored, reason: `${why}; solo se ejecuta lo que ha cambiado` };
+    }
+    return { mode: 'run', ...base, ms, reason: why };
   }
   // Its cells already ran here and Jupyter has nothing newer to offer: the
   // namespace holds their values already, nothing to load.
@@ -192,9 +201,36 @@ export function notebookNote(nbPath, plan, ran) {
     const of = plan.from === 'jupyter' ? `de Jupyter${when}` : `de la última ejecución en Pyx${when}`;
     return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el ${kindOf(nbPath)}`;
   }
+  if (plan.restored) {
+    return `${name}: ${plan.restored} celda${plan.restored === 1 ? '' : 's'} sin cambios recuperada${plan.restored === 1 ? '' : 's'} de la última ejecución; ${ran ? 'solo se ha ejecutado lo que cambió' : 'no ha hecho falta ejecutar nada'}`;
+  }
   if (!ran) return `${name}: ya cargado en esta sesión, sin ejecutar nada`;
   const why = plan.reason ? ` (${plan.reason})` : '';
   return `${name}: ejecutado en Pyx${why}; sus valores quedan guardados y no se volverá a ejecutar mientras su código no cambie`;
+}
+
+/** The notebook's last full run back in the namespace, its cells in the
+ *  ledger: returns how many cells need not run again (0/null: nothing to
+ *  restore). Only cells still in the notebook with the same code count. */
+async function restoreNotebook(nbPath, entries, cwd) {
+  if (!ns.known) return null; // the next run starts from a reset anyway
+  let r;
+  try {
+    r = await notebookLink('restore', { notebook: nbPath, cwd });
+  } catch (_) {
+    return null;
+  }
+  if (!r || !r.ok || !Array.isArray(r.ledger)) return null;
+  const loaded = new Set(r.loaded || []);
+  const current = new Map(entries.map((e) => [e.key, e.cell.codeHash]));
+  let kept = 0;
+  for (const c of r.ledger) {
+    // A cell whose values did not all come back is not "already run".
+    if (!current.has(c.key) || !(c.defs || []).every((d) => loaded.has(d))) continue;
+    nsRecord(c.key, c.hash, cwd, c.reads || [], new Set(c.defs || []));
+    if (current.get(c.key) === c.hash) kept++;
+  }
+  return kept || null;
 }
 
 /** Run the entry that stands for a notebook's values: put them in the
@@ -214,7 +250,9 @@ export async function runLinkEntry(entry, cwd, meta = {}) {
     return {
       ok: true,
       unchanged: res.unchanged || [],
-      stderr: bad.length ? `No se pudieron cargar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}` : '',
+      stderr: bad.length
+        ? `No se pudieron cargar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}${res.hint ? `. ${res.hint}` : ''}`
+        : '',
       loadErrors: res.errors || {},
     };
   }
@@ -225,16 +263,38 @@ export async function runLinkEntry(entry, cwd, meta = {}) {
 
 /** After the notebook's cells ran here: keep their values as its snapshot,
  *  so they are not run again (plan: what resolveNotebook returned). */
-export async function saveNotebookValues(nbPath, plan, cwd) {
-  if (!plan || !plan.names || !plan.names.length) return null;
+export async function saveNotebookValues(nbPath, plan, cwd, fresh = null) {
+  if (!plan || !plan.entries || !plan.entries.length) return null;
   const reads = nsReads(plan.entries.map((e) => e.key)).map((r) => [r.path, r.mtime, r.size]);
+  // A FULL snapshot when the notebook can be followed: every name its cells
+  // define, and the ledger of those cells (what each defined and read). After
+  // an edit — even in a later session — the kernel puts it all back and only
+  // the changed cells run (resolveNotebook → kernel.py _nb_restore).
+  const names = new Set(plan.names || []);
+  let ledger;
+  if (notebookDefs(plan.entries.map((e) => e.cell))) {
+    const { ran } = ns.state();
+    ledger = [];
+    for (const n of plan.extras || []) names.add(n); // all of them, whatever their size
+    for (const e of plan.entries) {
+      const r = ran.get(e.key);
+      if (!r || r.stale || r.hash !== e.cell.codeHash) continue;
+      const defs = [...new Set([...analyzePython(e.cell.code).defs, ...(r.D || [])])];
+      for (const d of defs) names.add(d);
+      ledger.push({ key: e.key, hash: r.hash, defs, reads: r.reads || [] });
+    }
+  }
+  if (!names.size) return null;
   try {
     return await notebookLink('save', {
-      notebook: nbPath, names: plan.names, extra: plan.extras || [], codeHash: plan.codeHash, reads, cwd,
+      notebook: nbPath, names: [...names], extra: ledger ? [] : (plan.extras || []), codeHash: plan.codeHash, reads, cwd,
       // What each of its cells gave its names when it ran (captureScope):
       // the file's own values, not what a later file left in their place.
       scopes: plan.entries.map((e) => e.key),
       cells: plan.entries.map((e) => e.cell.code),
+      ledger,
+      // Only what the cells that ran this time defined is pickled again.
+      fresh: fresh ? [...fresh] : undefined,
     });
   } catch (_) {
     return null;

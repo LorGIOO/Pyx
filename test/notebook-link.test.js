@@ -145,6 +145,20 @@ describe.skipIf(!python)('\\pynotebook: resolveNotebook con el kernel real', { t
     expect(plan.reason).toMatch(/código ha cambiado/);
   });
 
+  it('código cambiado con Jupyter cerrado: se recupera lo anterior y solo queda por ejecutar la celda cambiada', async () => {
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    const edited = [cells[0], cell('def factor(x):\n    return x * 1.5\ng = 9.81', 1)];
+    const plan = await runner.resolveNotebook(nbPath, edited, needed, base);
+    expect(plan.mode).toBe('run');
+    expect(plan.restored).toBe(1); // the first cell: unchanged, its values back
+    expect(await value('Q_max')).toBe('551');
+    expect(runner.nsHasRun([plan.entries[0]])).toBe(true);
+    expect(runner.nsHasRun([plan.entries[1]])).toBe(false); // the edited one runs
+    expect(runner.notebookNote(nbPath, plan, true)).toMatch(/1 celda sin cambios recuperada/);
+    runner.nsReset(base);
+  });
+
   it('un \\py{} nuevo que lee otra variable pequeña se sirve de la copia', async () => {
     const plan = await runner.resolveNotebook(nbPath, cells, new Set(['g']), base, { fresh: true });
     expect(plan.mode).toBe('link');

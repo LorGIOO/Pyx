@@ -99,6 +99,53 @@ describe.skipIf(!python)('archivos vinculados: dependencias, ámbitos y tablas',
     expect((await evals(['f(5)']))['f(5)'].value).toBe('15');
   });
 
+  it('cualquier función del cuaderno viaja: closures, lambdas en diccionarios, alias, dataclasses', async () => {
+    const nb = join(base, 'funciones.ipynb');
+    const cells = [
+      'from dataclasses import dataclass\nk = 3\ndef hacer(m):\n    return lambda x: x * m + k\ndoble = hacer(2)\nops = {"cuad": lambda x: x ** 2}\ndef pos(i, n):\n    return i / (n + 1)\nalias = pos\n@dataclass\nclass P:\n    x: float\n    y: float\np = P(1.5, 2.5)',
+    ];
+    await send({ code: cells[0], reset: true });
+    const names = ['doble', 'ops', 'alias', 'p'];
+    const s = await send({ nblink: 'save', notebook: nb, names, codeHash: 'c1', reads: [], cells });
+    expect(s.errors).toEqual({});
+    await send({ code: 'pass', reset: true });
+    await send({ nblink: 'fetch', notebook: nb, names, codeHash: 'c1' });
+    const a = await send({ nblink: 'apply', notebook: nb, names, key: 'funciones::valores' });
+    expect(a.errors).toEqual({});
+    const v = await evals(['doble(5)', 'ops["cuad"](4)', 'alias(1, 3)', 'p.x + p.y']);
+    expect(Object.values(v).map((x) => x.value)).toEqual(['13', '16', '0.25', '4']);
+  });
+
+  it('las ayudas de Pyx sirven en \\py{} sin importarlas, y un resultado enorme avisa en vez de romper LaTeX', async () => {
+    await send({ code: 'rumbo = "SSW_202.5"\nfilas = "\\n".join("%d & %d \\\\\\\\" % (i, i) for i in range(6000))', reset: true });
+    const v = await evals(['texesc(rumbo)', 'filas', '"%.2f" % 2.5']);
+    expect(v['texesc(rumbo)'].value).toBe('SSW\\_202.5');
+    expect(v.filas.ok).toBe(false);
+    expect(v.filas.value).toMatch(/LaTeX no puede componer tanto/);
+    expect(v['"%.2f" % 2.5'].value).toBe('2.50');
+  });
+
+  it('tras editar el cuaderno se recupera todo lo de la última ejecución (solo se ejecuta lo cambiado)', async () => {
+    const nb = join(base, 'calculo.ipynb');
+    const cells = ['import math\nL = 12.0', 'def area(b):\n    return b * L', 'A = area(3)'];
+    await send({ code: cells.join('\n'), reset: true });
+    const ledger = cells.map((c, i) => ({ key: `k${i}`, hash: `h${i}`, defs: [['math', 'L'], ['area'], ['A']][i], reads: [] }));
+    const names = ['math', 'L', 'area', 'A'];
+    const s = await send({ nblink: 'save', notebook: nb, names, codeHash: 'c1', reads: [], cells, ledger });
+    expect(s.errors).toEqual({});
+    // Only A changed: the rest is reused, not pickled again.
+    await send({ code: 'A = area(5)' });
+    const s2 = await send({ nblink: 'save', notebook: nb, names, codeHash: 'c2', reads: [], cells, ledger, fresh: ['A'] });
+    expect(s2.saved.sort()).toEqual(['A', 'L', 'area', 'math']);
+    await send({ code: 'pass', reset: true }); // a new session, code edited again
+    const r = await send({ nblink: 'restore', notebook: nb });
+    expect(r.ok).toBe(true);
+    expect(r.ledger.map((c) => c.key)).toEqual(['k0', 'k1', 'k2']);
+    expect(r.loaded.sort()).toEqual(['A', 'L', 'area', 'math']);
+    const v = await evals(['A', 'area(1)', 'math.sqrt(4)']);
+    expect(Object.values(v).map((x) => x.value)).toEqual(['60', '12', '2']);
+  });
+
   it('\\py{x} lee el valor del archivo o celda más próximo por encima', async () => {
     await send({ code: 'Hs = 1.5', reset: true });
     await send({ nblink: 'capture', key: 'datos.py::valores', names: ['Hs'] });

@@ -3267,21 +3267,77 @@ _SCOPE_TAG = re.compile(r"\s?#@(s\d+)")
 
 def _scoped(expr, scopes):
     """(code, globals) to evaluate `expr` with: NS, or NS with the names its
-    mark reads from the file or cell above the \\py{}."""
+    mark reads from the file or cell above the \\py{}, and Pyx's helpers
+    (`tex`, `texesc`…) when the expression uses one the document has not
+    defined — a document that takes its values from a notebook has no cell
+    to `from pyx import tex` in."""
     m = _SCOPE_TAG.search(expr)
-    if not m:
-        return expr, NS
-    code = _SCOPE_TAG.sub("", expr)
+    code = _SCOPE_TAG.sub("", expr) if m else expr
     over = {}
-    for name, k in ((scopes or {}).get(m.group(1)) or {}).items():
-        sc = _SCOPES.get(k)
-        if sc is not None and name in sc:
-            over[name] = sc[name]
+    if m:
+        for name, k in ((scopes or {}).get(m.group(1)) or {}).items():
+            sc = _SCOPES.get(k)
+            if sc is not None and name in sc:
+                over[name] = sc[name]
+    helpers = _pyx_helpers_for(code)
+    for name, fn in helpers.items():
+        if name not in NS and name not in over:
+            over[name] = fn
     if not over:
         return code, NS
     g = dict(NS)
     g.update(over)
     return code, g
+
+
+_PYX_HELPER_NAMES = ("tex", "texesc", "tabletex", "figtex", "figure")
+
+
+def _pyx_helpers_for(code):
+    if not any(h in code for h in _PYX_HELPER_NAMES):
+        return {}
+    mod = sys.modules.get("pyx")
+    if mod is None:
+        try:
+            mod = _build_pyx_module()
+            sys.modules["pyx"] = mod
+        except Exception:
+            return {}
+    return {n: getattr(mod, n) for n in _PYX_HELPER_NAMES if n in code and hasattr(mod, n)}
+
+
+# What one \py{} may put into the document. Beyond this, the engine runs out
+# of memory ("TeX capacity exceeded") and the WHOLE rest of the document is
+# lost with it — a 99 054-row to_csv() did exactly that. Said clearly, on that
+# \py{} alone, instead.
+_PY_MAX_LINES = 5000
+_PY_MAX_CHARS = 2_000_000
+
+
+def _check_size(value):
+    if isinstance(value, str):
+        lines = value.count("\n") + 1
+        if lines > _PY_MAX_LINES or len(value) > _PY_MAX_CHARS:
+            raise ValueError(
+                "el resultado tiene %s líneas (%s caracteres): LaTeX no puede componer tanto "
+                "y perdería el resto del documento. Muestra una parte, por ejemplo con .head(20)"
+                % (format(lines, ",").replace(",", " "), format(len(value), ",").replace(",", " ")))
+    return value
+
+
+def _linked_dirs():
+    """Folders of the linked notebooks and scripts (their own namespaces)."""
+    out = []
+    for key in list(_NB_NS) + list(_NB_STAGE):
+        d = os.path.dirname(key)
+        if d and d not in out and os.path.isdir(d):
+            out.append(d)
+    return out
+
+
+def _eval_one(code, g):
+    with _USER_CODE:
+        return _check_size(_fmt(eval(code, g, g)))
 
 
 def _evals(req):
@@ -3305,8 +3361,26 @@ def _evals(req):
                 continue
             try:
                 code, g = _scoped(expr, scopes)
-                with _USER_CODE:
-                    value = _fmt(eval(code, g, g))
+                try:
+                    value = _eval_one(code, g)
+                except FileNotFoundError:
+                    # A function of a linked notebook that opens a file by a
+                    # relative path ("Datos.csv") ran from the DOCUMENT's
+                    # folder; in Jupyter it runs from the notebook's. Try
+                    # there, as it would.
+                    value = None
+                    here = os.getcwd()
+                    for d in _linked_dirs():
+                        try:
+                            os.chdir(d)
+                            value = _eval_one(code, g)
+                            break
+                        except FileNotFoundError:
+                            continue
+                        finally:
+                            os.chdir(here)
+                    if value is None:
+                        raise
                 results[expr] = {"ok": True, "value": value}
             except KeyboardInterrupt:
                 interrupted = True
@@ -3500,7 +3574,7 @@ _JUPYTER_COUNT = "'%d:%s' % (__import__('os').getpid(), get_ipython().execution_
 # are taken too, transitively — role "dep": they go to the notebook's own
 # namespace in Pyx, not to the document's.
 _NB_COLLECT = r'''
-import pickle, pickletools, hashlib, json, os, sys, types, inspect, time, builtins, ast, textwrap, linecache
+import pickle, pickletools, hashlib, json, os, sys, types, inspect, time, builtins, ast, textwrap, linecache, io, marshal
 res = {}
 CELLS = globals().get("CELLS") or []
 
@@ -3557,6 +3631,72 @@ def _source(v):
         except Exception:
             pass
     return _from_cells(v.__name__)
+def _defines(src, name):
+    # Does this source define `name` at its top level (def, class, or `name = …`)?
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
+            return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                return True
+    return False
+
+def _own(v):
+    # Defined by the notebook's code (or plain data) — not the environment's
+    # replacement of a builtin (IPython's or Pyx's own `open`, say).
+    if isinstance(v, types.FunctionType):
+        return v.__globals__ is NS
+    return not callable(v)
+
+def _code_names(co):
+    out = list(co.co_names)
+    for c in co.co_consts:
+        if isinstance(c, types.CodeType):
+            out += _code_names(c)
+    return out
+
+# A function of the notebook inside a value (a lambda in a dict, a closure,
+# a function without source) travels BY CODE: its bytecode (marshal, valid
+# for the same Python version), defaults and captured values. Pyx rebuilds it
+# over the notebook's own namespace (kernel.py _nb_load, "__pyx_rebuild__").
+_REB = "__pyx_rebuild__"
+def rebuild(*a):
+    raise RuntimeError("solo Pyx reconstruye esta función")
+rebuild.__module__ = _REB
+
+class _Pickler(pickle.Pickler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.fn_names = []
+    def reducer_override(self, obj):
+        if isinstance(obj, types.FunctionType) and obj.__globals__ is NS:
+            self.fn_names += _code_names(obj.__code__)
+            cl = tuple(c.cell_contents for c in obj.__closure__) if obj.__closure__ else None
+            return (rebuild, (marshal.dumps(obj.__code__), obj.__name__, obj.__defaults__,
+                              obj.__kwdefaults__, cl, tuple(sys.version_info[:2])))
+        return NotImplemented
+
+def _dumps(v):
+    mod = types.ModuleType(_REB)
+    mod.rebuild = rebuild
+    had = sys.modules.get(_REB)
+    sys.modules[_REB] = mod
+    try:
+        buf = io.BytesIO()
+        p = _Pickler(buf, protocol=5)
+        p.dump(v)
+        return buf.getvalue(), p.fn_names
+    finally:
+        if had is None:
+            sys.modules.pop(_REB, None)
+        else:
+            sys.modules[_REB] = had
+
 t_end = time.perf_counter() + BUDGET
 SKIP = {"In", "Out", "get_ipython", "exit", "quit", "display"}
 
@@ -3618,9 +3758,17 @@ while True:
     deps = []
     if isinstance(v, types.ModuleType):
         item = {"module": v.__name__}
-    elif isinstance(v, (types.FunctionType, type)) and getattr(v, "__module__", None) == "__main__":
+    elif ((isinstance(v, types.FunctionType) and v.__globals__ is NS)
+          or (isinstance(v, type) and getattr(v, "__module__", None) == "__main__")):
+        # By SOURCE when the source defines exactly this name at the top
+        # (portable between Python versions); a closure, a lambda, an alias
+        # or a function whose source cannot be found travels by code below.
         try:
+            if isinstance(v, types.FunctionType) and v.__closure__:
+                raise ValueError("closure")
             src = textwrap.dedent(_source(v))
+            if not _defines(src, n):
+                raise ValueError("no define el nombre")
             item = {"source": src, "hash": hashlib.blake2b(src.encode("utf-8"), digest_size=16).hexdigest()}
             deps = _src_deps(src)
         except Exception:
@@ -3629,15 +3777,15 @@ while True:
         try:
             if extra and sys.getsizeof(v) > LIMIT:
                 continue
-            b = pickle.dumps(v, protocol=5)
+            b, fn_names = _dumps(v)
         except Exception as e:
-            if not extra:
+            if role == "need":  # what a function only uses: the builtin may serve
                 res[n] = {"error": "%s: %s" % (type(e).__name__, e), "role": role}
             continue
         if extra and len(b) > LIMIT:
             continue
         h = hashlib.blake2b(b, digest_size=16).hexdigest()
-        deps = _pickle_deps(b)
+        deps = _pickle_deps(b) + fn_names
         if getattr(type(v), "__module__", None) == "__main__":
             deps.append(type(v).__name__)
         if KNOWN.get(n) == h:
@@ -3648,7 +3796,8 @@ while True:
                 with open(f, "wb") as fh:
                     fh.write(b)
             item = {"hash": h, "file": f, "type": type(v).__name__}
-    deps = [d for d in deps if d != n and d in NS and d not in SKIP and not d.startswith("_")]
+    deps = [d for d in deps if d != n and d in NS and d not in SKIP and not d.startswith("_")
+            and not (hasattr(builtins, d) and not _own(NS[d]))]
     item["deps"] = deps
     item["role"] = role
     res[n] = item
@@ -3784,6 +3933,7 @@ class _JupyterShell:
         self.digest = scheme.split("-", 1)[1] if scheme.startswith("hmac-") else "sha256"
         self.session = uuid.uuid4().hex
         self.run_id = ""  # "<connection file>#<pid>:<execution count>", from the probe
+        self.python = ""  # the Jupyter kernel's interpreter (sys.executable)
         self.z = _ZmqDealer(conn.get("ip") or "127.0.0.1", int(conn["shell_port"]), timeout)
 
     def _sign(self, parts):
@@ -3862,6 +4012,61 @@ def _jupyter_runtime_dirs():
     return out
 
 
+_DEAD_KERNELS = {}  # connection file -> its mtime when its port was found closed
+
+
+def _live_connection_files(files):
+    """The connection files whose shell port accepts a connection, all probed
+    AT ONCE. Jupyter leaves a file behind for every kernel it ever started
+    (169 of them on one machine): connecting to each in turn cost 50 ms apiece
+    — ten seconds per compile — on Windows, where a closed port is not refused
+    at once. A file found dead is not probed again while it is unchanged."""
+    import select
+    import socket
+    pending = {}
+    for path in files:
+        try:
+            mt = os.path.getmtime(path)
+        except OSError:
+            continue
+        if _DEAD_KERNELS.get(path) == mt:
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                conn = json.load(fh)
+            if (conn.get("transport") or "tcp") != "tcp":
+                continue
+            s = socket.socket(socket.AF_INET6 if ":" in (conn.get("ip") or "") else socket.AF_INET)
+            s.setblocking(False)
+            s.connect_ex((conn.get("ip") or "127.0.0.1", int(conn["shell_port"])))
+            pending[s] = (path, mt)
+        except Exception:
+            continue
+    alive = set()
+    end = time.monotonic() + 0.25
+    while pending and time.monotonic() < end:
+        socks = list(pending)
+        try:
+            _r, w, x = select.select([], socks, socks, max(0.0, end - time.monotonic()))
+        except (OSError, ValueError):
+            break
+        if not w and not x:
+            break
+        for s in set(w) | set(x):
+            path, mt = pending.pop(s)
+            ok = s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0 and s not in x
+            (alive.add(path) if ok else _DEAD_KERNELS.__setitem__(path, mt))
+            s.close()
+    for s, (path, mt) in pending.items():
+        # No answer in 250 ms: a port nobody listens on (Windows retries the
+        # refusal for a second). Remembered as dead — unless the file is
+        # brand new, a kernel that may still be starting.
+        if time.time() - mt > 60:
+            _DEAD_KERNELS[path] = mt
+        s.close()
+    return [p for p in files if p in alive]
+
+
 def _jupyter_find(nb):
     """The live Jupyter kernel running notebook `nb`: (client, label) or
     (None, why). The user's kernels are found through Jupyter's runtime
@@ -3885,6 +4090,9 @@ def _jupyter_find(nb):
         except OSError:
             return 0
     files.sort(key=mtime, reverse=True)
+    files = _live_connection_files(files)
+    if not files:
+        return None, "Jupyter no está abierto"
     seen = _JUPYTER_SEEN.get(key)
     if seen in files:
         files.remove(seen)
@@ -3898,7 +4106,8 @@ def _jupyter_find(nb):
             if (conn.get("transport") or "tcp") != "tcp":
                 continue
             client = _JupyterShell(conn, 0.05)  # a kernel that is gone refuses at once
-            mid = client.execute("", {"p": _JUPYTER_PROBE, "n": _JUPYTER_COUNT})
+            mid = client.execute("", {"p": _JUPYTER_PROBE, "n": _JUPYTER_COUNT,
+                                      "x": "__import__('sys').executable"})
             reply = client.reply(mid, 1.5)
             if reply is None:
                 busy = True
@@ -3910,6 +4119,12 @@ def _jupyter_find(nb):
             ran = ((reply.get("content") or {}).get("user_expressions") or {}).get("n") or {}
             if ran.get("status") == "ok":
                 client.run_id = "%s#%s" % (path, (ran.get("data") or {}).get("text/plain", ""))
+            exe = ((reply.get("content") or {}).get("user_expressions") or {}).get("x") or {}
+            if exe.get("status") == "ok":
+                try:
+                    client.python = str(ast.literal_eval((exe.get("data") or {}).get("text/plain", "''")))
+                except Exception:
+                    client.python = ""
         except Exception:
             if client is not None:
                 client.close()
@@ -4026,6 +4241,7 @@ def _nb_fetch(req):
                         items[n] = r
                 now = time.time()
                 _NB_STAGE[key] = {"source": "jupyter", "label": label, "when": now, "items": items,
+                                  "python": kc.python,
                                   "codeHash": code_hash}
                 _JUPYTER_TAKEN[key] = (kc.run_id, frozenset(names) | frozenset(extra))
                 _nb_write_meta(d, {"v": _NB_FORMAT, "notebook": nb, "codeHash": code_hash, "source": "jupyter",
@@ -4128,8 +4344,23 @@ def _nb_load(path, ns):
     where its classes live in Pyx."""
     import pickle
 
+    def rebuild(code, name, defaults, kwdefaults, closure, version):
+        # A function that travelled by code (_NB_COLLECT): bytecode is only
+        # valid for the Python version that compiled it.
+        if tuple(version) != tuple(sys.version_info[:2]):
+            raise RuntimeError(
+                "la función %s viene de Python %d.%d y Pyx usa Python %d.%d: elige en Pyx el mismo "
+                "intérprete que el cuaderno (pestaña Python)" % ((name,) + tuple(version) + tuple(sys.version_info[:2])))
+        import marshal
+        cells = tuple(types.CellType(c) for c in closure) if closure is not None else None
+        f = types.FunctionType(marshal.loads(code), ns, name, defaults, cells)
+        f.__kwdefaults__ = kwdefaults
+        return f
+
     class _Unpickler(pickle.Unpickler):
         def find_class(self, module, name):
+            if module == "__pyx_rebuild__" and name == "rebuild":
+                return rebuild
             if module == "__main__":
                 root, _sep, rest = name.partition(".")
                 obj = ns[root] if root in ns else NS.get(root)
@@ -4153,6 +4384,85 @@ _NB_NS = {}
 _SCOPES = {}
 
 
+def _nb_load_items(items, todo, target, label):
+    """Load the items `todo` into the namespace `target`: modules by import,
+    functions and classes from their source, data as fresh unpickled
+    objects — in whatever order they need each other (a decorator imported
+    from a library before the class it decorates, a class before the
+    objects of it). Passes until nothing more loads. Returns {name: error}."""
+    import importlib
+    errors = {}
+    with _USER_CODE:
+        for n in todo:
+            it = items[n]
+            if it.get("module"):
+                try:
+                    target[n] = importlib.import_module(it["module"])
+                except Exception as e:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+
+        def load(n):
+            it = items[n]
+            if it.get("source"):
+                exec(compile(it["source"], label, "exec"), target)
+                if n not in target:
+                    raise RuntimeError("su código no define «%s»" % n)
+            else:
+                target[n] = _nb_load(it["path"], target)
+
+        pending = [n for n in todo if not items[n].get("module")
+                   and (items[n].get("source") or items[n].get("path"))]
+        while pending:
+            failed = []
+            for n in pending:
+                try:
+                    load(n)
+                except (NameError, AttributeError, ImportError) as e:
+                    failed.append((n, e))  # maybe it needs one still to come
+                except Exception as e:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+            if len(failed) == len(pending):
+                for n, e in failed:
+                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+                break
+            pending = [n for n, _e in failed]
+    return errors
+
+
+def _nb_restore(req):
+    """Jupyter closed and the notebook's code (or a data file) changed since
+    Pyx last ran it: put back EVERYTHING that run left in the namespace —
+    every variable of the notebook, saved by _nb_save(full) — and hand the
+    app the ledger of the cells it came from (key, code hash, what each
+    defined and read). The dependency graph then runs only the cells that
+    changed and what depends on them, instead of the whole notebook. Nothing
+    of this is used when the snapshot is not a full one."""
+    import json as _json
+    t0 = time.perf_counter()
+    nb = req.get("notebook") or ""
+    d = _nb_dir(nb)
+    try:
+        with open(os.path.join(d, "meta.json"), encoding="utf-8") as fh:
+            meta = _json.load(fh)
+    except Exception:
+        return {"ok": False, "reason": "no hay valores guardados"}
+    ledger = meta.get("ledger")
+    if (meta.get("v") or 1) < _NB_FORMAT or not ledger:
+        return {"ok": False, "reason": "los valores guardados no son completos"}
+    items = meta.get("items") or {}
+    todo = [n for n, it in items.items() if _nb_usable(it)
+            and (not it.get("path") or os.path.exists(it["path"]))]
+    folder = os.path.dirname(os.path.abspath(nb))
+    if folder and os.path.isdir(folder) and folder not in sys.path:
+        sys.path.append(folder)
+    # Run-mode semantics: the notebook's cells live in the document's
+    # namespace (as if they had just run there).
+    errors = _nb_load_items(items, todo, NS, "<%s>" % os.path.basename(nb))
+    loaded = [n for n in todo if n not in errors and n in NS]
+    return {"ok": True, "ledger": ledger, "loaded": loaded, "errors": errors,
+            "ms": round((time.perf_counter() - t0) * 1000)}
+
+
 def _nb_apply(req):
     """Put the staged values of a notebook into the namespace: modules by
     import, the notebook's functions and classes from their source, data as
@@ -4160,7 +4470,6 @@ def _nb_apply(req):
     namespace, then the names the document uses into the document's. Reports
     which names hold what they held after the previous apply (the dependency
     graph's early cutoff)."""
-    import importlib
     nb = req.get("notebook") or ""
     key = _nb_key(nb)
     st = _NB_STAGE.get(key)
@@ -4176,40 +4485,12 @@ def _nb_apply(req):
         sys.path.append(folder)
     fns = {"__builtins__": builtins, "__name__": "__main__"}
     _NB_NS[key] = fns
-    errors = {}
-    label = "<%s>" % os.path.basename(nb)
-    with _USER_CODE:
-        for n in todo:
-            it = items[n]
-            if it.get("module"):
-                try:
-                    fns[n] = importlib.import_module(it["module"])
-                except Exception as e:
-                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
-        # Functions and classes: a class built on another, or a decorator,
-        # needs that one first — passes until nothing more can be defined.
-        pending = [n for n in todo if items[n].get("source")]
-        while pending:
-            failed = []
-            for n in pending:
-                try:
-                    exec(compile(items[n]["source"], label, "exec"), fns)
-                except NameError as e:
-                    failed.append((n, e))
-                except Exception as e:
-                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
-            if len(failed) == len(pending):
-                for n, e in failed:
-                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
-                break
-            pending = [n for n, _e in failed]
-        for n in todo:
-            it = items[n]
-            if it.get("path") and not it.get("module") and not it.get("source"):
-                try:
-                    fns[n] = _nb_load(it["path"], fns)
-                except Exception as e:
-                    errors[n] = "%s: %s" % (type(e).__name__, _safe_str(e))
+    errors = _nb_load_items(items, todo, fns, "<%s>" % os.path.basename(nb))
+    # Something a function only USES that could not travel (IPython's own
+    # `open`, say) is not the document's problem: the builtin serves.
+    for n in list(errors):
+        if (items.get(n) or {}).get("role") == "dep" and n not in names:
+            del errors[n]
     last = _NB_APPLIED.setdefault(key, {})
     unchanged, given = [], {}
     for n in names:
@@ -4226,7 +4507,14 @@ def _nb_apply(req):
     _SCOPES[req.get("key") or key] = given
     # A value that cannot be loaded is reported, and the rest still arrive:
     # a cell that reads it then fails with a NameError the report explains.
-    return {"ok": True, "unchanged": unchanged, "errors": errors}
+    hint = ""
+    other = st.get("python") or ""
+    if errors and other and os.path.normcase(os.path.abspath(other)) != os.path.normcase(os.path.abspath(sys.executable)):
+        # A value saved by one Python (numpy 2, pandas 2.2…) does not always
+        # load in another: say which two are involved.
+        hint = ("Jupyter usa %s y Pyx usa %s: si un valor no se puede cargar, elige en Pyx el mismo "
+                "intérprete que el cuaderno (pestaña Python)." % (other, sys.executable))
+    return {"ok": True, "unchanged": unchanged, "errors": errors, "hint": hint}
 
 
 def _nb_collect(ns, names, extra, out_dir, known=None, cells=None):
@@ -4267,13 +4555,36 @@ def _nb_save(req):
     if own:
         ns = dict(NS)
         ns.update(own)
+    # `fresh`: the names the cells that ran THIS time defined (or modified).
+    # Every other value is the one already saved — not pickled again: a
+    # 600 000-row DataFrame no cell touched costs nothing to keep.
+    fresh = req.get("fresh")
+    prev = {}
+    if isinstance(fresh, list):
+        try:
+            import json as _json
+            with open(os.path.join(d, "meta.json"), encoding="utf-8") as fh:
+                old = _json.load(fh)
+            if (old.get("v") or 1) >= _NB_FORMAT and old.get("ledger"):
+                prev = {n: it for n, it in (old.get("items") or {}).items()
+                        if n not in fresh and n in names and _nb_usable(it)
+                        and (not it.get("path") or os.path.exists(it["path"]))}
+        except Exception:
+            prev = {}
     with _USER_CODE:
-        items = _nb_collect(ns, names, extra, d, cells=[c for c in (req.get("cells") or []) if isinstance(c, str)])
+        items = _nb_collect(ns, [n for n in names if n not in prev], extra, d,
+                            cells=[c for c in (req.get("cells") or []) if isinstance(c, str)])
+    for n, it in prev.items():
+        items.setdefault(n, it)
     # The data files the notebook's cells read ([path, mtime ms, size]): a
     # snapshot computed from a spreadsheet that has changed since is stale.
     reads = [r for r in (req.get("reads") or []) if isinstance(r, list) and len(r) == 3]
     meta = {"v": _NB_FORMAT, "notebook": nb, "codeHash": req.get("codeHash"), "source": "pyx", "label": "Pyx",
             "when": time.time(), "items": items, "reads": reads}
+    # The cells these values came from (full snapshot): _nb_restore hands
+    # them back so only the cells that change run again.
+    if isinstance(req.get("ledger"), list):
+        meta["ledger"] = req["ledger"]
     _nb_write_meta(d, meta)
     _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
     _NB_STAGE[key] = {"source": "pyx", "label": "Pyx", "when": meta["when"], "items": items, "snapshot": True}
@@ -4338,6 +4649,8 @@ def _nblink(req):
             return _nb_save(req)
         if op == "names":
             return _nb_names(req)
+        if op == "restore":
+            return _nb_restore(req)
         if op == "capture":
             return _scope_capture(req)
         return {"error": "operación desconocida: %s" % op}

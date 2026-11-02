@@ -16,6 +16,7 @@
 // publishes into its own signal.
 
 import { createSignal } from 'solid-js';
+import { stripTexComment } from '../../compile/latex-bridge.js';
 
 /** The active document's text as a CodeMirror `Text` (or a plain string in
  *  tests). Cheap to hold and to swap — it is a rope, not a copy. */
@@ -148,12 +149,8 @@ function countLineWords(s) {
 
 /** Strip the trailing `% comment` (an escaped \% is not a comment). */
 function stripComment(raw) {
-  const pct = raw.indexOf('%');
-  if (pct < 0) return raw;
-  for (let i = pct; i < raw.length; i++) {
-    if (raw[i] === '%' && (i === 0 || raw[i - 1] !== '\\')) return raw.slice(0, i);
-  }
-  return raw;
+  // A `%` inside \py{…} is Python, not a comment (latex-bridge.js).
+  return stripTexComment(raw);
 }
 
 /**

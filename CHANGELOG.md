@@ -3,6 +3,59 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.6.5] — 2026-11-02
+
+### Más rápido
+
+- **Cambiar un cuaderno ya no obliga a ejecutarlo entero.** Con Jupyter
+  cerrado, al modificar una celda de un `.ipynb` o un `.py` vinculado, Pyx
+  recupera todo lo que dejó su última ejecución (aunque sea de otra sesión)
+  y ejecuta solo las celdas cambiadas y las que dependen de ellas. Un
+  cuaderno que tardaba minutos tarda, tras un cambio pequeño, lo que tarde
+  esa celda. Al guardar, solo se vuelven a serializar las variables que han
+  cambiado.
+- **Buscar el Jupyter abierto pasa de ~10 s a unas decenas de ms** con muchos
+  archivos de kernels antiguos: se comprueban todos a la vez y se recuerdan
+  los que ya no responden.
+
+### Cambiado
+
+- **Cinta de compilación con cuatro botones, como TeXstudio**: Compilar y
+  ver, Detener, Ver PDF y Registro. «Recompilar desde cero» sigue en
+  `Ctrl+Alt+Mayús+B` y «Compilar al escribir» en Configuración → Compilación.
+
+### Corregido
+
+- **Un `%` dentro de `\py{…}` ya no se toma por un comentario.** Es Python: un
+  formato (`float_format="%.6f"`, `"%d" % n`, `f"{x:.1%}"`) o el operador
+  módulo. El editor lo coloreaba como comentario hasta el final de la línea;
+  ahora el contenido de `\py{…}` (y la condición de `\pyif{…}`) se colorea
+  como Python. La misma regla vale para el corrector ortográfico y el panel
+  de estructura, y un `\py{}` comentado (`% \py{x}`) ya no se evalúa.
+- **Cualquier función de un cuaderno o `.py` vinculado se puede usar desde
+  `\py{}`**: también las creadas dentro de otra función (*closures*), las
+  `lambda` guardadas en diccionarios o listas, los alias (`g = f`) y las que
+  no tienen código fuente recuperable. Viajan como código compilado (mismo
+  Python que el cuaderno; si no lo es, el aviso lo dice).
+- Las clases con decoradores (`@dataclass`) y sus objetos se cargan en el
+  orden que necesitan; antes, `@dataclass` podía llegar tarde.
+- Una función del cuaderno que abre un archivo por ruta relativa
+  (`pd.read_csv("Datos.csv")`) funciona al llamarla desde `\py{}`, como en
+  Jupyter (se busca en la carpeta del cuaderno).
+- Las funciones propias de Pyx o de IPython que sustituyen a un *builtin*
+  (`open`) ya no se copian como si fueran del cuaderno.
+- Si un valor de Jupyter no se puede cargar porque Jupyter y Pyx usan
+  intérpretes de Python distintos, el aviso lo dice y propone el arreglo.
+
+### Añadido
+
+- `tex`, `texesc`, `tabletex` y `figtex` se pueden usar directamente en
+  `\py{}` sin `from pyx import …`: un documento que toma sus valores de un
+  cuaderno no tiene celdas donde importarlos.
+- Un `\py{}` que produce miles de líneas (un `to_csv()` de 99 054 filas) da un
+  aviso claro en ese `\py{}` en lugar de agotar la memoria de LaTeX y perder el
+  resto del documento.
+
 ## [1.6.4] — 2026-10-25
 
 Los cuadernos de Jupyter vinculados funcionan como las celdas: una función

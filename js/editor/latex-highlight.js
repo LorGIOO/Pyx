@@ -25,6 +25,19 @@
 
 import { Decoration, ViewPlugin } from '@codemirror/view';
 import { parseCells, cellAtLine } from './cell-parse.js';
+import { classifyPythonCached } from './py-highlight.js';
+
+/** Index of the `}` closing the group opened at `open` on this line, counting
+ *  braces exactly as the compiler does (latex-bridge.js findPyExprs), or -1. */
+function pyGroupEnd(text, open) {
+  let depth = 0;
+  for (let j = open; j < text.length; j++) {
+    const c = text[j];
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return j;
+  }
+  return -1;
+}
 
 /* ---------- vocabulary ---------- */
 
@@ -227,7 +240,24 @@ function scanRest(text, start, st, push) {
       continue;
     }
 
-    // The Pyx bridge — not a TeXstudio format, an addition of this editor.
+    // The Pyx bridge: the argument of \py{…} — and the condition of \pyif{…} —
+    // is PYTHON, not LaTeX. A `%` there is Python's `%` ("%.6f", `n % 97`),
+    // not a comment; `&`, `$` and `\\` are just characters of the expression.
+    // It is colored as Python, and the scan resumes after its closing brace.
+    if ((bare === 'py' || bare === 'pyif') && name === bare && text[to] === '{') {
+      const close = pyGroupEnd(text, to);
+      if (close > 0) {
+        push(from, to, 'cm-lx-py');
+        push(to, to + 1, 'cm-lx-py');
+        const code = text.slice(to + 1, close);
+        for (const t of classifyPythonCached(code)) push(to + 1 + t.from, to + 1 + t.to, t.cls);
+        push(close, close + 1, 'cm-lx-py');
+        TOKEN.lastIndex = close + 1;
+        i = close + 1;
+        bodyFrom = keepBody >= 0 ? i : -1;
+        continue;
+      }
+    }
     if (bare === 'py') push(from, to, 'cm-lx-py');
     else if (SECTION.test(name)) push(from, to, 'cm-lx-section');
     else if (inMath(state)) push(from, to, 'cm-lx-mathcmd');

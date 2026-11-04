@@ -3,6 +3,63 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.6.6] — 2026-11-04
+
+### Corregido
+
+- **Pulsar Compilar muchas veces seguidas ya no bloquea Pyx.** Si un PDF se
+  sustituía por otro mientras el visor aún le pedía una página, su texto o
+  sus enlaces, esa petición no terminaba nunca (PDF.js no la cancela): el
+  visor dejaba de dibujar y la compilación que cargaba el PDF se quedaba «En
+  cola…» hasta cerrar la aplicación. Ahora toda espera sobre un PDF se
+  abandona en cuanto ese PDF se sustituye, y la compilación nunca espera más
+  de 20 s a que el visor termine de cargar.
+- Si Python no puede arrancar, la celda muestra el motivo en vez de quedarse
+  «ejecutándose» para siempre.
+- Los botones «Nuevo documento» y «Abrir» de la pantalla de inicio siguen el
+  tema de la aplicación.
+- Las anotaciones de una página de otro tamaño (una apaisada en un informe
+  vertical) quedan donde se dibujaron.
+
+### Más rápido
+
+- **Visor de PDF:** las páginas se dibujan en un hilo aparte (PDF.js 6 con
+  OffscreenCanvas) y varias a la vez, y las ya vistas se guardan. Una página
+  con una gráfica de 700 000 operaciones de dibujo (decenas de miles de
+  puntos) tardaba 4–5 s en volver a dibujarse con la interfaz congelada;
+  ahora ~1,3 s sin que el editor ni el desplazamiento se detengan, y volver a
+  ella tras desplazarse es instantáneo (de 1,4 s a 59 ms).
+- **Kernel de Python:** cada petición durante una compilación responde en
+  ~3,8 ms en lugar de 8–12 ms (en Windows la lectura de peticiones esperaba
+  hasta 20 ms entre comprobaciones).
+- **LaTeX:** el final de cada pasada se detecta antes (sondeo de 5 ms).
+
+### Añadido
+
+- **Actualizaciones desde la propia aplicación.** Al arrancar, Pyx consulta
+  su repositorio de GitHub; si hay una versión nueva, la barra de estado
+  ofrece «Actualizar a…». En Windows descarga el instalador, comprueba su
+  SHA-256 con el publicado, lo instala y se vuelve a abrir (antes pide
+  guardar los documentos con cambios). En macOS y Linux abre la página de la
+  versión.
+- **Herramientas de revisión del PDF:** resaltar, subrayar y tachar el texto
+  seleccionado (el resaltado se funde con la página como un rotulador),
+  lápiz con trazo suavizado, rotulador, línea y flecha con punta rellena
+  (Mayús: 0°/45°/90°), recuadro y elipse (Mayús: cuadrado/círculo),
+  comentarios escritos en la propia página, herramienta de selección para
+  mover y borrar (Supr) marcas, deshacer y rehacer (Ctrl+Z / Ctrl+Y) y
+  «Copiar la lista de correcciones» (página, tipo, texto marcado y
+  comentario de cada marca).
+
+### Manual
+
+- Revisado frente a la aplicación: se quitan las funciones que no tiene
+  (abrir un archivo arrastrándolo a la ventana, avisar de que un documento
+  abierto cambió en el disco) y se corrigen las que no eran exactas (los
+  tipos que abre «Abrir», que guardar también compila, la alineación del
+  asistente de tablas, el desplegable «Intérprete»). Capturas con la cinta
+  actual. Nuevas secciones: revisión del PDF, actualizar Pyx y visor rápido.
+
 ## [1.6.5] — 2026-11-02
 
 ### Más rápido

@@ -492,9 +492,11 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
       images: [],
     };
   }
-  await ensureKernel();
-  state.kernelStatus = 'busy';
   try {
+    // Inside the try: a Python that cannot start is this cell's error, shown
+    // in it — not an exception that left the cell spinning forever.
+    await ensureKernel();
+    state.kernelStatus = 'busy';
     let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset, watch: watch || [] });
     if (reset && res && Array.isArray(res.restart) && res.restart.length) {
       // The document modified a library in the running process
@@ -540,14 +542,14 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
  */
 export async function evalExpressions(exprs, { cwd, silent, scopes } = {}) {
   if (!isTauri() || !exprs.length) return {};
-  await ensureKernel();
   // `silent` (the editor's live ghost values) must not flip the status indicator
   // on every keystroke, nor mark the kernel busy. Nor may it change the
   // namespace: `pure` makes the kernel skip expressions with side effects
   // (\py{lst.pop()}, \py{next(it)}, \py{rng.random()}), which would otherwise
   // run every half second and shift the values the next compile prints.
-  if (!silent) state.kernelStatus = 'busy';
   try {
+    await ensureKernel();
+    if (!silent) state.kernelStatus = 'busy';
     const res = await kernelExec({ id: reqId++, evals: exprs, cwd, pure: !!silent, scopes: scopes || {} });
     if (!silent) state.kernelStatus = 'ready';
     return res.evals || {};

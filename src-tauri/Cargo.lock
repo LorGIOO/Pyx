@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "pyx"
-version = "1.6.5"
+version = "1.6.6"
 dependencies = [
  "flate2",
  "serde",

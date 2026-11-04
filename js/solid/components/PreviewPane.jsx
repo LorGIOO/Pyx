@@ -10,7 +10,7 @@ import {
   annotBarOpen, setAnnotBarOpen, annotTool, setAnnotTool, annotColor, setAnnotColor,
   annotWidth, setAnnotWidth,
 } from '../stores/previewStore.js';
-import { undoLast, clearPage } from '../../pdf/annotate.js';
+import { undo, redo, clearPage, correctionsText, TEXT_TOOLS } from '../../pdf/annotate.js';
 import {
   openExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
 } from '../../core/platform.js';
@@ -48,22 +48,49 @@ const ic = {
   line: `<svg ${S}><path d="M3 13 13 3"/></svg>`,
   noteText: `<svg ${S}><path d="M4 3h8M8 3v10"/></svg>`,                                  // codicon: symbol-text
   eraser: `<svg ${S}><path d="m5.6 13.2-2.8-2.8 6-6 2.8 2.8-6 6zM7.8 13.2h5.6"/></svg>`,
+  select: `<svg ${S}><path d="M3.6 2.4 12.8 6.6 8.7 8 7.3 12.1z"/></svg>`,                // codicon: inspect
+  texthl: `<svg ${S}><rect x="2" y="8.6" width="12" height="4.6" rx="0.8" fill="currentColor" fill-opacity="0.35" stroke="none"/><path d="M4.6 12.2 8 3.2l3.4 9M5.8 9.2h4.4"/></svg>`,
+  underline: `<svg ${S}><path d="M4.8 2.8v4.4a3.2 3.2 0 0 0 6.4 0V2.8M3.6 13.4h8.8"/></svg>`,
+  strike: `<svg ${S}><path d="M11 4.4C10.4 3.3 9.3 2.8 8 2.8c-1.8 0-3 .9-3 2.2 0 .7.3 1.2.9 1.6M5 11c.5 1.4 1.7 2.2 3.2 2.2 1.9 0 3.1-1 3.1-2.4 0-.5-.1-.9-.4-1.2M2.4 8h11.2"/></svg>`,
+  ellipse: `<svg ${S}><ellipse cx="8" cy="8" rx="5.8" ry="4.4"/></svg>`,                    // codicon: circle-large
+  note: `<svg ${S}><path d="M3 3h10a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H8.2L5 13.6v-2.4H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`, // codicon: comment
+  redo: `<svg ${S}><path d="M13.5 6.4h-7a3.8 3.8 0 0 0 0 7.6H10"/><path d="m10.4 3.3 3.1 3.1-3.1 3.1"/></svg>`,
+  copyList: `<svg ${S}><rect x="5" y="4.5" width="8.5" height="9.5" rx="1"/><path d="M3 11.5V3a1 1 0 0 1 1-1h7M7 8h4.5M7 10.5h4.5"/></svg>`, // codicon: copy
   undo: `<svg ${S}><path d="M2.5 6.4h7a3.8 3.8 0 0 1 0 7.6H6"/><path d="M5.6 3.3 2.5 6.4l3.1 3.1"/></svg>`, // codicon: discard
   trashAll: `<svg ${S}><path d="M3 4h10M6 4V2.7h4V4M5 4l.7 9h4.6L11 4z"/></svg>`,         // codicon: trash
   outline: `<svg ${S}><path d="M4.5 2.5h7v11l-3.5-2.6-3.5 2.6z"/></svg>`,                // codicon: bookmark
 };
 const [outlineOpen, setOutlineOpen] = createSignal(false);
 
+// Review tools, in the order a corrector reaches for them: pick/move, the
+// three that act on SELECTED TEXT, free drawing, shapes, comments, eraser.
 const ANNOT_TOOLS = [
-  { id: 'pen', icon: 'pen', title: 'Lápiz (dibujo libre)' },
-  { id: 'highlight', icon: 'marker', title: 'Resaltador' },
-  { id: 'line', icon: 'line', title: 'Línea recta' },
-  { id: 'arrow', icon: 'arrow', title: 'Flecha' },
-  { id: 'rect', icon: 'rect', title: 'Rectángulo' },
-  { id: 'text', icon: 'noteText', title: 'Nota de texto' },
-  { id: 'eraser', icon: 'eraser', title: 'Borrador (borra la anotación bajo el clic)' },
+  { id: 'select', icon: 'select', title: 'Seleccionar: mueve una marca arrastrándola; Supr la borra; doble clic edita un comentario' },
+  { id: 'texthl', icon: 'texthl', title: 'Resaltar texto (selecciónalo)' },
+  { id: 'underline', icon: 'underline', title: 'Subrayar texto (selecciónalo)' },
+  { id: 'strike', icon: 'strike', title: 'Tachar texto (selecciónalo)' },
+  { id: 'pen', icon: 'pen', title: 'Lápiz (trazo libre suavizado)' },
+  { id: 'highlight', icon: 'marker', title: 'Rotulador (resaltado a mano alzada)' },
+  { id: 'line', icon: 'line', title: 'Línea (Mayús: 0°/45°/90°)' },
+  { id: 'arrow', icon: 'arrow', title: 'Flecha (Mayús: 0°/45°/90°)' },
+  { id: 'rect', icon: 'rect', title: 'Recuadro (Mayús: cuadrado)' },
+  { id: 'ellipse', icon: 'ellipse', title: 'Elipse (Mayús: círculo)' },
+  { id: 'note', icon: 'note', title: 'Comentario: clic donde va; se escribe en la página (Ctrl+Intro termina)' },
+  { id: 'eraser', icon: 'eraser', title: 'Borrador (borra las marcas por las que pasa)' },
 ];
-const ANNOT_COLORS = ['#e23b3b', '#f5a623', '#2ca24c', '#2f7fe0', '#9b51e0', '#1a1a1a'];
+const ANNOT_COLORS = ['#ffd400', '#e23b3b', '#f5a623', '#2ca24c', '#2f7fe0', '#9b51e0', '#1a1a1a'];
+
+/** Copy every mark of the document, page by page, as a list of corrections. */
+async function copyCorrections() {
+  const text = correctionsText();
+  if (!text) { messageDialog('No hay anotaciones en este PDF.'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    messageDialog(`Lista de correcciones copiada (${text.split('\n').length} marcas). Pégala en un correo o documento.`);
+  } catch (_) {
+    messageDialog('No se pudo copiar al portapapeles.');
+  }
+}
 
 // Annotation toolbar: pick a tool, color and stroke width to mark up the PDF.
 // The marks are saved per document and scale with zoom.
@@ -94,7 +121,10 @@ function AnnotBar() {
         <option value="7">Muy grueso</option>
       </select>
       <div class="pv-sep"></div>
-      <button class="pv-btn" title="Deshacer la última anotación" innerHTML={ic.undo} onClick={undoLast}></button>
+      <button class="pv-btn" title="Deshacer (Ctrl+Z)" innerHTML={ic.undo} onClick={undo}></button>
+      <button class="pv-btn" title="Rehacer (Ctrl+Y)" innerHTML={ic.redo} onClick={redo}></button>
+      <button class="pv-btn" title="Copiar la lista de correcciones (página, tipo y texto de cada marca)" innerHTML={ic.copyList}
+        onClick={copyCorrections}></button>
       <button class="pv-btn" title="Borrar las anotaciones de esta página" innerHTML={ic.trashAll}
         onClick={() => clearPage(currentPage())}></button>
       <button class="pv-btn" title="Cerrar la barra de anotación" innerHTML={ic.close}
@@ -298,7 +328,7 @@ export default function PreviewPane() {
         <Show when={outlineOpen() && hasPdf()}>
           <PdfOutline />
         </Show>
-        <div class={`preview-scroll tool-${tool()}${invert() ? ' pdf-invert' : ''}${annotTool() ? ' annot-active' : ''}`} ref={scrollRef}></div>
+        <div class={`preview-scroll tool-${tool()}${invert() ? ' pdf-invert' : ''}${annotTool() ? ` annot-active annot-tool-${annotTool()}` : ''}${TEXT_TOOLS.has(annotTool()) ? ' annot-text' : ''}`} ref={scrollRef}></div>
       </div>
     </>
   );

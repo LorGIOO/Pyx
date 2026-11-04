@@ -5230,8 +5230,12 @@ def _respond(req):
     return resp
 
 
+_LAST_IO = 0.0  # perf_counter of the last request read / response written
+
+
 def _write_frame(resp):
     """Write one response; False when the app has gone (closed pipe)."""
+    global _LAST_IO
     rid = resp.get("id") if isinstance(resp, dict) else None
     text = None
     for _ in range(3):
@@ -5256,6 +5260,7 @@ def _write_frame(resp):
         try:
             _REAL_STDOUT.write(text)
             _REAL_STDOUT.flush()
+            _LAST_IO = time.perf_counter()  # the next request is likely close
             return True
         except KeyboardInterrupt:
             continue
@@ -5329,15 +5334,18 @@ def _request_lines(stream):
         return
 
     buf = b""
-    idle = 0.002
+    global _LAST_IO
     while True:
         if not k32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(avail), None):
             return  # the other end closed
         if not avail.value:
-            time.sleep(idle)
-            idle = min(idle * 2, 0.02)
+            # A compile is a BURST of requests, each sent the moment the
+            # previous answer arrives: for a moment after any message in or
+            # out, look every millisecond (a round trip took 7-12 ms with the
+            # old 2-20 ms back-off); quiet for longer, every 20 ms.
+            time.sleep(0.001 if time.perf_counter() - _LAST_IO < 0.3 else 0.02)
             continue
-        idle = 0.002
+        _LAST_IO = time.perf_counter()
         chunk = os.read(fd, avail.value)
         if not chunk:
             return

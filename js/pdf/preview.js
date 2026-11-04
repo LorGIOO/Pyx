@@ -21,17 +21,27 @@
 //
 // The upshot: scrolling and zooming cost O(visible pages), not O(document).
 //
+// 3. PAGES ARE RASTERIZED OFF THE MAIN THREAD (PDF.js's renderer worker, an
+//    OffscreenCanvas). A page with a dense vector plot — 700 000 drawing
+//    operations, a 100 000-point scatter — took 4–5 s on the main thread at
+//    every zoom and recompile; in the worker it re-renders in ~1 s while the
+//    viewer and the editor stay fluid, and a few pages render at once so the
+//    light ones never wait behind a heavy one.
+//
 // Everything else is unchanged: cursor-anchored Ctrl/right-wheel zoom, pinch,
 // the circular loupe, select/pan tools, a selectable text layer, clickable
 // links and SyncTeX both ways.
 
-import * as pdfjsLib from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// The LEGACY build: same speed here, and it carries the polyfills (e.g.
+// Map.prototype.getOrInsertComputed) that macOS's and Linux's WebKit lack.
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import rendererUrl from 'pdfjs-dist/legacy/build/pdf.renderer.min.mjs?url';
 import { readBinaryFile, openExternal, synctexEdit, pathExists, emitToWindow } from '../core/platform.js';
 import { baseName } from '../core/paths.js';
 import { buildPathToSource, sourceOfBuild } from '../compile/build-maps.js';
 import { loupeGeometry } from './loupe-geometry.js';
-import { setAnnotDoc, buildAnnotLayer } from './annotate.js';
+import { setAnnotDoc, buildAnnotLayer, markupFromSelection } from './annotate.js';
 import { general } from '../solid/stores/settingsStore.js';
 import {
   getScale, setScale, getFitMode, setFitMode,
@@ -40,6 +50,33 @@ import {
 } from '../solid/stores/previewStore.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+// Where PDF.js may rasterize pages (it falls back to the main thread by itself
+// when OffscreenCanvas or module workers are missing).
+pdfjsLib.GlobalWorkerOptions.rendererSrc = rendererUrl;
+
+/* A PDF.js promise of a document that is destroyed while it is pending NEVER
+ * settles: PDF.js drops the document's message handler without rejecting what
+ * was in flight (a page, its text, its links). Awaited bare, one of them froze
+ * the render loop for good — and, in openDoc, the compile that was loading the
+ * PDF — so after a few quick compiles nothing compiled or repainted again
+ * until Pyx was restarted. Every await on a document goes through alive(),
+ * which gives up the moment that document is retired. */
+const gone = new WeakMap(); // document -> {promise, reject}
+function goneOf(doc) {
+  let g = gone.get(doc);
+  if (!g) {
+    g = Promise.withResolvers();
+    g.promise.catch(() => {});
+    gone.set(doc, g);
+  }
+  return g;
+}
+const alive = (doc, p) => Promise.race([p, goneOf(doc).promise]);
+function retire(doc) {
+  if (!doc) return;
+  goneOf(doc).reject(new Error('PDF sustituido'));
+  doc.destroy().catch(() => {});
+}
 
 /* ONE PDF.js worker for the life of the viewer.
  *
@@ -74,7 +111,42 @@ const mounted = new Map(); // page index -> wrap element (ONLY the visible ones)
 let renderSeq = 0;         // bumped to cancel in-flight page renders
 let renderLoop = null;     // the running render loop (one at a time)
 let renderAgain = false;   // a pass was requested while one was running
-let activeTask = null;     // the PDF.js RenderTask in flight — cancellable
+const activeTasks = new Set(); // the PDF.js RenderTasks in flight — cancellable
+const LANES = 3;           // pages rasterized at once (see renderPass)
+function cancelRenders() {
+  for (const t of activeTasks) t.cancel();
+  activeTasks.clear();
+}
+
+/* Rasters of pages that scrolled out of the window, kept so scrolling back
+ * shows them at once instead of rasterizing them again (a heavy page costs a
+ * second or more). Keyed by page and scale, bounded by pixels, and dropped
+ * whenever a new PDF is opened: they are of the version that was on screen. */
+const stash = new Map();   // `${i}@${scale}` -> content element (oldest first)
+let stashPx = 0;
+const STASH_PX = 48e6;     // ~190 MB of RGBA
+function stashPut(i, wrap) {
+  const content = wrap.firstChild;
+  const canvas = content && content.querySelector && content.querySelector('canvas');
+  // A page still waiting for its text layer keeps that pending job on its
+  // content (content.pyxLayers): it is built once the page is back on screen.
+  if (!canvas || !wrap.dataset.rscale) return;
+  const key = `${i}@${wrap.dataset.rscale}`;
+  stashDrop(key);
+  const px = canvas.width * canvas.height;
+  stash.set(key, { content, px });
+  stashPx += px;
+  for (const [k, v] of stash) {
+    if (stashPx <= STASH_PX) break;
+    stash.delete(k);
+    stashPx -= v.px;
+  }
+}
+function stashDrop(key) {
+  const v = stash.get(key);
+  if (v) { stash.delete(key); stashPx -= v.px; }
+}
+function stashClear() { stash.clear(); stashPx = 0; }
 let scrollRaf = 0;
 let resizeObs = null;
 let lastWidth = 0;
@@ -191,13 +263,22 @@ function syncWindow() {
   const [lo, hi] = visibleRange();
   for (const [i, el] of mounted) {
     if (i < lo - KEEP || i > hi + KEEP) {
+      stashPut(i, el);
       el.remove();
       mounted.delete(i);
     }
   }
+  const s = String(getScale());
   for (let i = lo; i <= hi; i++) {
     if (mounted.has(i)) continue;
     const wrap = makeWrap(i);
+    const hit = stash.get(`${i}@${s}`);
+    if (hit) {
+      // Painted before at this very scale: shown at once, no rasterizing.
+      stashDrop(`${i}@${s}`);
+      wrap.appendChild(hit.content);
+      wrap.dataset.rscale = s;
+    }
     mounted.set(i, wrap);
     sizer.appendChild(wrap);
   }
@@ -282,33 +363,40 @@ async function openDoc() {
   // Stop painting the old version the moment the new one starts loading:
   // parsing it takes a while, and every page rasterized meanwhile is wasted.
   renderSeq++;
-  if (activeTask) activeTask.cancel();
+  cancelRenders();
   const doc = await pdfjsLib.getDocument({ data: bytes, worker: sharedWorker() }).promise;
-  if (seq !== openSeq) { doc.destroy().catch(() => {}); return; } // superseded
+  if (seq !== openSeq) { retire(doc); return; } // superseded
   // Replace and release whatever is CURRENT now — not what was current when
   // this parse started, which a faster, newer load may already have replaced.
   const prev = pdfDoc;
   pdfDoc = doc;
-  if (prev && prev !== doc) prev.destroy().catch(() => {});
+  if (prev && prev !== doc) retire(prev);
+  stashClear(); // its rasters are of the version just replaced
 
-  const n = pdfDoc.numPages;
+  const n = doc.numPages;
   setNumPages(n);
   setHasPdf(true);
 
   // Size every page from page 1 — parsing all N pages up front would itself
   // take minutes on a huge document. Each page corrects its own size when it
   // first renders (see renderPage), so mixed-format documents self-heal.
-  const p1 = await pdfDoc.getPage(1);
+  let p1;
+  try {
+    p1 = await alive(doc, doc.getPage(1));
+  } catch (e) {
+    if (seq !== openSeq) return; // a newer load owns the viewer now
+    throw e;
+  }
   if (seq !== openSeq) return; // a newer load owns the viewer now
   const vp = p1.getViewport({ scale: 1 });
   baseW = new Array(n).fill(vp.width);
   baseH = new Array(n).fill(vp.height);
-  setAnnotDoc(currentPath, vp.width, vp.height); // load this PDF's saved annotations
+  setAnnotDoc(currentPath); // load this PDF's saved annotations
 
   renderSeq++;
   // A page of the PREVIOUS version still rasterizing would hold the new one
   // back until it finished — for nothing, its result is thrown away.
-  if (activeTask) activeTask.cancel();
+  cancelRenders();
   if (!sizer || sizer.parentElement !== container) {
     sizer = document.createElement('div');
     sizer.className = 'pdf-sizer';
@@ -433,27 +521,37 @@ function renderVisible() {
 
 async function renderPass() {
   const seq = renderSeq;
+  const doc = pdfDoc;
   const s = getScale();
   const [lo, hi] = syncWindow();
   if (hi < lo) return;
   const order = renderOrder(lo, hi);
-  for (const i of order) {
-    if (seq !== renderSeq) return;
-    const wrap = mounted.get(i);
-    if (!wrap || wrap.dataset.rscale === String(s)) continue;
-    await renderPage(i + 1, wrap, s, seq);
-    // The view moved or a new PDF arrived: start again from where the reader
-    // is NOW rather than finish an order computed for somewhere they left.
-    // One page is always painted first, so a continuous scroll still advances.
-    if (renderAgain) return;
-  }
+  // LANES pages at a time, nearest the reader first: a heavy page (seconds)
+  // no longer holds back the light ones queued behind it. When the view moves
+  // or a new PDF arrives no lane takes another page — the pass ends and the
+  // next one starts from where the reader is NOW.
+  let k = 0;
+  const lane = async () => {
+    while (k < order.length && seq === renderSeq && !renderAgain) {
+      const i = order[k++];
+      const wrap = mounted.get(i);
+      if (!wrap || wrap.dataset.rscale === String(s)) continue;
+      await renderPage(doc, i + 1, wrap, s, seq);
+      // A page ON SCREEN becomes selectable at once — not after a heavy page
+      // of the scroll buffer finishes.
+      const content = i >= order.visible[0] && i <= order.visible[1] && wrap.firstChild;
+      const layers = content && content.pyxLayers;
+      if (layers && seq === renderSeq) { content.pyxLayers = null; await layers(); }
+    }
+  };
+  await Promise.all(Array.from({ length: LANES }, lane));
   // Every canvas in the window is up to date: now the layers, same order.
   for (const i of order) {
     if (seq !== renderSeq || renderAgain) return;
-    const wrap = mounted.get(i);
-    const layers = wrap && wrap.pyxLayers;
+    const content = mounted.get(i) && mounted.get(i).firstChild;
+    const layers = content && content.pyxLayers;
     if (!layers) continue;
-    wrap.pyxLayers = null;
+    content.pyxLayers = null;
     await layers();
   }
 }
@@ -470,11 +568,17 @@ function renderOrder(lo, hi) {
     if (last + d <= hi) order.push(last + d);
     if (first - d >= lo) order.push(first - d);
   }
+  order.visible = [first, last];
   return order;
 }
 
-async function renderPage(n, wrap, s, seq) {
-  const page = await pdfDoc.getPage(n);
+async function renderPage(doc, n, wrap, s, seq) {
+  let page;
+  try {
+    page = await alive(doc, doc.getPage(n));
+  } catch (_) {
+    return; // that PDF was replaced meanwhile
+  }
   if (seq !== renderSeq || !mounted.has(n - 1)) return; // scrolled away meanwhile
   const vp = page.getViewport({ scale: s });
 
@@ -509,15 +613,17 @@ async function renderPage(n, wrap, s, seq) {
   canvas.style.width = canvas.width / os + 'px';
   canvas.style.height = canvas.height / os + 'px';
 
-  const ctx = canvas.getContext('2d', { alpha: false });
-  const task = page.render({ canvasContext: ctx, viewport: vp, transform: os !== 1 ? [os, 0, 0, os, 0, 0] : null });
-  activeTask = task;
+  // `canvas`, not a context: that is what lets PDF.js rasterize in its worker
+  // (it paints the finished bitmap into this canvas).
+  const task = page.render({ canvas, viewport: vp, transform: os !== 1 ? [os, 0, 0, os, 0, 0] : null });
+  activeTasks.add(task);
   try {
-    await task.promise;
+    await alive(doc, task.promise);
   } catch (_) {
+    task.cancel();
     return; // cancelled by a newer PDF, or a broken page
   } finally {
-    if (activeTask === task) activeTask = null;
+    activeTasks.delete(task);
   }
   if (seq !== renderSeq || !mounted.has(n - 1)) return;
 
@@ -539,11 +645,13 @@ async function renderPage(n, wrap, s, seq) {
   // The page is VISIBLE now. What makes it selectable and clickable is built
   // once every canvas in the window is painted (see renderPass) — and only if
   // this raster is still the one on screen by then.
-  wrap.pyxLayers = async () => {
-    if (wrap.firstChild !== content) return;
-    try { await buildTextLayer(page, vp, content); } catch (_) {}
-    try { await buildLinkLayer(page, vp, content); } catch (_) {}
-    try { buildAnnotLayer(n, content); } catch (_) {}
+  content.pyxLayers = async () => {
+    if (!content.isConnected) return;
+    try { await alive(doc, buildTextLayer(page, vp, content)); } catch (_) {}
+    try { await alive(doc, buildLinkLayer(page, vp, content)); } catch (_) {}
+    // Each page's OWN size: a landscape page in a portrait report has its
+    // marks where they were drawn, not stretched to page 1's shape.
+    try { buildAnnotLayer(n, content, baseW[n - 1], baseH[n - 1]); } catch (_) {}
   };
 }
 
@@ -595,14 +703,15 @@ async function buildLinkLayer(page, vp, content) {
 
 // Navigate to an internal destination (page + vertical position).
 async function goToDest(dest) {
-  if (!pdfDoc) return;
+  const doc = pdfDoc;
+  if (!doc) return;
   try {
-    const d = typeof dest === 'string' ? await pdfDoc.getDestination(dest) : dest;
+    const d = typeof dest === 'string' ? await alive(doc, doc.getDestination(dest)) : dest;
     if (!d || d[0] == null) return;
     // d[0] is usually a page Ref ({num, gen}); some producers (xdvipdfmx, the
     // xelatex backend) emit a plain 0-based page NUMBER instead. The official
     // PDF.js viewer handles both — so do we, or TOC clicks die silently.
-    const idx = typeof d[0] === 'number' ? d[0] : await pdfDoc.getPageIndex(d[0]);
+    const idx = typeof d[0] === 'number' ? d[0] : await alive(doc, doc.getPageIndex(d[0]));
     if (idx < 0 || idx >= pageCount()) return;
     let top = tops[idx];
     const kind = d[1] && d[1].name;
@@ -804,8 +913,9 @@ async function synctexJump(pageNo, xPt, yPt, word) {
 async function buildTextLayer(page, vp, content) {
   const layer = document.createElement('div');
   layer.className = 'pdf-textlayer';
-  // PDF.js sizes the layer and its runs as multiples of this variable.
-  layer.style.setProperty('--scale-factor', String(vp.scale));
+  // PDF.js sizes the layer and its runs as multiples of this variable (the
+  // rules that use it are in layout.css, .pdf-textlayer).
+  layer.style.setProperty('--total-scale-factor', String(vp.scale));
   content.appendChild(layer);
   await new pdfjsLib.TextLayer({
     textContentSource: page.streamTextContent(),
@@ -849,21 +959,23 @@ export function rerender() { recomputeGeometry(); renderVisible(); }
 /** The PDF's bookmarks as a tree: [{title, dest, items}] ([] if it has none —
  *  a LaTeX PDF has them when the document loads hyperref). */
 export async function pdfOutline() {
-  if (!pdfDoc) return [];
+  const doc = pdfDoc;
+  if (!doc) return [];
   let raw;
-  try { raw = await pdfDoc.getOutline(); } catch (_) { return []; }
+  try { raw = await alive(doc, doc.getOutline()); } catch (_) { return []; }
   const conv = (items) => (items || []).map((it) => ({ title: it.title, dest: it.dest, items: conv(it.items) }));
   return conv(raw);
 }
 
 /** Scroll to a bookmark's destination, its top near the top of the viewer. */
 export async function goToOutline(dest) {
-  if (!pdfDoc || !container) return;
+  const doc = pdfDoc;
+  if (!doc || !container) return;
   let d = dest;
   try {
-    if (typeof d === 'string') d = await pdfDoc.getDestination(d);
+    if (typeof d === 'string') d = await alive(doc, doc.getDestination(d));
     if (!Array.isArray(d)) return;
-    const idx = typeof d[0] === 'number' ? d[0] : await pdfDoc.getPageIndex(d[0]);
+    const idx = typeof d[0] === 'number' ? d[0] : await alive(doc, doc.getPageIndex(d[0]));
     const pageH = baseH[idx] || 1;
     // XYZ / FitH / FitBH give the top in PDF units, measured from the BOTTOM.
     const name = d[1] && d[1].name;
@@ -1098,8 +1210,12 @@ function attachEvents(el) {
   // PDF → code selection sync (toggle in Configuración): selecting text in the
   // PDF selects the same word/phrase in the editor source (via SyncTeX + text).
   el.addEventListener('mouseup', () => {
-    if (!general.selSyncPdfToCode) return;
-    setTimeout(syncSelectionToCode, 0); // let the selection finalize
+    setTimeout(() => {
+      // With highlight / underline / strike-through active, a selection
+      // becomes that mark instead of being synced to the source.
+      if (markupFromSelection()) return;
+      if (general.selSyncPdfToCode) syncSelectionToCode();
+    }, 0); // let the selection finalize
   });
 }
 
@@ -1160,8 +1276,13 @@ async function ensurePageTexts() {
     const texts = new Array(total);
     for (let n = 1; n <= total; n++) {
       if (indexAbort || doc !== pdfDoc) return null;
-      const page = await doc.getPage(n);
-      const tc = await page.getTextContent();
+      let page, tc;
+      try {
+        page = await alive(doc, doc.getPage(n));
+        tc = await alive(doc, page.getTextContent());
+      } catch (_) {
+        return null; // that PDF was replaced meanwhile
+      }
       texts[n - 1] = tc.items.map((i) => i.str).join(' ');
       // Release the page's parsed data — holding 7 000 of them is hundreds of
       // MB. A page that is currently ON SCREEN is exempt: cleanup() drops the
@@ -1331,10 +1452,11 @@ function closeLoupe() {
 
 /** Rasterize a region of `pageN` (page-local CSS px) at the loupe's resolution. */
 async function renderTile(pageN, left, top, side, zoom) {
-  if (!pdfDoc) return;
+  const doc = pdfDoc;
+  if (!doc) return;
   tileBusy = true;
   try {
-    const page = await pdfDoc.getPage(pageN);
+    const page = await alive(doc, doc.getPage(pageN));
     const s = getScale();
     const dens = loupeGeometry({ lsize: LSIZE, dpr: dpr(), zoom }).density;
     const vp = page.getViewport({ scale: s * dens });
@@ -1345,11 +1467,11 @@ async function renderTile(pageN, left, top, side, zoom) {
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     // Shift the page so the requested region lands at the canvas origin.
-    await page.render({
+    await alive(doc, page.render({
       canvasContext: ctx,
       viewport: vp,
       transform: [1, 0, 0, 1, -left * dens, -top * dens],
-    }).promise;
+    }).promise);
     tile = { page: pageN, scale: s, zoom, left, top, w: side, h: side, canvas, dens };
   } catch (_) {
     // A cancelled or failed render just leaves the previous tile in place.

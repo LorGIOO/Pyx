@@ -229,6 +229,8 @@ if (viewerBoot) {
       })
       .catch(() => {});
     ensureKernel().catch(() => {});
+    // A newer Pyx on GitHub? Asked once the window is up, off the start-up path.
+    setTimeout(() => import('./core/updates.js').then((m) => m.checkForUpdate()).catch(() => {}), 8000);
     // Anything the OS delivered before the listener above existed (a cold
     // start always beats the webview).
     //

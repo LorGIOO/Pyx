@@ -49,6 +49,8 @@ export const state = createMutable({
   compileMs: 0,        // how long the last compile took (drives the live backoff)
   liveSuspended: false, // project too heavy to rebuild on every typing pause
   lastPdfPath: null,    // PDF written by the last successful compile
+  update: null,         // a newer release found on GitHub (core/updates.js)
+  updateBusy: false,    // downloading / starting its installer
   // The build↔source line maps do NOT live here: they are large arrays of
   // integers that nothing renders, and a reactive store would wrap every one
   // of those integers in a proxy trap. See compile/build-maps.js.

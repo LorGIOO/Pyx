@@ -8,7 +8,7 @@
 
 Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
 
-![versión](https://img.shields.io/badge/versión-1.6.0-007ACC?style=flat-square)
+![versión](https://img.shields.io/badge/versión-1.6.6-007ACC?style=flat-square)
 ![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
 ![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
@@ -69,7 +69,9 @@ from pyx import figure, figtex, tabletex, tex, texesc
 - **El PDF sigue lo que escribes** — tras cada compilación en vivo, el visor muestra la parte que estás editando si no estaba a la vista.
 - **Celdas como en JupyterLab** — pulsa la barra lateral de una celda para plegar su código, o la de su salida para plegar la salida. Las tablas de pandas se ven como en JupyterLab y VS Code.
 - **Interrupción sin perder la sesión** — parar una celda lanza `KeyboardInterrupt` como en Jupyter: **las variables ya calculadas siguen en memoria**.
-- **Visor PDF profesional** — nítido a cualquier zoom, búsqueda, enlaces clicables, **SyncTeX** (Ctrl+clic ↔ código) y **capa de anotación/dibujo** (lápiz, resaltador, formas, notas).
+- **Visor PDF rápido con documentos enormes** — dibuja las páginas en un hilo aparte (PDF.js 6 + OffscreenCanvas), varias a la vez, y guarda las ya vistas: una página con una gráfica de cientos de miles de puntos no congela la aplicación. Nítido a cualquier zoom, búsqueda, enlaces clicables y **SyncTeX** (Ctrl+clic ↔ código).
+- **Revisión y corrección del PDF** — resaltar, subrayar y tachar el texto seleccionado, comentarios escritos en la página, lápiz suavizado, flechas, recuadros y elipses, mover/borrar marcas, deshacer/rehacer y la **lista de correcciones** copiada en un clic.
+- **Se actualiza sola** — avisa cuando hay una versión nueva en GitHub y, en Windows, la descarga, verifica (SHA-256) e instala desde la propia aplicación.
 - **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
 - **Tu carpeta solo tiene lo tuyo** — el motor LaTeX no escribe nada junto al documento: los `.build.tex`, el `.aux`, `.log`, `.toc`, `.out`, `.mtc*`, el índice SyncTeX y el PDF viven en un directorio de trabajo fuera del proyecto, y al guardar se empaquetan **dentro del `.pltx`** como hace un `.docx`. Lo único que se queda fuera, a propósito, son tus fuentes: `.tex`, imágenes y `.sty`.
 - **Lo mejor de TeXstudio** — autocompletado de 337 comandos y 51 entornos (añade el `\usepackage` que falte), vista previa de fórmulas al pasar el ratón, Ctrl+clic de `\ref` a `\label`, renombrar `\begin`/`\end` a la vez, historial del cursor (`Alt+←`), **buscar en todo el proyecto** (`Ctrl+Mayús+F`), **pegar tablas de Excel** como `tabular`, glosarios, marcadores del PDF, gramática (local y **LanguageTool**) y **macros en Python**.
@@ -102,15 +104,15 @@ Más capturas, con la explicación de cada función, en el [manual de usuario](M
 
 ## 📦 Instalación
 
-Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.6.5):
+Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.6.6):
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | [`Pyx_1.6.5_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.5/Pyx_1.6.5_x64-setup.exe) · [`Pyx_1.6.5_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.5/Pyx_1.6.5_x64_en-US.msi) |
-| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.5_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.5/Pyx_1.6.5_universal.dmg) |
-| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.5/Pyx_1.6.5_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.5/Pyx-1.6.5-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.5/Pyx_1.6.5_amd64.AppImage) (cualquier distro) |
+| **Windows** (x64) | [`Pyx_1.6.6_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.6/Pyx_1.6.6_x64-setup.exe) · [`Pyx_1.6.6_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.6/Pyx_1.6.6_x64_en-US.msi) |
+| **macOS** (Intel y Apple Silicon) | [`Pyx_1.6.6_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.6/Pyx_1.6.6_universal.dmg) |
+| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.6/Pyx_1.6.6_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.6/Pyx-1.6.6-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.6.6/Pyx_1.6.6_amd64.AppImage) (cualquier distro) |
 
-Cada release incluye también el **manual de usuario en PDF** de esa versión (`Pyx_1.6.5_manual_de_usuario.pdf`). La carpeta [Instaladores](Instaladores/) del repositorio conserva los de la versión 1.6.0.
+Cada release incluye también el **manual de usuario en PDF** de esa versión (`Pyx_1.6.6_manual_de_usuario.pdf`). La carpeta [Instaladores](Instaladores/) del repositorio conserva los de la versión 1.6.0.
 
 Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.
 

@@ -436,9 +436,9 @@ fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Err
             let _ = sp.child.kill();
             break sp.child.wait().ok();
         }
-        // 20 ms: the time between the engine exiting and the PDF being shown
-        // includes this sleep, on every compile.
-        std::thread::sleep(Duration::from_millis(20));
+        // The time between the engine exiting and the PDF being shown includes
+        // this sleep, on every pass: 5 ms (a check costs microseconds).
+        std::thread::sleep(Duration::from_millis(5));
     };
     // The readers end when the pipes close (the whole tree is gone by now).
     for r in sp.readers.drain(..) {

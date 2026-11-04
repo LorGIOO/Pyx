@@ -76,10 +76,10 @@ export default function App() {
                 <span><kbd>Ctrl</kbd> + <kbd>O</kbd> {t('abrir', 'open')}</span>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button class="preview-header" style={{ padding: '6px 14px', cursor: 'default' }} onClick={openNewDoc}>
+                <button class="ctl-btn primary" onClick={openNewDoc}>
                   {t('Nuevo documento', 'New document')}
                 </button>
-                <button class="preview-header" style={{ padding: '6px 14px', cursor: 'default' }} onClick={() => openDocument()}>
+                <button class="ctl-btn" onClick={() => openDocument()}>
                   {t('Abrir', 'Open')}
                 </button>
               </div>

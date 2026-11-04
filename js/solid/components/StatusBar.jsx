@@ -52,6 +52,15 @@ export default function StatusBar() {
       </Show>
 
       <div class="status-spacer"></div>
+      <Show when={state.update}>
+        <button class="status-item status-update" type="button" disabled={state.updateBusy}
+          title={t(`Hay una versión nueva de Pyx (${state.update.latest}). Pulsa para actualizar.`, `A new Pyx is out (${state.update.latest}). Click to update.`)}
+          onClick={() => import('../../core/updates.js').then((m) => m.installUpdate())}>
+          {state.updateBusy
+            ? t('Descargando actualización…', 'Downloading update…')
+            : `⬆ ${t('Actualizar a', 'Update to')} ${state.update.latest}`}
+        </button>
+      </Show>
 
       <Show when={state.compiling}>
         <div class="status-item">

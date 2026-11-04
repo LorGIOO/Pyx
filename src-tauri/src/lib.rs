@@ -3,6 +3,7 @@ mod latex;
 mod pltx;
 mod runtime;
 mod synctex;
+mod update;
 mod workspace;
 
 use kernel::KernelState;
@@ -101,6 +102,26 @@ async fn chktex_lint(text: String) -> Result<Vec<latex::ChkHit>, String> {
     tauri::async_runtime::spawn_blocking(move || latex::chktex(&text))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// The latest release on GitHub, and the installer for this system.
+#[tauri::command]
+async fn update_check() -> Result<update::UpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(update::check)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Download, verify and start the installer, then close Pyx (the installer
+/// replaces it and opens the new version). The window checked first that no
+/// document is left unsaved.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle, asset: update::Asset) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || update::install(asset))
+        .await
+        .map_err(|e| e.to_string())??;
+    app.exit(0);
+    Ok(())
 }
 
 /// Stop the LaTeX run in flight (and the PDF driver it started).
@@ -1128,6 +1149,8 @@ pub fn run() {
             create_dir,
             run_command,
             take_pending_open,
+            update_check,
+            update_install,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

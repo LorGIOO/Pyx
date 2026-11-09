@@ -25,6 +25,22 @@ const kernelLabel = () => ({
 const AUTO = () => ({ label: t('Automático', 'Automatic'), sym: '⚙', exe: null, hint: t('detecta numpy', 'detects numpy') });
 const BROWSE = () => ({ label: t('Elegir .exe…', 'Choose .exe…'), sym: '📁', exe: '__browse__', hint: t('examinar', 'browse') });
 
+// Reduction order on a narrow window (ribbonLayout.js): first the interpreter
+// path, which is the widest thing here and the least looked at; then the two
+// pickers that are set once per project; the run buttons stay to the end.
+export const CALC_LAYOUT = {
+  steps: [
+    ['status', 'medium'],
+    ['interp', 'collapsed'],
+    ['macros', 'collapsed'],
+    ['kernel', 'medium'],
+    ['cells', 'medium'],
+    ['run', 'medium'],
+    ['outputs', 'medium'],
+    ['status', 'small'],
+  ],
+};
+
 export default function CalcTab() {
   const hasDoc = () => state.documents.length > 0;
   const busy = () => state.kernelStatus === 'busy' || state.kernelStatus === 'starting';
@@ -57,12 +73,12 @@ export default function CalcTab() {
 
   return (
     <>
-      <RibbonGroup label={t('Celdas', 'Cells')}>
+      <RibbonGroup id="cells" icon={icons.cell} medium="rows" label={t('Celdas', 'Cells')}>
         <RibbonButton icon={icons.cell} label={t('Nueva celda', 'New cell')} disabled={!hasDoc()}
           title={`${t('Nueva celda Python', 'New Python cell')}${kb('calc.newCell')}`} onClick={insertCell} />
       </RibbonGroup>
 
-      <RibbonGroup label={t('Ejecutar', 'Run')}>
+      <RibbonGroup id="run" icon={icons.run} medium="rows" label={t('Ejecutar', 'Run')}>
         <RibbonButton icon={icons.run} label={t('Celda actual', 'Current cell')} disabled={!hasDoc() || busy()}
           title={`${t('Ejecutar la celda actual', 'Run the current cell')}${kb('calc.runCell')}`} onClick={runCurrentCell} />
         {/* While the kernel is busy this turns into "Interrupt" (Jupyter-style). */}
@@ -84,7 +100,7 @@ export default function CalcTab() {
           onClick={() => (busy() ? interruptKernel() : runAll())} />
       </RibbonGroup>
 
-      <RibbonGroup label={t('Salidas', 'Outputs')}>
+      <RibbonGroup id="outputs" icon={icons.collapseAll} medium="rows" label={t('Salidas', 'Outputs')}>
         <RibbonButton
           icon={state.cellsCollapsed ? icons.expandAll : icons.collapseAll}
           label={state.cellsCollapsed ? t('Expandir todas', 'Expand all') : t('Minimizar todas', 'Collapse all')}
@@ -98,7 +114,7 @@ export default function CalcTab() {
         />
       </RibbonGroup>
 
-      <RibbonGroup label={t('Kernel Python', 'Python kernel')}>
+      <RibbonGroup id="kernel" icon={icons.restart} label={t('Kernel Python', 'Python kernel')}>
         <div class="ribbon-btn-stack">
           <RibbonButton size="small" icon={icons.restart} label={t('Reiniciar', 'Restart')}
             title={`${t('Reiniciar el kernel', 'Restart the kernel')}${kb('calc.restart')}`} onClick={restartKernel} />
@@ -109,7 +125,7 @@ export default function CalcTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Macros', 'Macros')}>
+      <RibbonGroup id="macros" icon={icons.list} label={t('Macros', 'Macros')}>
         <div class="ribbon-dd-stack">
           <RibbonDropdown caption={t('Macro', 'Macro')} memKey="macro" icon={icons.python}
             placeholder={t('Elegir…', 'Choose…')}
@@ -120,7 +136,7 @@ export default function CalcTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Intérprete', 'Interpreter')}>
+      <RibbonGroup id="interp" icon={icons.python} label={t('Intérprete', 'Interpreter')}>
         <div class="ribbon-dd-stack">
           <RibbonDropdown caption="Python" memKey="pyinterp" icon={icons.python}
             placeholder={t('Automático', 'Automatic')}
@@ -129,13 +145,16 @@ export default function CalcTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Estado', 'Status')}>
-        <div class="ribbon-field">
+      <RibbonGroup id="status" icon={icons.pass} label={t('Estado', 'Status')}>
+        {/* The tooltip carries both lines: narrower sizes hide the path, then
+            the word, and leave only the dot (ribbon.css, data-size). */}
+        <div class="ribbon-field"
+          title={`${kernelLabel()[state.kernelStatus] || state.kernelStatus} · ${state.env.python || t('Python no detectado', 'Python not detected')}`}>
           <div class="ribbon-field-row">
             <span class={`status-dot ${state.kernelStatus}`}></span>
-            <span>{kernelLabel()[state.kernelStatus] || state.kernelStatus}</span>
+            <span class="ribbon-field-text">{kernelLabel()[state.kernelStatus] || state.kernelStatus}</span>
           </div>
-          <div class="ribbon-field-row" style={{
+          <div class="ribbon-field-row ribbon-field-secondary" style={{
             'font-size': '11px', color: 'var(--theme-text-secondary)',
             'max-width': '230px', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis',
           }}>

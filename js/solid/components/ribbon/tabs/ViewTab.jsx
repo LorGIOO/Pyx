@@ -8,7 +8,7 @@ import { splitActivePane, closePane } from '../../../stores/docStore.js';
 export default function ViewTab() {
   return (
     <>
-      <RibbonGroup label={t('Editor', 'Editor')}>
+      <RibbonGroup id="editor" icon={icons.splitV} label={t('Editor', 'Editor')}>
         <RibbonButton icon={icons.splitV} label={t('Dividir editor', 'Split editor')} disabled={!state.documents.length}
           onClick={splitActivePane}
           title={t('Divide el editor verticalmente (también: arrastra una pestaña al borde derecho de un panel)', 'Split the editor vertically (also: drag a tab to the right edge of a pane)')} />
@@ -19,7 +19,7 @@ export default function ViewTab() {
           title={t('Solo pestañas + editor + visor; todo con teclado (Ctrl+Alt+Z). Esc para salir', 'Only tabs + editor + viewer; all keyboard-driven (Ctrl+Alt+Z). Esc to exit')} />
       </RibbonGroup>
 
-      <RibbonGroup label={t('Paneles', 'Panels')}>
+      <RibbonGroup id="panels" icon={icons.sidebar} label={t('Paneles', 'Panels')}>
         <RibbonButton icon={icons.preview} label={t('Vista previa', 'Preview')} active={state.previewVisible}
           onClick={() => (state.previewVisible = !state.previewVisible)} />
         <div class="ribbon-btn-stack">

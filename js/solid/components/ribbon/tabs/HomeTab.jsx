@@ -54,6 +54,27 @@ const onWrapEnv = (it) => {
   if (env) wrapInEnvironment(env);
 };
 
+// The order in which the groups give way on a narrow window (ribbonLayout.js):
+// what is reached for least goes first. Compiling is the one thing that must
+// stay a single click away at any width, so its group only ever loses its
+// labels — it is never folded into a popover.
+export const HOME_LAYOUT = {
+  steps: [
+    ['structure', 'medium'],
+    ['table', 'collapsed'],
+    ['insert', 'medium'],
+    ['clipboard', 'medium'],
+    ['structure', 'collapsed'],
+    ['insert', 'collapsed'],
+    ['paragraph', 'collapsed'],
+    ['compile', 'medium'],
+    ['clipboard', 'collapsed'],
+    ['format', 'collapsed'],
+    ['compile', 'small'],
+  ],
+  pinned: ['compile'],
+};
+
 export default function HomeTab() {
   const hasDoc = () => state.documents.length > 0;
   // NOT disabled while compiling. A press during a compile — very often the
@@ -65,7 +86,7 @@ export default function HomeTab() {
 
   return (
     <>
-      <RibbonGroup label={t('Portapapeles', 'Clipboard')}>
+      <RibbonGroup id="clipboard" icon={icons.paste} label={t('Portapapeles', 'Clipboard')}>
         <RibbonButton icon={icons.paste} label={t('Pegar', 'Paste')} onClick={() => clip('paste')} />
         <div class="ribbon-btn-stack">
           <RibbonButton size="small" icon={icons.cut} label={t('Cortar', 'Cut')} onClick={() => clip('cut')} />
@@ -74,7 +95,7 @@ export default function HomeTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Compilación', 'Compile')}>
+      <RibbonGroup id="compile" icon={icons.compile} label={t('Compilación', 'Compile')}>
         <RibbonButton icon={icons.compile} disabled={busy()} busy={state.compiling}
           label={state.compiling
             ? (state.compileQueued ? t('En cola…', 'Queued…') : t('Compilando…', 'Compiling…'))
@@ -101,7 +122,7 @@ export default function HomeTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Formato', 'Format')}>
+      <RibbonGroup id="format" icon={icons.bold} label={t('Formato', 'Format')}>
         <div class="ribbon-btn-stack">
           <div class="ribbon-btn-row">
             <RibbonButton icon={icons.bold} title={t('Negrita', 'Bold') + '  \\textbf{…}'} onClick={() => wrap('\\textbf{', '}')} />
@@ -117,7 +138,7 @@ export default function HomeTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Párrafo', 'Paragraph')}>
+      <RibbonGroup id="paragraph" icon={icons.alignLeft} label={t('Párrafo', 'Paragraph')}>
         <div class="ribbon-btn-stack">
           <div class="ribbon-btn-row">
             <RibbonButton icon={icons.alignLeft} title={t('Alinear a la izquierda', 'Align left')} onClick={() => runSnippet(ALIGN()[0])} />
@@ -135,14 +156,14 @@ export default function HomeTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Insertar', 'Insert')}>
+      <RibbonGroup id="insert" icon={icons.image} medium="rows" label={t('Insertar', 'Insert')}>
         {/* Both insert into the open document: with none, the assistant had
             nowhere to put its LaTeX and stayed on screen doing nothing. */}
         <RibbonButton icon={icons.table} label={t('Tabla', 'Table')} disabled={!hasDoc()} title={t('Asistente de tabla', 'Table wizard')} onClick={openTableWizard} />
         <RibbonButton icon={icons.image} label={t('Imagen', 'Image')} disabled={!hasDoc()} title={t('Insertar imagen / figura', 'Insert image / figure')} onClick={openFigureWizard} />
       </RibbonGroup>
 
-      <RibbonGroup label={t('Tabla', 'Table')}>
+      <RibbonGroup id="table" icon={icons.table} label={t('Tabla', 'Table')}>
         <div class="ribbon-btn-stack">
           <div class="ribbon-btn-row">
             <RibbonButton icon={icons.tblAddRow} title={t('Añadir fila', 'Add row')} onClick={tblAddRow} />
@@ -161,7 +182,7 @@ export default function HomeTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Estructura', 'Structure')}>
+      <RibbonGroup id="structure" icon={icons.section} label={t('Estructura', 'Structure')}>
         <div class="ribbon-dd-stack">
           <RibbonDropdown caption={t('Sección', 'Section')} title={t('Estructura del documento', 'Document structure')} items={STRUCTURE()} onPick={runSnippet} />
           <RibbonDropdown caption={t('Etiqueta', 'Label')} title={t('Etiquetas y referencias', 'Labels and references')} items={LABELS()} onPick={runSnippet} />

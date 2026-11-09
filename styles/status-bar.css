@@ -11,6 +11,13 @@
   padding: 0 6px;
   gap: 4px;
   user-select: none;
+  /* Nothing in the bar may widen the window's content, and the bar is the
+     container its own items are sized against (the @container rules at the
+     end): what matters is the room the BAR has, which is not the window's
+     when a panel ever sits beside it. */
+  min-width: 0;
+  overflow: hidden;
+  container: statusbar / inline-size;
 }
 .status-item {
   display: flex;
@@ -19,6 +26,32 @@
   padding: 0 8px;
   height: 100%;
   white-space: nowrap;
+  /* Items give way before they push their neighbours off the edge… */
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+/* …except the two a narrow window must still show whole: the compile state
+   and the cursor position. */
+.status-item.status-keep { flex-shrink: 0; overflow: visible; }
+/* Python / engine: the file name, cut with an ellipsis when even that is too
+   long. The full path is in the tooltip. (`.status-item.status-path`, both
+   classes: it has to outrank the generic `.status-item .value` below.) */
+.status-path .label { flex-shrink: 0; }
+.status-item.status-path .value {
+  display: block;
+  min-width: 0;
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Buttons that carry a sentence ("Falta: numpy, scipy…", "Actualizar a…"):
+   a block box, so the text itself can be cut with an ellipsis. */
+button.status-item {
+  display: block;
+  flex-shrink: 2;
+  line-height: 22px;
+  text-overflow: ellipsis;
 }
 .status-item .label { color: var(--theme-status-text); }
 .status-item .value {
@@ -61,3 +94,11 @@
   cursor: pointer;
 }
 .status-btn:hover { background: rgba(220, 38, 38, 0.18); color: #dc2626; }
+
+/* Narrow bar: secondary items leave in order of how little they are missed —
+   the word count, the engine, the interpreter, and last the kernel's label
+   (its coloured dot stays, and its tooltip says the rest). */
+@container statusbar (max-width: 760px) { .status-words { display: none; } }
+@container statusbar (max-width: 660px) { .status-engine { display: none; } }
+@container statusbar (max-width: 560px) { .status-python { display: none; } }
+@container statusbar (max-width: 460px) { .status-kernel .label { display: none; } }

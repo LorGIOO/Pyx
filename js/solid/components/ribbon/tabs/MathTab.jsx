@@ -12,10 +12,26 @@ import {
 
 const ARRAY = '\\begin{array}{cc}\n   & \\\\\n   & \n\\end{array}';
 
+// Reduction order on a narrow window (ribbonLayout.js). Modo and Básico go
+// straight from full size to collapsed, never to icons only: "$…$" and
+// "\(…\)" share one icon, and so do \frac and \dfrac — without their text
+// they would be pairs of identical buttons.
+export const MATH_LAYOUT = {
+  steps: [
+    ['symbols', 'medium'],
+    ['envs', 'medium'],
+    ['symbols', 'collapsed'],
+    ['envs', 'collapsed'],
+    ['delims', 'collapsed'],
+    ['basic', 'collapsed'],
+    ['mode', 'collapsed'],
+  ],
+};
+
 export default function MathTab() {
   return (
     <>
-      <RibbonGroup label={t('Modo', 'Mode')}>
+      <RibbonGroup id="mode" icon={icons.mInline} label={t('Modo', 'Mode')}>
         <div class="ribbon-btn-stack">
           <RibbonButton size="small" icon={icons.mInline} label={t('En línea', 'Inline') + '  $…$'} onClick={() => wrap('$', '$')} />
           <RibbonButton size="small" icon={icons.mInline} label={t('En línea', 'Inline') + '  \\(…\\)'} onClick={() => wrap('\\(', '\\)')} />
@@ -23,7 +39,7 @@ export default function MathTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Básico', 'Basic')}>
+      <RibbonGroup id="basic" icon={icons.mFrac} label={t('Básico', 'Basic')}>
         <div class="ribbon-btn-stack">
           <RibbonButton size="small" icon={icons.mSub} label={t('Subíndice', 'Subscript') + '  _{}'} onClick={() => wrap('_{', '}')} />
           <RibbonButton size="small" icon={icons.mSup} label={t('Superíndice', 'Superscript') + '  ^{}'} onClick={() => wrap('^{', '}')} />
@@ -36,21 +52,21 @@ export default function MathTab() {
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Delimitadores', 'Delimiters')}>
+      <RibbonGroup id="delims" icon={icons.brackets} label={t('Delimitadores', 'Delimiters')}>
         <div class="ribbon-dd-row">
           <RibbonDropdown compact label="(" title={t('Delimitador izquierdo (inserta \\left…)', 'Left delimiter (inserts \\left…)')} items={LEFT_DELIMS()} onPick={runSnippet} />
           <RibbonDropdown compact label=")" title={t('Delimitador derecho (inserta \\right…)', 'Right delimiter (inserts \\right…)')} items={RIGHT_DELIMS()} onPick={runSnippet} />
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Entornos', 'Environments')}>
+      <RibbonGroup id="envs" icon={icons.mDisplay} label={t('Entornos', 'Environments')}>
         <div class="ribbon-dd-stack">
           <RibbonDropdown caption={t('Ecuaciones', 'Equations')} title={t('Entornos de ecuación', 'Equation environments')} items={MATH_ENVIRONMENTS()} onPick={runSnippet} />
           <RibbonDropdown caption={t('Definiciones', 'Definitions')} title={t('Teoremas y definiciones', 'Theorems and definitions')} items={MATH_THEOREMS()} onPick={runSnippet} />
         </div>
       </RibbonGroup>
 
-      <RibbonGroup label={t('Símbolos y estilos', 'Symbols and styles')}>
+      <RibbonGroup id="symbols" icon={icons.math} label={t('Símbolos y estilos', 'Symbols and styles')}>
         <div class="ribbon-dd-stack">
           <RibbonDropdown caption={t('Funciones', 'Functions')} title={t('Funciones matemáticas (\\sin, \\log…)', 'Math functions (\\sin, \\log…)')} items={MATH_FUNCTIONS()} onPick={runSnippet} />
           <RibbonDropdown caption={t('Estilos', 'Styles')} title={t('Estilos de letra matemáticos', 'Math font styles')} items={MATH_FONTS()} onPick={runSnippet} />

@@ -24,7 +24,8 @@
   color: var(--theme-ribbon-text);
   font-weight: 500;
   border-radius: 4px 4px 0 0;
-  transition: all 0.15s ease;
+  /* Colours only — see the note on .ribbon-btn. */
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   border: 1px solid transparent;
   border-bottom: none;
   cursor: default;
@@ -54,19 +55,14 @@
   height: 94px;
   display: flex;
   align-items: stretch;
-  /* The Home ribbon fits with no scrolling from about 1100px up. Narrower
-     than that — down to the 860px the window allows — the groups used to be
-     squeezed below their own content: buttons then drew on top of the next
-     group ("Cortar" over "Compilar y ver") and the last dropdowns fell off
-     the edge. Now they keep their size and the ribbon scrolls sideways. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-}
-.ribbon-content::-webkit-scrollbar { height: 6px; }
-.ribbon-content::-webkit-scrollbar-thumb {
-  background: var(--theme-ribbon-group-border);
-  border-radius: 999px;
+  /* The Home ribbon fits at full size from about 1100px up. Narrower than
+     that, the groups are NOT squeezed (buttons drew on top of the next group)
+     and the ribbon does NOT scroll sideways (half a window meant dragging a
+     scrollbar to reach the dropdowns): the groups step down in size and, at
+     the end, fold into a popover — see js/solid/components/ribbon/
+     ribbonLayout.js and the `data-size` rules further down. `hidden` here
+     only covers the single frame before the first layout pass. */
+  overflow: hidden;
 }
 
 .ribbon-group {
@@ -75,7 +71,10 @@
   padding: 0 5px;
   border-right: 1px solid var(--theme-ribbon-group-border);
   min-width: 0;
-  flex-shrink: 0; /* never smaller than its buttons: that is what overlapped */
+  /* Never smaller than its buttons: that is what overlapped. It is also what
+     lets ribbonLayout.js measure one group at a time — its width does not
+     depend on its neighbours. */
+  flex-shrink: 0;
   height: 100%;
 }
 .ribbon-group:last-child { border-right: none; }
@@ -98,6 +97,18 @@
   white-space: nowrap;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* In a reduced group the name takes the group's width, it does not set it: a
+   group cut down to a column of icons must not stay as wide as
+   "PORTAPAPELES". `width: 0` takes the label out of the group's intrinsic
+   width; `min-width: 100%` then stretches it back over whatever the buttons
+   need, and the rest is cut with an ellipsis. At full size the name is whole. */
+.ribbon-group[data-size="medium"] > .ribbon-group-label,
+.ribbon-group[data-size="small"] > .ribbon-group-label {
+  width: 0;
+  min-width: 100%;
 }
 
 .ribbon-btn-stack {
@@ -128,7 +139,12 @@
   background: transparent;
   border: 1px solid transparent;
   cursor: default;
-  transition: all 0.15s ease;
+  /* Colours only, never `all`: the adaptive layout changes the size of a
+     button and reads its width back in the same frame. A size that is still
+     easing from its old value measures as the OLD value (the step "did not
+     narrow anything" and was skipped), and buttons that slide into place on
+     every window resize read as the ribbon wobbling. */
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   min-width: 46px;
   gap: 2px;
   height: 66px;
@@ -398,6 +414,122 @@
   color: var(--theme-accent);
   background: var(--theme-hover);
   border: 1px solid var(--theme-border);
+}
+
+/* The dropdown's own icon, shown in the control until a pick brings its symbol. */
+.dd-main-ico { color: var(--theme-ribbon-icon-stroke); margin: 0 -2px 0 -2px; }
+.dd-main-ico svg { width: 13px; height: 13px; }
+
+/* ---------- adaptive sizes ----------
+   ribbonLayout.js writes `data-size` on each .ribbon-group: large (no rule
+   needed — everything above), medium, small, collapsed. The rules below only
+   ever match a group that is IN the ribbon: the popover of a collapsed group
+   holds the group's content while that group's data-size is "collapsed", so
+   the content shows there at full size. */
+
+/* medium + small: the small (three-in-a-column) buttons keep only their icon.
+   The tooltip names them — RibbonButton falls back to the label for it. */
+.ribbon-group[data-size="medium"] .ribbon-btn.small,
+.ribbon-group[data-size="small"] .ribbon-btn.small {
+  min-width: 0;
+  width: 27px;
+  padding: 2px 3px;
+  gap: 0;
+  justify-content: center;
+}
+.ribbon-group[data-size="medium"] .ribbon-btn.small .ribbon-btn-label,
+.ribbon-group[data-size="small"] .ribbon-btn.small .ribbon-btn-label { display: none; }
+
+/* medium, for a group made only of big buttons (data-medium="rows"): they
+   become rows, icon and text side by side, stacked — Word's own middle size. */
+.ribbon-group[data-size="medium"][data-medium="rows"] > .ribbon-group-content {
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+.ribbon-group[data-size="medium"][data-medium="rows"] > .ribbon-group-content > .ribbon-btn {
+  flex-direction: row;
+  justify-content: flex-start;
+  min-width: 0;
+  height: 21px;
+  padding: 2px 8px 2px 4px;
+  gap: 6px;
+}
+.ribbon-group[data-size="medium"][data-medium="rows"] > .ribbon-group-content > .ribbon-btn .ribbon-btn-icon { width: 19px; height: 19px; }
+.ribbon-group[data-size="medium"][data-medium="rows"] > .ribbon-group-content > .ribbon-btn .ribbon-btn-icon svg { width: 18px; height: 18px; }
+.ribbon-group[data-size="medium"][data-medium="rows"] > .ribbon-group-content > .ribbon-btn .ribbon-btn-label {
+  font-size: 11px;
+  text-align: left;
+  max-width: none;
+  white-space: nowrap;
+  -webkit-line-clamp: 1;
+}
+
+/* medium: the captioned combos give up a quarter of their width. */
+.ribbon-group[data-size="medium"] .ribbon-dd-stack { grid-template-columns: auto 72px; gap: 3px 4px; }
+
+/* medium + small: the Python status group drops the interpreter path (it is
+   in the tooltip); small leaves only the coloured dot. */
+.ribbon-group[data-size="medium"] .ribbon-field-secondary,
+.ribbon-group[data-size="small"] .ribbon-field-secondary,
+.ribbon-group[data-size="small"] .ribbon-field-text { display: none; }
+
+/* small: the big buttons lose their text too, but keep their height — the
+   main command of the group is still the largest target in it. */
+.ribbon-group[data-size="small"] .ribbon-btn:not(.small):not(.icon-only) { min-width: 0; width: 32px; }
+.ribbon-group[data-size="small"] .ribbon-btn:not(.small):not(.icon-only) .ribbon-btn-label { display: none; }
+
+/* collapsed: the whole group is one button (icon, name, chevron). */
+.ribbon-group > .ribbon-group-collapsed { display: none; }
+.ribbon-group[data-size="collapsed"] > .ribbon-group-content,
+.ribbon-group[data-size="collapsed"] > .ribbon-group-label { display: none; }
+.ribbon-group[data-size="collapsed"] > .ribbon-group-collapsed {
+  display: flex;
+  flex: 1;
+  height: auto;
+  margin: 2px 0 3px;
+  padding: 6px 3px 2px;
+}
+.ribbon-group-collapsed .ribbon-btn-label {
+  max-width: 66px;
+  overflow-wrap: anywhere; /* "Delimitadores" is one word wider than the button */
+}
+.ribbon-collapsed-chevron {
+  display: flex;
+  margin-top: auto;
+  color: var(--theme-ribbon-dropdown-arrow);
+}
+.ribbon-collapsed-chevron svg { width: 11px; height: 11px; }
+
+/* The popover a collapsed group opens: the group itself, at full size, as if
+   it had dropped out of the ribbon. Same height as a group has in the ribbon
+   (94px content box minus its 4px top padding), so the buttons sit exactly as
+   they do there.
+   position:fixed and NO transform, filter or containment here or on any
+   ancestor inside the ribbon: any of those would turn this box into the
+   containing block of the dropdown menus opened inside it (themselves
+   position:fixed), and they would be placed relative to the popover instead
+   of the window. */
+.ribbon-popover {
+  display: none;
+  position: fixed;
+  z-index: 6500; /* with .ribbon-dd-menu; a menu opened inside stacks above */
+  background: var(--theme-ribbon-content-bg);
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+  padding: 4px 8px 0;
+  cursor: default;
+}
+.ribbon-popover.open { display: block; }
+.ribbon-popover-body {
+  display: flex;
+  flex-direction: column;
+  height: 90px;
+}
+
+/* Narrow window: the tab strip tightens before anything else has to give. */
+@media (max-width: 720px) {
+  .ribbon-tab { padding: 6px 8px; }
 }
 
 /* Theme picker swatches */

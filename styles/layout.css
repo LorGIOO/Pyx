@@ -162,6 +162,22 @@
   border-bottom: 1px solid var(--theme-panel-border);
 }
 .side-content { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 8px; font-size: 12px; color: var(--theme-text); }
+/* Narrow window (half a screen): the open panel floats over the editor
+   instead of taking 264px from it, and SidePanel.jsx closes it on the first
+   click elsewhere. The icon strip stays where it is. Same breakpoint as
+   NARROW in SidePanel.jsx. */
+@media (max-width: 1000px) {
+  .side-wrap { position: relative; }
+  .side-body {
+    position: absolute;
+    left: 38px;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    max-width: calc(100vw - 38px);
+    box-shadow: 6px 0 18px rgba(0, 0, 0, 0.28);
+  }
+}
 .side-empty { padding: 10px 12px; color: var(--theme-text-secondary); font-size: 11.5px; line-height: 1.5; }
 
 /* TOC */
@@ -382,25 +398,41 @@
 .pv-btn:hover { background: var(--theme-hover); border-color: var(--theme-ribbon-btn-hover-border); }
 .pv-btn.active { background: var(--theme-ribbon-btn-active-bg); border-color: var(--theme-ribbon-btn-active-border); color: var(--theme-accent); }
 .pv-btn:disabled { opacity: 0.4; }
-/* The controls strip. It scrolls sideways instead of squashing, because the
-   bar holds seventeen buttons and the preview pane is often only ~280px wide:
-   a shrunken 26px button is still a button, but one pushed past the right edge
-   is gone. The scrollbar itself is hidden — a 12px bar inside a 32px toolbar
-   would eat a third of it — and Chromium maps a plain vertical wheel onto the
-   only axis an element can scroll, so the mouse still reaches everything. */
+/* The controls strip. The bar holds seventeen buttons and the preview pane is
+   often only ~280px wide. It used to scroll sideways with the scrollbar
+   hidden, which kept every button reachable in theory and invisible in
+   practice: nothing said there was more to the right.
+
+   Now what does not fit goes to a "…" menu. The strip WRAPS, and is exactly
+   one row tall with the rest clipped: the buttons that do not fit drop to a
+   second row nobody sees. PreviewPane.jsx finds them there (their offsetTop
+   is not the first row's), marks them `data-ov` and lists them in the menu —
+   no widths to add up, and a button added to the bar later overflows
+   correctly without anyone touching this. */
 .pv-scroll {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 1px;
+  align-content: flex-start;
+  gap: 0 1px;
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  height: 24px;
+  overflow: hidden;
 }
-.pv-scroll::-webkit-scrollbar { height: 0; width: 0; }
 /* Nothing inside the strip may shrink: shrinking is what hid the buttons. */
 .pv-scroll > * { flex-shrink: 0; }
+/* Clipped is not enough: a button on the hidden row could still take the
+   keyboard focus, and focusing it scrolls the strip to show it. */
+.pv-scroll > [data-ov] { visibility: hidden; }
+/* The "…" button and its menu (rows: icon, name; same look as the ribbon's
+   dropdown menus, whose classes it shares). */
+.pv-more-menu { min-width: 220px; max-width: min(360px, calc(100vw - 8px)); }
+.pv-more-menu .ribbon-dd-item:disabled { opacity: 0.45; }
+.pv-more-menu .ribbon-dd-item.active { color: var(--theme-accent); }
+.pv-more-ico { flex: 0 0 18px; display: inline-flex; align-items: center; justify-content: center; }
+.pv-more-ico svg { width: 16px; height: 16px; }
+.pv-more-menu .dd-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-sep { width: 1px; height: 18px; background: var(--theme-border); margin: 0 4px; }
 .pv-zoom {
   min-width: 46px; height: 24px;

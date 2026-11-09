@@ -16,6 +16,21 @@ const phaseLabel = () => ({
 });
 const secs = (ms) => (ms >= 10_000 ? Math.round(ms / 1000) : (ms / 1000).toFixed(1));
 
+// The interpreter is reported as a full path, and a path in a 24px bar pushed
+// everything after it — the compile state, Ln/Col — out of a narrow window.
+// The bar shows the file; the tooltip has the path. Every Python is called
+// python.exe, though, so for those the folder that tells them apart (the
+// version directory, the virtualenv) is kept in front of it.
+function shortExe(path) {
+  if (!path) return '—';
+  const parts = String(path).split(/[\\/]/).filter(Boolean);
+  const file = parts.pop() || String(path);
+  if (!/^python[\d.]*(\.exe)?$/i.test(file)) return file;
+  while (parts.length && /^(scripts|bin)$/i.test(parts[parts.length - 1])) parts.pop();
+  const dir = parts.pop();
+  return dir && !/^[a-z]:$/i.test(dir) ? `${dir} › ${file}` : file;
+}
+
 const kernelLabel = () => ({
   idle: t('Kernel inactivo', 'Kernel idle'),
   starting: t('Iniciando kernel…', 'Starting kernel…'),
@@ -30,18 +45,21 @@ export default function StatusBar() {
   const words = wordCount;
   return (
     <div class="status-bar">
-      <div class="status-item">
+      {/* Narrow window: the secondary items step aside one by one (container
+          queries in status-bar.css) so the compile state and Ln/Col, at the
+          other end, are never the ones pushed out. */}
+      <div class="status-item status-kernel" title={kernelLabel()[state.kernelStatus] || state.kernelStatus}>
         <span class={`status-dot ${state.kernelStatus}`}></span>
         <span class="label">{kernelLabel()[state.kernelStatus] || state.kernelStatus}</span>
       </div>
 
-      <div class="status-item">
+      <div class="status-item status-path status-python" title={state.env.python || ''}>
         <span class="label">Python:</span>
-        <span class="value">{state.env.python || '—'}</span>
+        <span class="value">{shortExe(state.env.python)}</span>
       </div>
-      <div class="status-item">
+      <div class="status-item status-path status-engine" title={state.env.latex || ''}>
         <span class="label">{t('Motor:', 'Engine:')}</span>
-        <span class="value">{state.env.latex || '—'}</span>
+        <span class="value">{shortExe(state.env.latex)}</span>
       </div>
       <Show when={state.missingModules.length}>
         <button class="status-item status-missing" type="button"
@@ -63,7 +81,7 @@ export default function StatusBar() {
       </Show>
 
       <Show when={state.compiling}>
-        <div class="status-item">
+        <div class="status-item status-keep">
           <span class="value">
             {(state.compileFresh ? t('Desde cero · ', 'From scratch · ') : '')
               + (phaseLabel()[state.compilePhase] || t('Compilando…', 'Compiling…'))}
@@ -77,7 +95,7 @@ export default function StatusBar() {
       </Show>
       {/* codicon: pass */}
       <Show when={!state.compiling && state.lastCompileOk === true}>
-        <div class="status-item" title={state.compileMs ? `${(state.compileMs / 1000).toFixed(1)} s` : ''}>
+        <div class="status-item status-keep" title={state.compileMs ? `${(state.compileMs / 1000).toFixed(1)} s` : ''}>
           <span class="value" style={{ color: '#16a34a' }}>
             <span class="pyx-ico status-ico" innerHTML={icons.pass}></span>
             {t('Compilado', 'Compiled')}
@@ -107,7 +125,7 @@ export default function StatusBar() {
           and sent people pressing compile again for a PDF that was already
           there. codicon: warning */}
       <Show when={!state.compiling && state.lastCompileOk === 'warn'}>
-        <div class="status-item"
+        <div class="status-item status-keep"
           title={t('El PDF se ha generado, pero LaTeX ha encontrado errores. Míralos en Problemas.',
             'The PDF was built, but LaTeX reported errors. See Problems.')}>
           <span class="value" style={{ color: '#d97706' }}>
@@ -118,7 +136,7 @@ export default function StatusBar() {
       </Show>
       <Show when={!state.compiling && state.lastCompileOk === false}>
         {/* codicon: error */}
-        <div class="status-item">
+        <div class="status-item status-keep">
           <span class="value" style={{ color: '#dc2626' }}>
             <span class="pyx-ico status-ico" innerHTML={icons.error}></span>
             {t('Error de compilación', 'Compilation error')}
@@ -126,12 +144,12 @@ export default function StatusBar() {
         </div>
       </Show>
 
-      <div class="status-item" title={t('Palabras del texto (sin comandos, comentarios ni celdas)', 'Words of prose (no commands, comments or cells)')}>
+      <div class="status-item status-words" title={t('Palabras del texto (sin comandos, comentarios ni celdas)', 'Words of prose (no commands, comments or cells)')}>
         <span class="value">{words().toLocaleString()}</span>
         <span class="label">{t('palabras', 'words')}</span>
       </div>
 
-      <div class="status-item">
+      <div class="status-item status-keep">
         <span class="label">Ln</span>
         <span class="value">{state.cursor.line}</span>
         <span class="label">Col</span>

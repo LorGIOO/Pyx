@@ -6,18 +6,35 @@
   background: var(--theme-tab-bg);
   border-bottom: 1px solid var(--theme-tab-border);
   flex-shrink: 0;
+  min-width: 0;
+}
+/* The tabs, and the "+" after them. The strip takes the whole width, so each
+   tab gets its 220px while there is room; then they all narrow together (down
+   to their min-width), and only then does the strip scroll — the scrollbar
+   itself hidden, the wheel and the active-tab tracking in DocumentTabs.jsx do
+   the moving. */
+.doc-tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
 }
-.document-tabs::-webkit-scrollbar { height: 0; }
+.doc-tabs-scroll::-webkit-scrollbar { height: 0; width: 0; }
 
 .doc-tab {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 8px 0 14px;
-  min-width: 120px;
-  max-width: 220px;
+  /* 220px when there is room; with many documents open the tabs narrow to
+     72px (a few letters and the close box) before the strip starts to
+     scroll. They used to stop at 120px, so six documents filled half a
+     screen. */
+  flex: 0 1 220px;
+  min-width: 72px;
   height: 100%;
   background: var(--theme-tab-bg);
   border-right: 1px solid var(--theme-tab-border);
@@ -69,13 +86,23 @@
 
 .doc-tab-add {
   width: 30px;
+  flex: 0 0 30px; /* never squeezed… */
+  /* …and never scrolled away: pinned to the right edge of the strip once the
+     tabs overflow it. Opaque, because tabs pass underneath it then. */
+  position: sticky;
+  right: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
+  background: var(--theme-tab-bg);
   border: none;
   color: var(--theme-tab-add-color);
   font-size: 18px;
   cursor: default;
 }
-.doc-tab-add:hover { background: var(--theme-tab-add-hover); }
+/* The hover tint is translucent in the light and dark themes: laid over the
+   strip's own colour so the button stays opaque. */
+.doc-tab-add:hover {
+  background: linear-gradient(var(--theme-tab-add-hover), var(--theme-tab-add-hover)), var(--theme-tab-bg);
+}

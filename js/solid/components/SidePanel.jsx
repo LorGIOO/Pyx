@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from 'solid-js';
+import { createMemo, onMount, onCleanup, For, Show } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
 import { t as tr } from '../../core/i18n.js';
 import { toc, todos, includes, crumbPath } from '../stores/structureStore.js';
@@ -38,6 +38,12 @@ const KIND_SHORT = {
 
 const isText = (n) => /\.(tex|txt|bib|sty|cls|cfg|md|json|py)$/i.test(n);
 
+// Below this window width the open panel no longer fits BESIDE the editor:
+// 38 + 264px taken from half a screen left the editor and the PDF a few
+// hundred pixels each. It then floats over the editor instead (layout.css,
+// same breakpoint) and gets out of the way by itself.
+const NARROW = '(max-width: 1000px)';
+
 export default function SidePanel() {
   const tab = () => state.sidePanelTab;
   const toggle = (id) => (state.sidePanelTab = state.sidePanelTab === id ? null : id);
@@ -51,13 +57,46 @@ export default function SidePanel() {
     return path.length ? path[path.length - 1].line : -1;
   });
 
+  let wrapEl;
+  onMount(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(NARROW);
+    // What the window's narrowing closed, to put it back when it widens —
+    // unless the user has opened or closed a tab in between.
+    let parked = null;
+    const onChange = () => {
+      if (mq.matches) {
+        if (state.sidePanelTab) { parked = state.sidePanelTab; state.sidePanelTab = null; }
+      } else if (parked) {
+        if (!state.sidePanelTab) state.sidePanelTab = parked;
+        parked = null;
+      }
+    };
+    // Floating, the panel covers part of the editor: a click anywhere else
+    // means "I am done with it". (Clicks inside — a symbol, a TOC entry, a
+    // search result — keep it open.) Capture phase: the editor swallows
+    // mousedown.
+    const onDown = (e) => {
+      if (!mq.matches || !state.sidePanelTab) return;
+      if (wrapEl && wrapEl.contains(e.target)) return;
+      parked = null;
+      state.sidePanelTab = null;
+    };
+    mq.addEventListener('change', onChange);
+    document.addEventListener('mousedown', onDown, true);
+    onCleanup(() => {
+      mq.removeEventListener('change', onChange);
+      document.removeEventListener('mousedown', onDown, true);
+    });
+  });
+
   const openInclude = (target) => {
     const base = dirOf(activeDoc()?.path);
     if (base) openPath(joinPath(base, target));
   };
 
   return (
-    <div class="side-wrap">
+    <div class="side-wrap" ref={wrapEl}>
       <div class="side-strip">
         <For each={TABS}>
           {(t) => (

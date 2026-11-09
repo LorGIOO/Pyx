@@ -16,6 +16,7 @@ import {
 } from '../../core/platform.js';
 import { icons as ICO } from './ribbon/icons.js';
 import PdfOutline from './PdfOutline.jsx';
+import { createAnchoredPopup } from './createAnchoredPopup.js';
 
 // Viewer toolbar icons — same hand as the ribbon and the notebook cells:
 // a 16x16 box, 1.2px strokes, no fills unless the shape IS a solid. The
@@ -236,16 +237,77 @@ export default function PreviewPane() {
       onClick={p.onClick} innerHTML={p.icon}></button>
   );
 
+  /* ---- toolbar overflow: what does not fit goes to the "…" menu ----
+     The strip wraps and shows one row (layout.css, .pv-scroll); a control on
+     any later row did not fit. The menu is built from those controls
+     themselves — name from the tooltip, icon from the button, and a click
+     that clicks the real button — so it never has to be kept in step with
+     the toolbar above. */
+  let stripEl;
+  const [overflowed, setOverflowed] = createSignal(0);
+  const [moreItems, setMoreItems] = createSignal([]);
+  const more = createAnchoredPopup({ align: 'end' });
+  const labelOf = (el) => el.getAttribute('data-pyx-tip') || el.getAttribute('title')
+    || el.getAttribute('aria-label') || (el.textContent || '').trim();
+  const measureStrip = () => {
+    if (!stripEl || !stripEl.firstElementChild) return;
+    // "On a later row" = starts at least half a row lower than the first
+    // control. Not simply "lower": the controls are centred in the row, so a
+    // 22px page box sits 1px below a 24px button on the very same row.
+    const top = stripEl.firstElementChild.offsetTop;
+    const half = stripEl.clientHeight / 2;
+    let n = 0;
+    for (const el of stripEl.children) {
+      const off = el.offsetTop - top >= half;
+      if (off) n++;
+      if (off !== el.hasAttribute('data-ov')) el.toggleAttribute('data-ov', off);
+    }
+    setOverflowed(n);
+    if (!n) more.close();
+  };
+  const openMore = () => {
+    if (more.open()) { more.close(); return; }
+    measureStrip();
+    setMoreItems([...stripEl.children].filter((el) => el.hasAttribute('data-ov')).map((el) => (
+      el.tagName === 'BUTTON'
+        ? {
+          el,
+          label: labelOf(el),
+          // The zoom button is text ("125%"), not an icon.
+          icon: el.querySelector('svg') ? el.innerHTML : '',
+          disabled: el.disabled,
+          active: el.classList.contains('active'),
+        }
+        : { sep: true }
+    // A separator is only worth drawing between two commands.
+    )).filter((it, i, all) => !it.sep || (i > 0 && !all[i - 1].sep && i < all.length - 1)));
+    more.show();
+  };
+  onMount(() => {
+    if (typeof ResizeObserver !== 'function') return;
+    // The strip's width, and the two controls whose own width changes (the
+    // page count gains digits, the zoom percentage too).
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; measureStrip(); });
+    });
+    ro.observe(stripEl);
+    for (const el of stripEl.querySelectorAll('.pv-page, .pv-zoom')) ro.observe(el);
+    onCleanup(() => { ro.disconnect(); if (raf) cancelAnimationFrame(raf); });
+  });
+
   return (
     <>
       <div class="preview-toolbar">
-        {/* The controls scroll as one strip. The whole bar used to be a single
-            flex row, so with the side panel open in a 1000px window the last
-            five buttons — exportar, ventana auxiliar, abrir fuera, contraste —
+        {/* The controls are one strip. The whole bar used to be a single flex
+            row, so with the side panel open in a 1000px window the last five
+            buttons — exportar, ventana auxiliar, abrir fuera, contraste —
             were squeezed past the right edge and simply could not be reached.
-            Only `pv-file` and the close button stay pinned outside the strip:
-            a close button that scrolls away is worse than no scrolling. */}
-        <div class="pv-scroll">
+            Whatever does not fit in the strip is listed in the "…" menu next
+            to it. Only `pv-file` and the close button stay pinned outside:
+            a close button that goes into a menu is worse than no menu. */}
+        <div class="pv-scroll" ref={stripEl}>
         {/* Greyed out at the ends of the document, like every PDF viewer: the
             four arrows used to look live on page 1 of 1 and simply did nothing
             when clicked. */}
@@ -290,6 +352,26 @@ export default function PreviewPane() {
         <Btn icon={ic.save} title="Guardar una copia del PDF…" disabled={!hasPdf()} onClick={exportPdf} />
         <Btn icon={ic.float} title="Abrir el PDF en la aplicación externa" disabled={!hasPdf()} onClick={floatWindow} />
         </div>
+        <Show when={overflowed() > 0}>
+          <button class={`pv-btn pv-more${more.open() ? ' active' : ''}`} ref={more.anchor}
+            title="Más herramientas del visor" aria-haspopup="true"
+            onClick={openMore} innerHTML={ICO.ellipsis}></button>
+        </Show>
+        <Show when={more.open()}>
+          <div class="ribbon-dd-menu pv-more-menu" ref={more.popup} style={more.style()}>
+            <For each={moreItems()}>
+              {(it) => (it.sep
+                ? <div class="ctx-sep"></div>
+                : (
+                  <button class={`ribbon-dd-item${it.active ? ' active' : ''}`} disabled={it.disabled}
+                    onClick={() => { more.close(); it.el.click(); }}>
+                    <span class="pv-more-ico" innerHTML={it.icon}></span>
+                    <span class="dd-item-label">{it.label}</span>
+                  </button>
+                ))}
+            </For>
+          </div>
+        </Show>
 
         <span class="pv-spacer"></span>
         <Show when={previewFile()}><span class="pv-file">{previewFile()}</span></Show>

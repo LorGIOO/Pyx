@@ -16,7 +16,7 @@
         "title": "Pyx",
         "width": 1280,
         "height": 820,
-        "minWidth": 860,
+        "minWidth": 640,
         "minHeight": 560,
         "resizable": true,
         "fullscreen": false,

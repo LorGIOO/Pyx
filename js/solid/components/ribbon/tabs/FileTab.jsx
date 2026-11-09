@@ -10,15 +10,15 @@ export default function FileTab() {
   const hasDoc = () => state.documents.length > 0;
   return (
     <>
-      <RibbonGroup label={t('Archivo', 'File')}>
+      <RibbonGroup id="file" icon={icons.open} label={t('Archivo', 'File')}>
         <RibbonButton icon={icons.newDoc} label={t('Nuevo', 'New')} onClick={openNewDoc} />
         <RibbonButton icon={icons.open} label={t('Abrir', 'Open')} onClick={() => openDocument()} />
       </RibbonGroup>
-      <RibbonGroup label={t('Guardar', 'Save')}>
+      <RibbonGroup id="save" icon={icons.save} label={t('Guardar', 'Save')}>
         <RibbonButton icon={icons.save} label={t('Guardar', 'Save')} disabled={!hasDoc()} onClick={() => saveActive()} />
         <RibbonButton icon={icons.saveAs} label={t('Guardar como', 'Save as')} disabled={!hasDoc()} onClick={() => saveActiveAs()} />
       </RibbonGroup>
-      <RibbonGroup label={t('Sesión', 'Session')}>
+      <RibbonGroup id="session" icon={icons.clear} label={t('Sesión', 'Session')}>
         <RibbonButton icon={icons.clear} label={t('Cerrar', 'Close')} disabled={!hasDoc()} onClick={() => closeActive()} />
       </RibbonGroup>
     </>

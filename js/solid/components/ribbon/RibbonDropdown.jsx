@@ -1,5 +1,6 @@
-import { createSignal, onCleanup, For, Show } from 'solid-js';
+import { createSignal, For, Show } from 'solid-js';
 import { t } from '../../../core/i18n.js';
+import { createAnchoredPopup } from '../createAnchoredPopup.js';
 
 // Remembered last pick per dropdown (by memKey), persisted across sessions.
 const MEM = (() => {
@@ -15,35 +16,19 @@ function remember(key, label) {
 //     (no menu) — "memory", so a repeated insert is one click;
 //   • the CARET opens the full menu to pick a different option.
 // Each menu item shows a leading symbol/badge that represents it. The menu is
-// position:fixed so it escapes the ribbon's clipping.
+// position:fixed so it escapes the ribbon's clipping; opening, closing and
+// keeping it inside the window is createAnchoredPopup's job.
 export default function RibbonDropdown(props) {
   const key = () => props.memKey || props.label || props.caption;
-  const [open, setOpen] = createSignal(false);
-  const [pos, setPos] = createSignal({ left: 0, top: 0 });
+  const menu = createAnchoredPopup();
+  const open = menu.open;
+  const close = menu.close;
+  const toggle = menu.toggle;
   const findRemembered = () => {
     const lbl = MEM[key()];
     return lbl ? (props.items || []).find((it) => it.label === lbl) || null : null;
   };
   const [last, setLast] = createSignal(findRemembered());
-  let wrapEl;
-
-  const onDocDown = (e) => {
-    if (wrapEl && wrapEl.contains(e.target)) return;
-    if (e.target.closest && e.target.closest('.ribbon-dd-menu')) return;
-    close();
-  };
-  function close() {
-    setOpen(false);
-    document.removeEventListener('mousedown', onDocDown, true);
-  }
-  function toggle() {
-    if (open()) { close(); return; }
-    const r = wrapEl.getBoundingClientRect();
-    setPos({ left: r.left, top: r.bottom + 1 });
-    setOpen(true);
-    document.addEventListener('mousedown', onDocDown, true);
-  }
-  onCleanup(() => document.removeEventListener('mousedown', onDocDown, true));
 
   const apply = (it) => { props.onPick && props.onPick(it); };
   // Pick from the menu → remember + apply.
@@ -73,6 +58,10 @@ export default function RibbonDropdown(props) {
   };
   const mainSym = () => (cur() && !props.compact ? cur().sym : null);
   const mainBadge = () => (cur() && !props.compact && !cur().sym ? cur().badge : null);
+  // The dropdown's own icon (`icon` prop) stands in until a pick brings its
+  // symbol or badge: it says what the control is while it still reads
+  // "Elegir…". It was accepted and silently dropped before.
+  const mainIcon = () => (props.icon && !props.compact && !mainSym() && !mainBadge() ? props.icon : null);
   const baseTitle = () => props.title || props.label || props.caption;
   const mainTitle = () => (cur()
     ? `${baseTitle()} — ${t('última', 'last')}: ${cur().label} ${t('(clic para repetir, ▾ para cambiar)', '(click to repeat, ▾ to change)')}`
@@ -81,9 +70,12 @@ export default function RibbonDropdown(props) {
   const control = (
     <div
       class={`ribbon-dd${props.compact ? ' compact' : ''}${props.caption ? ' captioned' : ''}${open() ? ' open' : ''}`}
-      ref={wrapEl}
+      ref={menu.anchor}
     >
       <button class="ribbon-dd-main" title={mainTitle()} onClick={onMain}>
+        <Show when={mainIcon()}>
+          <span class="dd-main-ico pyx-ico" innerHTML={mainIcon()}></span>
+        </Show>
         <Show when={mainSym()}>
           <span class="dd-main-sym" innerHTML={mainSym()}></span>
         </Show>
@@ -107,7 +99,7 @@ export default function RibbonDropdown(props) {
         )
         : control}
       <Show when={open()}>
-        <div class="ribbon-dd-menu" style={{ left: pos().left + 'px', top: pos().top + 'px' }}>
+        <div class="ribbon-dd-menu" ref={menu.popup} style={menu.style()}>
           <For each={props.items}>
             {(it) => (
               <button class="ribbon-dd-item" onClick={() => pickFromMenu(it)}>

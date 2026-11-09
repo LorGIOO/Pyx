@@ -33,6 +33,9 @@ export const KEY_ACTIONS = [
   { id: 'view.zen', group: 'Vista', label: 'Modo zen', en: 'Zen mode', def: 'Ctrl+Alt+Z' },
   { id: 'view.preview', group: 'Vista', label: 'Mostrar/ocultar el visor PDF', en: 'Show/hide the PDF viewer', def: 'Ctrl+Alt+P' },
   { id: 'view.terminal', group: 'Vista', label: 'Terminal', en: 'Terminal', def: 'Ctrl+Alt+T' },
+  // The log had no shortcut: in zen mode (no ribbon) the only way to read an
+  // error was to leave zen. The compile LED's menu shows this binding.
+  { id: 'view.log', group: 'Vista', label: 'Mostrar/ocultar el registro de compilación', en: 'Show/hide the compile log', def: 'Ctrl+Alt+L' },
   { id: 'view.split', group: 'Vista', label: 'Dividir el editor', en: 'Split the editor', def: 'Ctrl+Alt+D' },
 ];
 

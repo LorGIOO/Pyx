@@ -4,6 +4,7 @@ import { icons } from '../icons.js';
 import { state } from '../../../../core/state.js';
 import { t } from '../../../../core/i18n.js';
 import { splitActivePane, closePane } from '../../../stores/docStore.js';
+import { comboOf } from '../../../stores/keysStore.js';
 
 export default function ViewTab() {
   return (
@@ -27,6 +28,7 @@ export default function ViewTab() {
             onClick={() => (state.sidePanelHidden = !state.sidePanelHidden)}
             title={t('Mostrar u ocultar el panel lateral (estructura, símbolos, archivos…)', 'Show or hide the side panel (structure, symbols, files…)')} />
           <RibbonButton size="small" icon={icons.log} label={t('Registro', 'Log')} active={state.logVisible}
+            title={`${t('Registro de la compilación (errores, avisos y tiempos)', 'Compile log (errors, warnings and timings)')}${comboOf('view.log') ? ` (${comboOf('view.log')})` : ''}`}
             onClick={() => (state.logVisible = !state.logVisible)} />
           <RibbonButton size="small" icon={icons.terminal} label={t('Terminal', 'Terminal')} active={state.terminalVisible}
             onClick={() => (state.terminalVisible = !state.terminalVisible)}

@@ -45,6 +45,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Why there is no new PDF: a sentence, so it is the first thing to be cut
+   when the bar is short (its tooltip has the whole of it). */
+.status-reason { flex-shrink: 3; }
+.status-item.status-reason .value {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #d97706;
+}
 /* Buttons that carry a sentence ("Falta: numpy, scipy…", "Actualizar a…"):
    a block box, so the text itself can be cut with an ellipsis. */
 button.status-item {

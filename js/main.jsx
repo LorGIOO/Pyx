@@ -142,6 +142,7 @@ if (viewerBoot) {
     'view.zen': () => { state.zenMode = !state.zenMode; },
     'view.preview': () => { state.previewVisible = !state.previewVisible; },
     'view.terminal': () => { state.terminalVisible = !state.terminalVisible; },
+    'view.log': () => { state.logVisible = !state.logVisible; },
     'view.split': () => { splitActivePane(); },
   });
 

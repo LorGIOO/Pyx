@@ -106,3 +106,63 @@
 .doc-tab-add:hover {
   background: linear-gradient(var(--theme-tab-add-hover), var(--theme-tab-add-hover)), var(--theme-tab-bg);
 }
+
+/* The fixed zone at the right end of the strip (DocumentTabs.jsx): it never
+   scrolls and never shrinks. It only takes room when something is in it. */
+.doc-tabs-end {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.doc-tabs-end:has(> .compile-led) { padding: 0 6px; }
+
+/* Compile LED (CompileLed.jsx): a 9px dot in a 22px button. The colours are
+   the status bar's own (status-bar.css), so green, amber and red mean the
+   same thing in both places. */
+.compile-led {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  cursor: default;
+}
+.compile-led:hover { background: var(--theme-tab-hover); border-color: var(--theme-tab-border); }
+.compile-led-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #9aa0a6; /* idle: nothing compiled yet */
+}
+/* Armed but not started: a hollow ring — "about to", not "doing". */
+.compile-led[data-kind="queued"] .compile-led-dot { background: transparent; border: 2px solid var(--theme-accent); }
+/* Working: pulsing. Blue for LaTeX, yellow for Python (the two have
+   different cures when slow), a blue ring while the viewer loads the PDF. */
+.compile-led[data-kind="latex"] .compile-led-dot { background: var(--theme-accent); animation: pulse 0.9s ease-in-out infinite; }
+.compile-led[data-kind="python"] .compile-led-dot { background: #d9a528; animation: pulse 0.9s ease-in-out infinite; }
+.compile-led[data-kind="pdf"] .compile-led-dot {
+  background: transparent;
+  border: 2px solid var(--theme-accent);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+.compile-led[data-kind="ok"] .compile-led-dot { background: #16a34a; }
+.compile-led[data-kind="warn"] .compile-led-dot { background: #d97706; }
+.compile-led[data-kind="error"] .compile-led-dot { background: #dc2626; }
+/* The colour already says "working"; the blinking is not needed to read it. */
+@media (prefers-reduced-motion: reduce) {
+  .compile-led-dot { animation: none !important; }
+}
+/* For screen readers only (aria-live): in the tree, not on screen. */
+.compile-led-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -1,9 +1,11 @@
-import { For, createEffect, onCleanup } from 'solid-js';
+import { For, Show, createEffect, onCleanup } from 'solid-js';
 import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import { switchTo, closeDocument } from '../stores/docStore.js';
 import { openNewDoc } from './NewDocDialog.jsx';
 import { icons } from './ribbon/icons.js';
+import { gv } from '../stores/settingsStore.js';
+import CompileLed from './CompileLed.jsx';
 
 const DOC_MIME = 'application/x-calc-doc';
 
@@ -73,6 +75,15 @@ export default function DocumentTabs() {
       {/* codicon: add */}
       <button class="doc-tab-add pyx-ico" ref={addEl} title={t('Nuevo documento (Ctrl+N)', 'New document (Ctrl+N)')}
         innerHTML={icons.add} onClick={openNewDoc} />
+      </div>
+      {/* The fixed end of the strip: it never scrolls and never shrinks, so
+          what sits here is always in sight. In zen mode that is the compile
+          LED — the strip is the only chrome zen keeps (Configuración →
+          Compilación can show it outside zen too). */}
+      <div class="doc-tabs-end">
+        <Show when={(state.zenMode || gv('ledAlways') === true) && state.documents.length > 0}>
+          <CompileLed />
+        </Show>
       </div>
     </div>
   );

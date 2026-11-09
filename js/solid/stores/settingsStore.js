@@ -206,6 +206,9 @@ export const GENERAL_SECTIONS = {
     chktex: false,
     // Underline the last compile's errors on their lines (TeXstudio markers).
     logMarkers: true,
+    // Show the compile LED next to the document tabs at all times. Off, it
+    // only appears in zen mode, where nothing else tells the compile state.
+    ledAlways: false,
   },
   pdf: {
     pdfFit: 'width',

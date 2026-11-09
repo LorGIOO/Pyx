@@ -7,8 +7,7 @@ import { focusPane, showInPane, splitPane, closePane, isPyxDoc } from '../stores
 import {
   clip, pasteClipboard, selectAll, doUndo, doRedo, openFind, insertCell, gotoLine,
 } from '../../editor/commands.js';
-import { parseLatexLog } from '../../compile/log-parser.js';
-import { lineMaps, buildToReal, knownFileSet, rootBuildFile } from '../../compile/build-maps.js';
+import { problems, gotoProblem } from '../stores/problemsStore.js';
 import { t } from '../../core/i18n.js';
 import { toc, crumbPath } from '../stores/structureStore.js';
 import { getView, broadcastSpellRefresh, forEachEditorView } from '../../editor/setup.js';
@@ -172,16 +171,8 @@ export default function EditorPane() {
     : state.lastCompileOk === true ? t(' · correcto', ' · succeeded')
     : '';
   const [logView, setLogView] = createSignal('problems'); // 'problems' | 'raw'
-  // TeXstudio-fidelity parse: file attribution via the log's parenthesis stack,
-  // with Pyx's .build copies mapped back to the real files.
-  const problems = createMemo(() => parseLatexLog(state.lastLog, {
-    rootFile: rootBuildFile(),
-    buildMap: buildToReal(),
-    knownFiles: knownFileSet(),
-    // The builds are clean LaTeX (cells removed): translate engine line
-    // numbers back to source lines so clicks land on the right line.
-    lineMaps: lineMaps(),
-  }));
+  // The problems of the last compile are parsed once, in problemsStore.js,
+  // and shared with the compile LED and the status bar.
   // The same problems underlined on their lines in the editor (TeXstudio's
   // log markers): the linter reads them, and a new log re-lints every pane.
   setProblemsSource(problems);
@@ -241,9 +232,12 @@ export default function EditorPane() {
                 fallback={<div class="log-empty">{state.lastLog ? t('✓ Sin errores ni avisos detectados.', '✓ No errors or warnings detected.') : t('Compila el documento para ver los problemas.', 'Compile the document to see the problems.')}</div>}>
                 <For each={problems()}>
                   {(p) => (
+                    // A problem's line is a line of ITS file, so the click
+                    // opens that file first (gotoProblem). It used to jump to
+                    // that line number in whatever document was in front.
                     <div class={`log-item ${p.severity}`} classList={{ clickable: !!p.line }}
                       title={p.line ? t(`Ir a la línea ${p.line} · clic derecho para copiar`, `Go to line ${p.line} · right-click to copy`) : t('Clic derecho para copiar', 'Right-click to copy')}
-                      onClick={() => p.line && gotoLine(p.line)}
+                      onClick={() => p.line && gotoProblem(p)}
                       onContextMenu={(e) => { e.preventDefault(); copyText(problemText(p)); }}>
                       <span class="log-sev">{sevIcon(p.severity)}</span>
                       <Show when={p.file}><span class="log-file">{fileBase(p.file)}</span></Show>

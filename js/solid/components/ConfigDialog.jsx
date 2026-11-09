@@ -300,6 +300,13 @@ const FIELDS = () => [
       '0 = no limit (a long simulation is not a hang: the status says Python is running and "Stop" stops it). With a limit, a cell that exceeds it is interrupted and the compile goes on with the warning.'],
   },
   {
+    cat: 'compile', sec: ['Indicador de estado', 'Status indicator'], key: 'ledAlways', type: 'check',
+    label: 'Mostrar siempre el indicador de compilación junto a las pestañas',
+    en: 'Always show the compile indicator next to the tabs',
+    hint: ['Un punto de color al final de las pestañas: gris sin compilar, azul intermitente compilando, amarillo ejecutando Python, verde correcto, ámbar con avisos, rojo con error. Un clic lleva al primer error (o abre el registro) y el clic derecho permite detener la compilación. En modo zen se muestra siempre, porque allí no hay cinta ni barra de estado.',
+      'A coloured dot at the end of the tabs: grey not compiled, blinking blue compiling, yellow running Python, green fine, amber with warnings, red on error. A click goes to the first error (or opens the log) and a right-click can stop the compile. In zen mode it is always shown, since there is no ribbon or status bar there.'],
+  },
+  {
     cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'warmEngine', type: 'check',
     label: 'Tener el preámbulo cargado de antemano (motor precalentado)',
     en: 'Keep the preamble loaded in advance (warm engine)',

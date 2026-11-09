@@ -4,17 +4,17 @@ import { t } from '../../core/i18n.js';
 import { wordCount } from '../stores/structureStore.js';
 import { icons } from './ribbon/icons.js';
 import { cancelCompile } from '../../compile/compiler.js';
+import { compileStatus } from '../stores/compileStatus.js';
 
-// What the compile in flight is doing right now. "Compilando…" alone gave no
-// clue whether a slow compile was waiting on a Python cell or on LaTeX — and
-// those have different cures (a heavy cell vs. a heavy document).
-const phaseLabel = () => ({
-  prep: t('Preparando…', 'Preparing…'),
-  python: t('Ejecutando Python…', 'Running Python…'),
-  latex: t('Componiendo LaTeX…', 'Typesetting LaTeX…'),
-  pdf: t('Cargando PDF…', 'Loading PDF…'),
-});
-const secs = (ms) => (ms >= 10_000 ? Math.round(ms / 1000) : (ms / 1000).toFixed(1));
+// The compile item is drawn from compileStatus — the same answer the compile
+// LED gives in zen mode, so the two never say different things. Only the
+// verdicts get a colour and a glyph; work in progress is plain text.
+// codicons: pass, warning, error.
+const VERDICT = {
+  ok: { color: '#16a34a', icon: icons.pass },
+  warn: { color: '#d97706', icon: icons.warn },
+  error: { color: '#dc2626', icon: icons.error },
+};
 
 // The interpreter is reported as a full path, and a path in a 24px bar pushed
 // everything after it — the compile state, Ln/Col — out of a narrow window.
@@ -80,67 +80,31 @@ export default function StatusBar() {
         </button>
       </Show>
 
-      <Show when={state.compiling}>
-        <div class="status-item status-keep">
-          <span class="value">
-            {(state.compileFresh ? t('Desde cero · ', 'From scratch · ') : '')
-              + (phaseLabel()[state.compilePhase] || t('Compilando…', 'Compiling…'))}
-          </span>
-          <button class="status-btn" type="button"
-            title={t('Detener la compilación (se conserva el PDF anterior)', 'Stop compiling (the previous PDF is kept)')}
-            onClick={() => cancelCompile()}>
-            <span class="pyx-ico status-ico" innerHTML={icons.stop}></span>
-          </button>
+      {/* Why the last compile left no new PDF on screen, when it did not.
+          Said in words here as well as in the LED's tooltip: "Compilado" with
+          a PDF that has not changed is the one thing this bar must never show
+          without an explanation. It may be cut short (the tooltip has it
+          all); the state next to it may not. */}
+      <Show when={state.compileReason && !state.compiling && !state.pdfLoading}>
+        <div class="status-item status-reason" title={state.compileReason}>
+          <span class="value">{state.compileReason}</span>
         </div>
       </Show>
-      {/* codicon: pass */}
-      <Show when={!state.compiling && state.lastCompileOk === true}>
-        <div class="status-item status-keep" title={state.compileMs ? `${(state.compileMs / 1000).toFixed(1)} s` : ''}>
-          <span class="value" style={{ color: '#16a34a' }}>
-            <span class="pyx-ico status-ico" innerHTML={icons.pass}></span>
-            {t('Compilado', 'Compiled')}
-            <Show when={state.compileMs > 0}>{` · ${secs(state.compileMs)} s`}</Show>
+      <Show when={compileStatus().kind !== 'idle'}>
+        <div class="status-item status-keep" title={compileStatus().detail}>
+          <span class="value" style={{ color: VERDICT[compileStatus().kind]?.color }}>
+            <Show when={VERDICT[compileStatus().kind]}>
+              <span class="pyx-ico status-ico" innerHTML={VERDICT[compileStatus().kind].icon}></span>
+            </Show>
+            {compileStatus().label}
           </span>
-        </div>
-      </Show>
-      {/* A project this heavy is no longer rebuilt on every typing pause — say
-          so, instead of leaving the user wondering why the PDF stopped moving. */}
-      <Show when={state.liveSuspended && state.liveCompile}>
-        <div
-          class="status-item"
-          title={t(
-            'La compilación tarda demasiado para hacerla en cada pausa. Compila cuando quieras con Ctrl+Mayús+B.',
-            'This project takes too long to rebuild on every pause. Compile on demand with Ctrl+Shift+B.',
-          )}
-        >
-          {/* codicon: debug-pause */}
-          <span class="value" style={{ color: '#d97706' }}>
-            <span class="pyx-ico status-ico" innerHTML={icons.pause}></span>
-            {t('Compilación automática en pausa', 'Auto-compile paused')}
-          </span>
-        </div>
-      </Show>
-      {/* The PDF was produced, but LaTeX recovered from errors on the way — they
-          are listed in Problemas. Amber, not red: red said "nothing came out"
-          and sent people pressing compile again for a PDF that was already
-          there. codicon: warning */}
-      <Show when={!state.compiling && state.lastCompileOk === 'warn'}>
-        <div class="status-item status-keep"
-          title={t('El PDF se ha generado, pero LaTeX ha encontrado errores. Míralos en Problemas.',
-            'The PDF was built, but LaTeX reported errors. See Problems.')}>
-          <span class="value" style={{ color: '#d97706' }}>
-            <span class="pyx-ico status-ico" innerHTML={icons.warn}></span>
-            {t('Compilado con errores', 'Compiled with errors')}
-          </span>
-        </div>
-      </Show>
-      <Show when={!state.compiling && state.lastCompileOk === false}>
-        {/* codicon: error */}
-        <div class="status-item status-keep">
-          <span class="value" style={{ color: '#dc2626' }}>
-            <span class="pyx-ico status-ico" innerHTML={icons.error}></span>
-            {t('Error de compilación', 'Compilation error')}
-          </span>
+          <Show when={state.compiling}>
+            <button class="status-btn" type="button"
+              title={t('Detener la compilación (se conserva el PDF anterior)', 'Stop compiling (the previous PDF is kept)')}
+              onClick={() => cancelCompile()}>
+              <span class="pyx-ico status-ico" innerHTML={icons.stop}></span>
+            </button>
+          </Show>
         </div>
       </Show>
 

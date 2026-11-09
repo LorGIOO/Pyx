@@ -16,9 +16,10 @@ import {
   writeBinaryFile,
   pltxRead,
   pltxWrite,
-  askDialog,
+  choiceDialog,
   messageDialog,
 } from '../../core/platform.js';
+import { t } from '../../core/i18n.js';
 import { general } from './settingsStore.js';
 import { baseName } from '../../core/paths.js';
 import { parseCellsText, codeHashMap } from '../../editor/cell-parse.js';
@@ -321,9 +322,12 @@ function compileAfterSave() {
  * So: the document stays MODIFIED, the reason goes to «Problemas», and the
  * platform's own error dialog says it out loud. Nothing is compiled after a
  * failed save. */
-async function saveFailed(doc, e) {
+async function saveFailed(doc, e, interactive = true) {
   const msg = String((e && e.message) || e);
   state.lastLog = `===== Avisos de Pyx =====\n[Guardar · ${doc.fileName}] ${msg}`;
+  // An unattended save (autosave) must not put up a modal every few minutes
+  // while a drive is away: the log carries it and the document stays marked.
+  if (!interactive) return false;
   try {
     await messageDialog(`No se pudo guardar «${doc.fileName}».\n\n${msg}`,
       { title: 'El documento NO se ha guardado', kind: 'error' });
@@ -331,32 +335,81 @@ async function saveFailed(doc, e) {
   return false;
 }
 
-export async function saveActive() {
-  const doc = activeDoc();
-  if (!doc || doc.kind) return false; // viewer tabs aren't saveable
-  trimTrailingWhitespace(doc);
-  let ok;
-  // A document with Python cells must be a .pltx — if it has no path yet, or it
-  // was a .tex that now has cells, prompt a Save As so it lands as .pltx.
-  const needsPltx = docHasCells(doc) && (!doc.path || /\.tex$/i.test(doc.path));
-  if (!doc.path || needsPltx) {
-    ok = await saveActiveAs();
-  } else {
-    try {
-      await writeSource(doc.path, getDocContent(doc.id), doc);
-    } catch (e) {
-      return saveFailed(doc, e);
-    }
-    doc.modified = false;
-    ok = true;
+/* Text typed WHILE a save is in flight must not come out marked as saved.
+ *
+ * Writing is asynchronous (a network drive, a large .pltx being packed), and
+ * the editor stays usable meanwhile. Clearing `modified` after the `await`
+ * declared the document saved whatever had been typed in between: the tab
+ * lost its dot, closing asked nothing, and those characters existed only in
+ * memory. So the flag is cleared only when the buffer still IS the text that
+ * was written.
+ *
+ * Exported for the compiler, which also saves the sources it builds from. */
+export function markSavedIfUnchanged(doc, textWritten) {
+  if (!doc) return false;
+  let now;
+  try { now = getDocContent(doc.id); } catch (_) { return false; }
+  if (now !== textWritten) {
+    doc.modified = true;
+    return false;
   }
-  if (ok) compileAfterSave();
-  return ok;
+  doc.modified = false;
+  return true;
 }
 
-export async function saveActiveAs() {
-  const doc = activeDoc();
-  if (!doc || doc.kind) return false;
+// One write per document at a time: Ctrl+S twice in a row, or an autosave
+// landing on a manual save, would otherwise race two writers on one file.
+const saving = new Map(); // doc id -> Promise of the save in flight
+function serialized(doc, job) {
+  const prev = saving.get(doc.id) || Promise.resolve();
+  const next = prev.catch(() => {}).then(job);
+  saving.set(doc.id, next);
+  const done = () => { if (saving.get(doc.id) === next) saving.delete(doc.id); };
+  next.then(done, done);
+  return next;
+}
+
+/** Save ANY open document (not only the active one) through the real save
+ *  path: a .pltx is packed as a container, an untitled document — or a .tex
+ *  that gained cells — goes through «Guardar como».
+ *
+ *    compile     — compile and show afterwards (an explicit Ctrl+S).
+ *    trim        — apply «quitar espacios al final» first.
+ *    interactive — may open dialogs. Off, a document that would need
+ *                  «Guardar como» is left alone and a failure is only logged. */
+export function saveDocument(doc, { compile = false, trim = true, interactive = true } = {}) {
+  if (!doc || doc.kind) return Promise.resolve(false); // viewer tabs aren't saveable
+  return serialized(doc, async () => {
+    if (trim) trimTrailingWhitespace(doc);
+    let ok;
+    // A document with Python cells must be a .pltx — if it has no path yet, or it
+    // was a .tex that now has cells, prompt a Save As so it lands as .pltx.
+    const needsPltx = docHasCells(doc) && (!doc.path || /\.tex$/i.test(doc.path));
+    if (!doc.path || needsPltx) {
+      if (!interactive) return false;
+      ok = await writeAs(doc);
+    } else {
+      const content = getDocContent(doc.id);
+      try {
+        await writeSource(doc.path, content, doc);
+      } catch (e) {
+        return saveFailed(doc, e, interactive);
+      }
+      markSavedIfUnchanged(doc, content);
+      ok = true;
+    }
+    if (ok && compile) compileAfterSave();
+    return ok;
+  });
+}
+
+// «Guardar como» for one document. The dialog is about THAT document, so it
+// is brought to the front first: asked while closing the app, the name on the
+// dialog must match the text the user is looking at.
+async function writeAs(doc) {
+  const index = state.documents.findIndex((d) => d.id === doc.id);
+  if (index < 0) return false;
+  if (index !== state.activeIndex) switchTo(index);
   const cells = docHasCells(doc);
   // Default name: keep the stem but force .pltx when the document has cells.
   let defName = doc.fileName || 'documento.pltx';
@@ -364,26 +417,89 @@ export async function saveActiveAs() {
   // When it has cells the dialog only offers .pltx (no .tex option).
   const path = await saveFileDialog(defName, cells);
   if (!path) return false;
+  const content = getDocContent(doc.id);
   try {
-    await writeSource(path, getDocContent(doc.id), doc);
+    await writeSource(path, content, doc);
   } catch (e) {
     return saveFailed({ ...doc, fileName: baseName(path) }, e);
   }
   doc.path = path;
   doc.fileName = baseName(path);
-  doc.modified = false;
+  markSavedIfUnchanged(doc, content);
   return true;
+}
+
+export function saveActive() {
+  return saveDocument(activeDoc(), { compile: true });
+}
+
+export function saveActiveAs() {
+  const doc = activeDoc();
+  if (!doc || doc.kind) return Promise.resolve(false);
+  return serialized(doc, () => writeAs(doc));
+}
+
+/** Open documents with changes that are not on disk (viewer tabs never are). */
+export function unsavedDocs() {
+  return state.documents.filter((d) => d.modified && !d.kind);
+}
+
+/* Before anything that throws the open documents away — closing the window,
+ * installing an update — ask what to do with the unsaved ones.
+ *
+ * Returns true when it is safe to go on: nothing was modified, everything was
+ * saved, or the user chose to discard. «Guardar» uses the real save path for
+ * each document (a .pltx is packed, an untitled one asks where to go); a
+ * cancelled «Guardar como» or a failed write answers false — the app stays
+ * open with the document still marked. It asks again if something was typed
+ * while the saves ran. */
+export async function resolveUnsaved({ title, lead } = {}) {
+  for (;;) {
+    const docs = unsavedDocs();
+    if (!docs.length) return true;
+    const names = docs.slice(0, 10).map((d) => `   •  ${d.fileName}`);
+    if (docs.length > 10) names.push(t(`   … y ${docs.length - 10} más`, `   … and ${docs.length - 10} more`));
+    const what = docs.length === 1
+      ? t('Este documento tiene cambios sin guardar:', 'This document has unsaved changes:')
+      : t('Estos documentos tienen cambios sin guardar:', 'These documents have unsaved changes:');
+    const choice = await choiceDialog(
+      `${lead ? `${lead}\n\n` : ''}${what}\n\n${names.join('\n')}\n\n${t('¿Quieres guardarlos?', 'Do you want to save them?')}`,
+      {
+        title: title || t('Cambios sin guardar', 'Unsaved changes'),
+        yes: docs.length === 1 ? t('Guardar', 'Save') : t('Guardar todo', 'Save all'),
+        no: t('No guardar', "Don't save"),
+        cancel: t('Cancelar', 'Cancel'),
+      },
+    );
+    if (choice === 'cancel') return false;
+    if (choice === 'no') return true;
+    for (const d of docs) {
+      // Closed or saved by other means while an earlier dialog was up.
+      if (!d.modified || !state.documents.some((x) => x.id === d.id)) continue;
+      if (!(await saveDocument(d))) return false;
+    }
+  }
 }
 
 export async function closeDocument(index) {
   const doc = state.documents[index];
   if (!doc) return;
   if (doc.modified && !doc.kind) {
-    const ok = await askDialog(
-      `"${doc.fileName}" tiene cambios sin guardar. ¿Cerrar de todas formas?`,
-      { title: 'Cerrar documento', okLabel: 'Cerrar sin guardar', cancelLabel: 'Cancelar' },
+    const choice = await choiceDialog(
+      t(`«${doc.fileName}» tiene cambios sin guardar. ¿Quieres guardarlos antes de cerrarlo?`,
+        `"${doc.fileName}" has unsaved changes. Save them before closing it?`),
+      {
+        title: t('Cerrar documento', 'Close document'),
+        yes: t('Guardar', 'Save'),
+        no: t('No guardar', "Don't save"),
+        cancel: t('Cancelar', 'Cancel'),
+      },
     );
-    if (!ok) return;
+    if (choice === 'cancel') return;
+    if (choice === 'yes' && !(await saveDocument(doc))) return;
+    // The dialogs were asynchronous: tabs may have been closed or reordered.
+    index = state.documents.findIndex((d) => d.id === doc.id);
+    if (index < 0) return;
   }
   // Free blob URLs held by image viewer tabs (explorer-opened images).
   if (doc.kind === 'image' && doc.payload && String(doc.payload.src).startsWith('blob:')) {

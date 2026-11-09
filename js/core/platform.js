@@ -43,6 +43,20 @@ export async function focusSelf() {
   if (!isTauri()) return;
   try { const w = getCurrentWindow(); await w.unminimize(); await w.setFocus(); } catch (_) {}
 }
+/** Intercept EVERY way of closing this window: the title bar's X (closeWindow
+ *  above), Alt+F4, the taskbar, the system menu. The handler decides; the
+ *  window only goes away through destroyWindow(). */
+export function onCloseRequested(handler) {
+  if (!isTauri()) return () => {};
+  let un = () => {};
+  getCurrentWindow().onCloseRequested(handler).then((f) => { un = f; }).catch(() => {});
+  return () => un();
+}
+/** Close this window for real (no close-requested round trip). */
+export async function destroyWindow() {
+  if (!isTauri()) return;
+  await getCurrentWindow().destroy();
+}
 export function onWindowResized(cb) {
   if (!isTauri()) return () => {};
   let un = () => {};
@@ -109,6 +123,19 @@ export async function messageDialog(message, opts) {
 export async function askDialog(message, opts = {}) {
   if (!isTauri()) return window.confirm(message);
   return dialog.ask(message, { kind: 'warning', ...opts });
+}
+/** Native three-way choice — «Guardar / No guardar / Cancelar». Answers
+ *  'yes' | 'no' | 'cancel'; closing the dialog (Esc, its X) is 'cancel', and
+ *  so is any answer that is not recognised: the caller is about to close or
+ *  replace unsaved work, so doubt must never read as consent. */
+export async function choiceDialog(message, { title, kind = 'warning', yes = 'Sí', no = 'No', cancel = 'Cancelar' } = {}) {
+  if (!isTauri()) return window.confirm(message) ? 'yes' : 'cancel';
+  // The plugin answers with the LABEL of a custom button (or the stock
+  // 'Yes' / 'No' / 'Cancel' where the platform ignores custom texts).
+  const res = await dialog.message(message, { title, kind, buttons: { yes, no, cancel } });
+  if (res === yes || res === 'Yes') return 'yes';
+  if (res === no || res === 'No') return 'no';
+  return 'cancel';
 }
 
 /* ---------- File system ----------

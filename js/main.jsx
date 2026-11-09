@@ -5,10 +5,11 @@ import PreviewPane from './solid/components/PreviewPane.jsx';
 import { state } from './core/state.js';
 import {
   detectEnv, isTauri, openExternal, onAppEvent, focusSelf, invoke,
+  onCloseRequested, destroyWindow, askDialog,
 } from './core/platform.js';
 import { setChangeHandler, getViewOfDoc } from './editor/setup.js';
 import {
-  openDocument, saveActive, closeActive, splitActivePane, openFromOs,
+  openDocument, saveActive, closeActive, splitActivePane, openFromOs, resolveUnsaved,
 } from './solid/stores/docStore.js';
 import { compileActive, cancelCompile, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
 import { loadPdf, pdfSearch } from './pdf/preview.js';
@@ -101,6 +102,37 @@ if (viewerBoot) {
     // Defer to after the pane has remounted (its onMount sets the container);
     // then load fresh so the latest compiled PDF shows.
     requestAnimationFrame(() => reloadLastPdf());
+  });
+
+  /* Closing Pyx with unsaved documents asks first: Guardar / No guardar /
+     Cancelar. Nothing listened for the close request before, so the title
+     bar's X, Alt+F4 and the taskbar all closed the window at once and took
+     every unsaved change with them.
+
+     The request is ALWAYS refused here and the window is destroyed explicitly
+     once the answer is in: the decision involves dialogs and file writes, and
+     the window must not go away while one of them is still pending. */
+  let closingApp = false;
+  onCloseRequested(async (event) => {
+    event.preventDefault();
+    if (closingApp) return; // X pressed again while the question is up
+    closingApp = true;
+    try {
+      let go;
+      try {
+        go = await resolveUnsaved({ title: 'Cerrar Pyx' });
+      } catch (_) {
+        // The question itself failed. Never trap the user in a window that
+        // cannot be closed — but still do not close silently.
+        go = await askDialog(
+          'No se pudo comprobar si hay cambios sin guardar. ¿Cerrar Pyx de todas formas?',
+          { title: 'Cerrar Pyx', okLabel: 'Cerrar', cancelLabel: 'Cancelar' },
+        ).catch(() => true);
+      }
+      if (go) await destroyWindow();
+    } finally {
+      closingApp = false;
+    }
   });
 
   // Ctrl+click in the detached viewer → open that source file here, at the

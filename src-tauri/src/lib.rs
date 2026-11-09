@@ -120,12 +120,23 @@ async fn update_check() -> Result<update::UpdateInfo, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Download, verify and start the installer, then close Pyx (the installer
-/// replaces it and opens the new version). The window checked first that no
-/// document is left unsaved.
+/// Download the installer and verify it against the published SHA-256. Pyx
+/// stays open: nothing is run until `update_install`.
 #[tauri::command]
-async fn update_install(app: tauri::AppHandle, asset: update::Asset) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || update::install(asset))
+async fn update_download(asset: update::Asset) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || update::download(asset))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Start the installer `update_download` verified, then close Pyx (the
+/// installer replaces it and opens the new version). `app.exit` does not go
+/// through the window's close request, so the window asks about unsaved
+/// documents itself, right before calling this — after the download, not
+/// before it, because the user keeps working while it runs.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(update::launch)
         .await
         .map_err(|e| e.to_string())??;
     app.exit(0);
@@ -1211,6 +1222,7 @@ pub fn run() {
             run_command,
             take_pending_open,
             update_check,
+            update_download,
             update_install,
         ])
         .on_window_event(|window, event| {

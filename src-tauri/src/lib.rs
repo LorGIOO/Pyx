@@ -629,6 +629,36 @@ fn notebook_code_cells(bytes: &[u8], path: &str) -> Result<Vec<NotebookCell>, St
         .collect())
 }
 
+/// Decode a text file the way the editor opens one (js/core/encoding.js):
+/// UTF-8 with its BOM dropped, and otherwise Windows-1252.
+///
+/// The project search read everything with `from_utf8_lossy`, which turns
+/// each accent of a Latin-1 chapter into U+FFFD: the search could not find
+/// "sección" in it, and the text it showed was not the text of the file.
+fn decode_text(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(s) => match s.strip_prefix('\u{feff}') {
+            Some(rest) => rest.to_string(),
+            None => s,
+        },
+        Err(e) => e.into_bytes().iter().map(|&b| cp1252(b)).collect(),
+    }
+}
+
+/// One Windows-1252 byte as the WHATWG decoder maps it (0x80–0x9F are not
+/// Latin-1: 0x80 is the euro sign, 0x93/0x94 the curly quotes…).
+fn cp1252(b: u8) -> char {
+    const HIGH: [u16; 32] = [
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
+        0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022,
+        0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+    ];
+    match b {
+        0x80..=0x9F => char::from_u32(HIGH[(b - 0x80) as usize] as u32).unwrap_or('\u{fffd}'),
+        _ => b as char,
+    }
+}
+
 /// One searchable file of a project: its path and its text.
 #[derive(serde::Serialize)]
 struct ProjectText {
@@ -678,11 +708,11 @@ async fn project_texts(root: String) -> Result<Vec<ProjectText>, String> {
                     // artifacts are never inflated for a search.
                     match pltx::read_source(&p) {
                         Ok(Some(s)) => Some(s),
-                        Ok(None) => std::fs::read(&path).ok().map(|b| String::from_utf8_lossy(&b).into_owned()),
+                        Ok(None) => std::fs::read(&path).ok().map(decode_text),
                         Err(_) => None,
                     }
                 } else if EXTS.contains(&ext.as_str()) && !name.contains(".build.") {
-                    std::fs::read(&path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+                    std::fs::read(&path).ok().map(decode_text)
                 } else {
                     None
                 };
@@ -863,10 +893,36 @@ async fn list_pythons() -> Result<Vec<kernel::PyProbe>, String> {
 #[tauri::command]
 async fn rename_path(from: String, to: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        std::fs::rename(&from, &to).map_err(|e| format!("No se pudo renombrar: {e}"))
+        rename_guarded(std::path::Path::new(&from), std::path::Path::new(&to))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Rename a file or folder, refusing to land on something that exists.
+///
+/// `std::fs::rename` REPLACES the destination: renaming `borrador.tex` to the
+/// name of the chapter next to it destroyed that chapter, with no question
+/// and nothing in the recycle bin. The one destination that may exist is the
+/// source itself under another spelling — `informe.tex` → `Informe.tex` on a
+/// case-insensitive volume — which is a rename of the same file, not a clash.
+fn rename_guarded(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+    if std::fs::symlink_metadata(from).is_err() {
+        return Err("No se pudo renombrar: el archivo ya no existe.".into());
+    }
+    if std::fs::symlink_metadata(to).is_ok() {
+        // Same file on disk? Canonical paths carry the real spelling, so two
+        // names that differ only in case resolve to one path there.
+        let same = match (std::fs::canonicalize(from), std::fs::canonicalize(to)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        if !same {
+            let name = to.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            return Err(format!("Ya existe «{name}» en esta carpeta. Elige otro nombre."));
+        }
+    }
+    std::fs::rename(from, to).map_err(|e| format!("No se pudo renombrar: {e}"))
 }
 
 #[tauri::command]
@@ -1301,6 +1357,69 @@ mod tests {
         names.sort();
         assert_eq!(names, vec!["doc.tex".to_string(), "nuevo.tex".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Renaming never lands on another file: the destination survives and the
+    /// source stays where it was. A change of case only is the same file
+    /// under a new spelling, and goes through.
+    #[test]
+    fn rename_refuses_an_existing_destination_but_allows_a_case_change() {
+        let dir = std::env::temp_dir().join(format!("pyx-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("borrador.tex");
+        let b = dir.join("capitulo.tex");
+        std::fs::write(&a, "borrador").unwrap();
+        std::fs::write(&b, "capitulo").unwrap();
+
+        let err = super::rename_guarded(&a, &b).unwrap_err();
+        assert!(err.contains("capitulo.tex"), "{err}");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "borrador");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "capitulo");
+
+        // A free name: an ordinary rename.
+        let c = dir.join("nuevo.tex");
+        super::rename_guarded(&a, &c).unwrap();
+        assert!(!a.exists());
+        assert_eq!(std::fs::read_to_string(&c).unwrap(), "borrador");
+
+        // Case only. On a case-insensitive volume the destination "exists"
+        // (it is the source); on a case-sensitive one it is simply free.
+        let upper = dir.join("Nuevo.tex");
+        super::rename_guarded(&c, &upper).unwrap();
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(names.contains(&"Nuevo.tex".to_string()), "{names:?}");
+        assert!(!names.contains(&"nuevo.tex".to_string()), "{names:?}");
+        assert_eq!(std::fs::read_to_string(&upper).unwrap(), "borrador");
+
+        // A folder onto an existing folder is refused too, and a source that
+        // is gone says so.
+        let d1 = dir.join("figs");
+        let d2 = dir.join("datos");
+        std::fs::create_dir_all(&d1).unwrap();
+        std::fs::create_dir_all(&d2).unwrap();
+        std::fs::write(d2.join("x.csv"), "1").unwrap();
+        assert!(super::rename_guarded(&d1, &d2).is_err());
+        assert!(d2.join("x.csv").exists());
+        assert!(super::rename_guarded(&dir.join("no-existe.tex"), &dir.join("z.tex")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The search reads a Latin-1 / Windows-1252 file as the editor does, not
+    /// as U+FFFD; UTF-8 stays UTF-8 and loses its BOM.
+    #[test]
+    fn decode_text_reads_utf8_and_windows_1252() {
+        assert_eq!(super::decode_text("sección €".as_bytes().to_vec()), "sección €");
+        assert_eq!(super::decode_text(b"\xEF\xBB\xBFhola".to_vec()), "hola");
+        // "sección" + euro + curly quotes, in Windows-1252.
+        assert_eq!(super::decode_text(b"secci\xF3n \x80 \x93a\x94".to_vec()), "sección € “a”");
+        // The bytes the code page leaves undefined still decode to something
+        // (and never panic).
+        assert_eq!(super::decode_text(vec![0x81, 0xFF]).chars().count(), 2);
     }
 
     /// The frontend sends `encodeURIComponent(path)`: accents, spaces and a

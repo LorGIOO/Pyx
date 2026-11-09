@@ -8,9 +8,13 @@ import { createSignal, For, Show, onMount } from 'solid-js';
 import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import { dirOf, relativeTo, samePath } from '../../core/paths.js';
-import { projectTexts, writeTextFile, isTauri } from '../../core/platform.js';
-import { getDocContent, getViewOfDoc } from '../../editor/setup.js';
-import { searchTexts, replaceInText, queryRegExp } from '../../editor/project-search.js';
+import {
+  projectTexts, readBinaryFile, writeBinaryFile, isTauri, askDialog, messageDialog,
+} from '../../core/platform.js';
+import { getDocContent, getViewOfDoc, applyDocChanges } from '../../editor/setup.js';
+import {
+  searchTexts, replaceEdits, replaceInBytes, queryRegExp,
+} from '../../editor/project-search.js';
 import { openPath } from '../stores/docStore.js';
 
 async function projectRoot() {
@@ -30,9 +34,15 @@ async function gatherTexts(root) {
   for (const d of state.documents) {
     if (d.kind) continue;
     // No project folder (an unsaved document): the open documents are the project.
-    const inRoot = !root || (d.path && (samePath(dirOf(d.path), root) || relativeTo(root, d.path).indexOf('..') !== 0));
+    // relativeTo answers null for a path outside the root — an open document
+    // of another project. Calling a method on that null threw, the search
+    // never finished and the panel stayed on «Buscando…».
+    const inRoot = !root || (d.path && relativeTo(root, d.path) !== null);
     if (d.path && !inRoot) continue;
-    const key = d.path || `(sin guardar) ${d.fileName || ''}`;
+    // The file the walk already found, under ITS spelling of the path: the
+    // editor's text replaces the disk's, instead of listing the file twice.
+    const onDisk = d.path && disk.find((f) => samePath(f.path, d.path));
+    const key = onDisk ? onDisk.path : (d.path || `(sin guardar) ${d.fileName || ''}`);
     let text = '';
     try { text = getDocContent(d.id) || ''; } catch (_) { continue; }
     files.set(key, { path: key, text, docId: d.id });
@@ -52,15 +62,25 @@ export default function ProjectSearch() {
   let input;
   let timer = 0;
 
+  let runSeq = 0;
   const run = async () => {
     const q = query();
-    if (!q) { setResult(null); return; }
+    const seq = ++runSeq;
+    if (!q) { setResult(null); setBusy(false); return; }
     setBusy(true);
-    const r = await projectRoot();
-    setRoot(r);
-    const files = await gatherTexts(r);
-    setResult({ ...searchTexts(files, q, opts()), allFiles: files });
-    setBusy(false);
+    try {
+      const r = await projectRoot();
+      const files = await gatherTexts(r);
+      // A newer search started while this one read the disk: its answer wins.
+      if (seq !== runSeq) return;
+      setRoot(r);
+      setResult({ ...searchTexts(files, q, opts()), allFiles: files });
+    } catch (_) {
+      if (seq === runSeq) setResult({ files: [], total: 0, capped: false, allFiles: [] });
+    } finally {
+      // Whatever happened, the panel must not stay on «Buscando…».
+      if (seq === runSeq) setBusy(false);
+    }
   };
   const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 250); };
   const flip = (k) => { setOpts({ ...opts(), [k]: !opts()[k] }); schedule(); };
@@ -96,39 +116,56 @@ export default function ProjectSearch() {
   const replaceAll = async () => {
     const res = result();
     if (!res || !res.total) return;
-    const n = res.total, f = res.files.length;
-    if (!window.confirm(t(`¿Reemplazar ${n} coincidencia${n === 1 ? '' : 's'} en ${f} archivo${f === 1 ? '' : 's'}?\n\nLos documentos abiertos se cambian en el editor (Ctrl+Z para deshacer); los demás archivos de texto se guardan directamente.`,
-      `Replace ${n} match${n === 1 ? '' : 'es'} in ${f} file${f === 1 ? '' : 's'}?\n\nOpen documents change in the editor (Ctrl+Z to undo); other text files are written directly.`))) return;
+    const n = `${res.total}${res.capped ? '+' : ''}`, f = res.files.length;
+    // The platform's own dialog: `window.confirm` is suppressed in some
+    // WebView2 configurations, where it answers false without showing
+    // anything — «Reemplazar todo» then did nothing and said nothing.
+    const ok = await askDialog(t(`¿Reemplazar ${n} coincidencia${res.total === 1 ? '' : 's'} en ${f} archivo${f === 1 ? '' : 's'}?\n\nLos documentos abiertos se cambian en el editor (Ctrl+Z para deshacer); los demás archivos de texto se guardan directamente.`,
+      `Replace ${n} match${res.total === 1 ? '' : 'es'} in ${f} file${f === 1 ? '' : 's'}?\n\nOpen documents change in the editor (Ctrl+Z to undo); other text files are written directly.`),
+    { title: t('Reemplazar en el proyecto', 'Replace in project'), okLabel: t('Reemplazar', 'Replace'), cancelLabel: t('Cancelar', 'Cancel') }).catch(() => false);
+    if (!ok) return;
     setBusy(true);
+    const q = query(), rep = replace(), o = opts();
     const skipped = [];
-    for (const hit of res.files) {
-      const d = state.documents.find((x) => !x.kind && (samePath(x.path, hit.path) || `(sin guardar) ${x.fileName || ''}` === hit.path));
-      const v = d ? getViewOfDoc(d.id) : null;
-      if (v) {
-        const { text, count } = replaceInText(v.state.doc.toString(), query(), replace(), opts());
-        if (count) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: text } });
-        continue;
+    // In the editor, as individual edits (not the whole text swapped): undo
+    // steps back through real changes and the cursor stays where it was. It
+    // works on a document in a background tab too — that one has no view, and
+    // used to be changed on disk behind its tab, which then held the old text
+    // and put it back on the next Ctrl+S.
+    const inEditor = (d) => {
+      const edits = replaceEdits(getDocContent(d.id), q, rep, o);
+      return !edits.length || applyDocChanges(d.id, edits);
+    };
+    try {
+      for (const hit of res.files) {
+        const d = state.documents.find((x) => !x.kind && (samePath(x.path, hit.path) || `(sin guardar) ${x.fileName || ''}` === hit.path));
+        if (d) {
+          if (!inEditor(d)) skipped.push(hit.path);
+          continue;
+        }
+        if (/\.pltx$/i.test(hit.path)) {
+          // A closed .pltx is a container: open it and replace in the editor.
+          await openPath(hit.path);
+          const d2 = state.documents.find((x) => !x.kind && samePath(x.path, hit.path));
+          if (!d2 || !inEditor(d2)) skipped.push(hit.path);
+          continue;
+        }
+        // A closed text file: on its own bytes, read NOW (not the text the
+        // search took a while ago), and written back in its own encoding.
+        try {
+          const out = replaceInBytes(await readBinaryFile(hit.path), q, rep, o);
+          if (out.unmappable.length) {
+            skipped.push(`${hit.path}  (${t('su codificación no admite', 'its encoding cannot hold')} ${out.unmappable.slice(0, 6).join(' ')})`);
+          } else if (out.count) await writeBinaryFile(hit.path, out.bytes);
+        } catch (_) { skipped.push(hit.path); }
       }
-      if (/\.pltx$/i.test(hit.path)) {
-        // A closed .pltx is a container: open it and replace in the editor.
-        await openPath(hit.path);
-        const d2 = state.documents.find((x) => samePath(x.path, hit.path));
-        const v2 = d2 ? getViewOfDoc(d2.id) : null;
-        if (v2) {
-          const { text, count } = replaceInText(v2.state.doc.toString(), query(), replace(), opts());
-          if (count) v2.dispatch({ changes: { from: 0, to: v2.state.doc.length, insert: text } });
-        } else skipped.push(hit.path);
-        continue;
-      }
-      const disk = res.allFiles.find((x) => x.path === hit.path);
-      if (!disk) { skipped.push(hit.path); continue; }
-      const { text, count } = replaceInText(disk.text, query(), replace(), opts());
-      if (count) {
-        try { await writeTextFile(hit.path, text); } catch (_) { skipped.push(hit.path); }
-      }
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    if (skipped.length) window.alert(t(`No se pudieron cambiar:\n${skipped.join('\n')}`, `Could not change:\n${skipped.join('\n')}`));
+    if (skipped.length) {
+      await messageDialog(t(`No se pudieron cambiar:\n\n${skipped.join('\n')}`, `Could not change:\n\n${skipped.join('\n')}`),
+        { title: t('Reemplazar en el proyecto', 'Replace in project'), kind: 'warning' }).catch(() => {});
+    }
     run();
   };
 

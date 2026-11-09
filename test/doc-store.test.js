@@ -15,6 +15,11 @@ const h = vi.hoisted(() => ({
   asked: [],             // every choiceDialog message
   savePath: [],          // queued answers for the «Guardar como» dialog
   messages: [],
+  files: new Map(),      // path -> Uint8Array: what readBinaryFile finds
+  reads: [],             // every path read
+  readGate: null,        // when set, reads wait on this promise
+  ask: [],               // queued answers for askDialog (default: true)
+  askedYesNo: [],
 }));
 
 vi.mock('../js/editor/setup.js', () => ({
@@ -46,12 +51,20 @@ vi.mock('../js/core/platform.js', async (orig) => {
     saveFileDialog: async () => (h.savePath.length ? h.savePath.shift() : null),
     choiceDialog: async (message) => { h.asked.push(message); return h.choice.length ? h.choice.shift() : 'cancel'; },
     messageDialog: async (m) => { h.messages.push(m); },
-    askDialog: async () => true,
+    askDialog: async (m) => { h.askedYesNo.push(m); return h.ask.length ? h.ask.shift() : true; },
+    readBinaryFile: async (path) => {
+      h.reads.push(path);
+      if (h.readGate) await h.readGate;
+      if (!h.files.has(path)) throw new Error(`No se pudo leer ${path}`);
+      return h.files.get(path);
+    },
+    pltxRead: async () => ({ is_zip: true, source: 'fuente del pltx', outputs: null }),
   };
 });
 
 const { state } = await import('../js/core/state.js');
 const store = await import('../js/solid/stores/docStore.js');
+const { general } = await import('../js/solid/stores/settingsStore.js');
 
 /** Type into the "editor" the way the real update listener does. */
 function type(doc, text) {
@@ -69,6 +82,158 @@ beforeEach(() => {
   h.writes.length = 0; h.choice.length = 0; h.asked.length = 0;
   h.savePath.length = 0; h.messages.length = 0;
   h.gate = null;
+  h.files.clear(); h.reads.length = 0; h.readGate = null;
+  h.ask.length = 0; h.askedYesNo.length = 0;
+  general.encoding = 'UTF-8';
+});
+
+describe('F4 · one tab per file', () => {
+  it('the same file under another spelling is the tab that is already open', async () => {
+    h.files.set('C:\\p\\a.tex', new TextEncoder().encode('hola'));
+    await store.openPath('C:\\p\\a.tex');
+    expect(state.documents).toHaveLength(1);
+    for (const alias of ['C:/p/a.tex', 'c:\\P\\A.TEX', 'C:\\p\\.\\a.tex', 'C:\\p\\sub\\..\\a.tex']) {
+      await store.openPath(alias);
+    }
+    expect(state.documents).toHaveLength(1);
+    expect(h.reads).toEqual(['C:\\p\\a.tex']); // never read again
+  });
+
+  it('a double click opens it once: the open in flight is shared', async () => {
+    h.files.set('C:\\p\\a.tex', new TextEncoder().encode('hola'));
+    let release;
+    h.readGate = new Promise((r) => { release = r; });
+    const first = store.openPath('C:\\p\\a.tex');
+    const second = store.openPath('C:/p/a.tex'); // before the first finished
+    release();
+    await Promise.all([first, second]);
+    expect(state.documents).toHaveLength(1);
+    expect(h.reads).toHaveLength(1);
+    // …and once it is done, the key is free again (close and reopen works).
+    await store.closeDocument(0);
+    await store.openPath('C:\\p\\a.tex');
+    expect(state.documents).toHaveLength(1);
+    expect(h.reads).toHaveLength(2);
+  });
+
+  it('a file that cannot be read says so and leaves no tab or stuck key', async () => {
+    await store.openPath('C:\\p\\no-existe.tex');
+    expect(state.documents).toHaveLength(0);
+    expect(h.messages.join(' ')).toContain('no-existe.tex');
+    h.files.set('C:\\p\\no-existe.tex', new TextEncoder().encode('ya está'));
+    await store.openPath('C:\\p\\no-existe.tex');
+    expect(state.documents).toHaveLength(1);
+  });
+});
+
+describe('F5 · renaming and deleting files that are open', () => {
+  it('the tab follows a renamed file, and the files of a renamed folder', async () => {
+    const a = docOf(store.newDocument('a', 'a.tex', 'C:\\p\\a.tex'));
+    const ch = docOf(store.newDocument('c', 'cap1.tex', 'C:\\p\\caps\\cap1.tex'));
+    const other = docOf(store.newDocument('o', 'ab.tex', 'C:\\p\\ab.tex'));
+    store.pathRenamed('C:/p/A.tex', 'C:\\p\\informe.tex'); // spelled differently
+    expect(a.path).toBe('C:\\p\\informe.tex');
+    expect(a.fileName).toBe('informe.tex');
+    store.pathRenamed('C:\\p\\caps', 'C:\\p\\capitulos');
+    expect(ch.path).toBe('C:\\p\\capitulos\\cap1.tex');
+    expect(ch.fileName).toBe('cap1.tex');
+    expect(other.path).toBe('C:\\p\\ab.tex'); // a prefix of a NAME is not a folder
+    // Saving now writes the new path, not the old one.
+    type(a, 'a2');
+    expect(await store.saveDocument(a)).toBe(true);
+    expect([...h.disk.keys()]).toEqual(['C:\\p\\informe.tex']);
+  });
+
+  it('a deleted file closes its tab — unless it holds unsaved text', async () => {
+    store.newDocument('a', 'a.tex', 'C:\\p\\a.tex');
+    const edited = docOf(store.newDocument('b', 'b.tex', 'C:\\p\\sub\\b.tex'));
+    store.newDocument('c', 'c.tex', 'C:\\p\\sub\\c.tex');
+    store.newDocument('d', 'd.tex', 'C:\\otro\\d.tex');
+    type(edited, 'sin guardar');
+    store.pathRemoved('C:\\p\\a.tex');
+    expect(state.documents.map((d) => d.fileName)).toEqual(['b.tex', 'c.tex', 'd.tex']);
+    store.pathRemoved('C:\\p\\sub'); // a folder: everything under it
+    expect(state.documents.map((d) => d.fileName)).toEqual(['b.tex', 'd.tex']);
+    expect(edited.modified).toBe(true);
+    expect(h.asked).toEqual([]); // nothing was asked
+  });
+});
+
+describe('F6 · a file is saved the way it was opened', () => {
+  const cp1252 = (s) => Uint8Array.from([...s].map((c) => ({ 'ó': 0xF3, 'ñ': 0xF1, '€': 0x80 }[c] ?? c.charCodeAt(0))));
+
+  it('Windows-1252 with CRLF comes back as Windows-1252 with CRLF, whatever the setting says', async () => {
+    h.files.set('C:\\p\\viejo.tex', cp1252('secci\u00f3n\r\na\u00f1o \u20ac\r\n'));
+    await store.openPath('C:\\p\\viejo.tex');
+    const doc = state.documents[0];
+    expect(doc.format).toEqual({ encoding: 'windows-1252', bom: false, eol: '\r\n' });
+    // What the editor holds (CodeMirror keeps LF only).
+    type(doc, 'sección\naño €\nfin\n');
+    expect(general.encoding).toBe('UTF-8');
+    expect(await store.saveDocument(doc)).toBe(true);
+    const w = h.writes[0];
+    expect(w.kind).toBe('bytes');
+    expect([...w.content]).toEqual([...cp1252('secci\u00f3n\r\na\u00f1o \u20ac\r\nfin\r\n')]);
+    expect(doc.modified).toBe(false);
+  });
+
+  it('a UTF-8 BOM is kept; a plain UTF-8 LF file is written as plain text', async () => {
+    h.files.set('C:\\p\\bom.tex', Uint8Array.from([0xEF, 0xBB, 0xBF, ...new TextEncoder().encode('año\n')]));
+    h.files.set('C:\\p\\utf8.tex', new TextEncoder().encode('año\n'));
+    await store.openPath('C:\\p\\bom.tex');
+    await store.openPath('C:\\p\\utf8.tex');
+    const [bom, utf8] = state.documents;
+    expect(bom.format).toEqual({ encoding: 'utf-8', bom: true, eol: '\n' });
+    type(bom, 'año 2\n'); type(utf8, 'año 2\n');
+    await store.saveDocument(bom);
+    await store.saveDocument(utf8);
+    expect([...h.writes[0].content]).toEqual([0xEF, 0xBB, 0xBF, ...new TextEncoder().encode('año 2\n')]);
+    expect(h.writes[1]).toEqual({ kind: 'text', path: 'C:\\p\\utf8.tex', content: 'año 2\n' });
+  });
+
+  it('a pure-ASCII file and a new document take the encoding of Configuración', async () => {
+    general.encoding = 'Windows-1252';
+    h.files.set('C:\\p\\ascii.tex', new TextEncoder().encode('hola\r\n'));
+    await store.openPath('C:\\p\\ascii.tex');
+    const doc = state.documents[0];
+    expect(doc.format).toEqual({ encoding: 'windows-1252', bom: false, eol: '\r\n' });
+    type(doc, 'año\n');
+    await store.saveDocument(doc);
+    expect([...h.writes[0].content]).toEqual([0x61, 0xF1, 0x6F, 0x0D, 0x0A]);
+    // Changing the setting is an explicit request: open documents follow it.
+    general.encoding = 'UTF-8';
+    store.applyEncodingSetting();
+    expect(doc.format).toEqual({ encoding: 'utf-8', bom: false, eol: '\r\n' });
+  });
+
+  it('a character the encoding lacks is never written as "?": the save asks, and can go to UTF-8', async () => {
+    h.files.set('C:\\p\\viejo.tex', cp1252('a\u00f1o\n'));
+    await store.openPath('C:\\p\\viejo.tex');
+    const doc = state.documents[0];
+    type(doc, 'año → α\n');
+
+    // Unattended (the compiler, autosave): refused, nothing written.
+    await expect(store.saveWithEncoding(doc.path, 'año → α\n')).rejects.toThrow(/Windows-1252/);
+    expect(await store.saveDocument(doc, { interactive: false })).toBe(false);
+    expect(h.writes).toEqual([]);
+    expect(doc.modified).toBe(true);
+    expect(state.lastLog).toContain('→');
+
+    // Interactive, «Cancelar»: nothing written, no error dialog.
+    h.messages.length = 0;
+    h.ask.push(false);
+    expect(await store.saveDocument(doc)).toBe(false);
+    expect(h.writes).toEqual([]);
+    expect(h.messages).toEqual([]);
+    expect(h.askedYesNo[0]).toContain('«→»');
+
+    // Interactive, «Guardar en UTF-8»: the file becomes UTF-8, text intact.
+    h.ask.push(true);
+    expect(await store.saveDocument(doc)).toBe(true);
+    expect(h.writes).toEqual([{ kind: 'text', path: 'C:\\p\\viejo.tex', content: 'año → α\n' }]);
+    expect(doc.format.encoding).toBe('utf-8');
+    expect(doc.modified).toBe(false);
+  });
 });
 
 describe('F2 · text typed while a save is in flight', () => {

@@ -11,17 +11,20 @@ import {
   openFileDialog,
   saveFileDialog,
   readBinaryFile,
-  decodeText,
   writeTextFile,
   writeBinaryFile,
   pltxRead,
   pltxWrite,
+  askDialog,
   choiceDialog,
   messageDialog,
 } from '../../core/platform.js';
 import { t } from '../../core/i18n.js';
+import {
+  decodeBytes, encodeText, formatFromSetting, encodingLabel,
+} from '../../core/encoding.js';
 import { general } from './settingsStore.js';
-import { baseName } from '../../core/paths.js';
+import { baseName, normalizePath, samePath } from '../../core/paths.js';
 import { parseCellsText, codeHashMap } from '../../editor/cell-parse.js';
 import { serializeDoc, hydrateDoc, clearDoc } from '../../editor/cell-outputs.js';
 
@@ -31,52 +34,100 @@ function docHasCells(doc) {
   try { return parseCellsText(getDocContent(doc.id)).length > 0; } catch (_) { return false; }
 }
 
-// Write `content` to `path` in the user-chosen encoding (UTF-8 by default).
-// Non-UTF-8 encodings go through writeBinaryFile with the bytes we build here.
-// The compiler writes the sources it builds through THIS too: it used plain
-// UTF-8, so compiling a Latin-1 document re-encoded the author's file behind
-// their back (and broke `\usepackage[latin1]{inputenc}` under pdflatex).
-export async function saveWithEncoding(path, content) {
-  const enc = general.encoding || 'UTF-8';
-  if (enc === 'UTF-8') { await writeTextFile(path, content); return; }
-  let bytes;
-  if (enc === 'UTF-8 con BOM') {
-    const u = new TextEncoder().encode(content);
-    bytes = new Uint8Array(u.length + 3);
-    bytes.set([0xEF, 0xBB, 0xBF]);
-    bytes.set(u, 3);
-  } else {
-    // Latin-1 / Windows-1252 / ASCII: one byte per code point (unmappable → '?').
-    bytes = new Uint8Array(content.length);
-    for (let i = 0; i < content.length; i++) {
-      const c = content.charCodeAt(i);
-      bytes[i] = c < 256 ? c : 0x3f;
+/* How a document is stored on disk: {encoding, bom, eol}.
+ *
+ * Each document carries its OWN, detected when it was opened, and every save
+ * gives the file back that way (core/encoding.js says why). The setting in
+ * Configuración → Archivos is what NEW documents get — and files that are
+ * pure ASCII, whose bytes cannot say which encoding they are in. */
+export function defaultFormat() {
+  return formatFromSetting(general.encoding || 'UTF-8');
+}
+function formatOf(doc) {
+  return (doc && doc.format) || defaultFormat();
+}
+function detectedFormat(d) {
+  return { encoding: d.ascii ? defaultFormat().encoding : d.encoding, bom: d.bom, eol: d.eol };
+}
+
+/** The user picked another encoding in Configuración: that is an explicit
+ *  "store my files like this", so it applies to the documents that are open
+ *  (their line endings stay as they are). Files opened later keep their own. */
+export function applyEncodingSetting() {
+  const def = defaultFormat();
+  for (const d of state.documents) {
+    if (d.kind || !d.format) continue;
+    d.format = { ...d.format, encoding: def.encoding, bom: def.bom };
+  }
+}
+
+const listChars = (chars) => chars.slice(0, 12).map((c) => `«${c}»`).join(' ')
+  + (chars.length > 12 ? ' …' : '');
+
+/* Write `content` to `path` the way that file is stored on disk.
+ *
+ * The compiler writes the sources it builds through THIS too (it used plain
+ * UTF-8, so compiling a Latin-1 document re-encoded the author's file behind
+ * their back and broke `\usepackage[latin1]{inputenc}` under pdflatex). It
+ * passes only (path, content): the format is the open document's.
+ *
+ * A character the file's encoding cannot hold is never written as "?" — that
+ * destroyed text with no warning. An interactive save offers to store the
+ * file as UTF-8 instead; an unattended one (the compiler, autosave) refuses
+ * with an error that says which characters and what to do. */
+export async function saveWithEncoding(path, content, { doc, interactive = false } = {}) {
+  const owner = doc || state.documents.find((d) => !d.kind && samePath(d.path, path)) || null;
+  let format = formatOf(owner);
+  let { bytes, unmappable } = encodeText(content, format);
+  if (unmappable.length) {
+    const name = baseName(path);
+    const enc = encodingLabel(format.encoding);
+    if (!interactive) {
+      throw new Error(t(
+        `«${name}» está en ${enc} y contiene caracteres que esa codificación no tiene: ${listChars(unmappable)}. No se ha guardado para no perderlos. Guarda con Ctrl+S y elige UTF-8, o quita esos caracteres.`,
+        `"${name}" is stored as ${enc} and contains characters that encoding lacks: ${listChars(unmappable)}. It was not saved, so as not to lose them. Save with Ctrl+S and choose UTF-8, or remove those characters.`,
+      ));
     }
+    const toUtf8 = await askDialog(t(
+      `«${name}» está guardado en ${enc}, que no tiene estos caracteres:\n\n${listChars(unmappable)}\n\nSi se guardara así se perderían. ¿Guardar el archivo en UTF-8?`,
+      `"${name}" is stored as ${enc}, which lacks these characters:\n\n${listChars(unmappable)}\n\nSaved that way they would be lost. Save the file as UTF-8?`,
+    ), {
+      title: t('Caracteres que no caben en la codificación', 'Characters the encoding cannot hold'),
+      okLabel: t('Guardar en UTF-8', 'Save as UTF-8'),
+      cancelLabel: t('Cancelar', 'Cancel'),
+    });
+    if (!toUtf8) {
+      const e = new Error(t('Guardado cancelado.', 'Save cancelled.'));
+      e.cancelled = true; // the user's choice, not a failure to report
+      throw e;
+    }
+    format = { ...format, encoding: 'utf-8', bom: false };
+    ({ bytes } = encodeText(content, format));
+    if (owner) owner.format = format;
+  }
+  // Plain UTF-8 with LF goes as text (no byte array across the bridge).
+  if (format.encoding === 'utf-8' && !format.bom && format.eol === '\n' && !content.includes('\r')) {
+    await writeTextFile(path, content);
+    return;
   }
   await writeBinaryFile(path, bytes);
 }
 
 const isPltxPath = (p) => /\.pltx$/i.test(p || '');
 
-// Read a text file detecting the encoding: strict UTF-8 first, then
-// windows-1252 (legacy .tex files with accents saved as latin1 stay readable).
-// The compiler reads \input'ed chapters through the same decoder.
-async function readTextSmart(path) {
-  return decodeText(await readBinaryFile(path));
-}
-
 // Read a document's source FOR OPENING. A .pltx is a ZIP container (source +
 // cell results + working directory): this is the one read that restores the
 // working directory, so its saved PDF can be shown at once. A legacy
 // plain-text .pltx (is_zip=false) and every other file decode as text.
 //
-// Returns `{ text, outputs }`; `outputs` is the serialized cell-result store
-// saved with the document, or null.
+// Returns `{ text, outputs, format }`; `outputs` is the serialized cell-result
+// store saved with the document, or null; `format` is how a TEXT file is
+// stored (encoding, BOM, line endings), or null for a container.
 async function readSource(path) {
   if (isPltxPath(path)) {
     try {
       const r = await pltxRead(path, true);
-      if (r && r.is_zip) return { text: r.source, outputs: r.outputs || null };
+      if (r && r.is_zip) return { text: r.source, outputs: r.outputs || null, format: null };
     } catch (e) {
       // A .pltx that IS a container but cannot be read is DAMAGED, and the
       // fallback below would open its bytes as if they were the document:
@@ -87,7 +138,11 @@ async function readSource(path) {
       if (!head || (head[0] === 0x50 && head[1] === 0x4B)) throw e; // "PK"
     }
   }
-  return { text: await readTextSmart(path), outputs: null };
+  // Strict UTF-8 first, then windows-1252 (legacy .tex files with accents
+  // saved as latin1 stay readable) — the compiler reads \input'ed chapters
+  // through the same decoder. What was detected is kept for saving.
+  const d = decodeBytes(await readBinaryFile(path));
+  return { text: d.text, outputs: null, format: detectedFormat(d) };
 }
 
 /* Persist a document's source to `path`.
@@ -101,7 +156,7 @@ async function readSource(path) {
  * settled. Saving them keeps the document usable on a machine with no Python
  * at all, and cell-outputs.js caps how much figure data may go in so the file
  * stays close to the size of its text. */
-async function writeSource(path, content, doc) {
+async function writeSource(path, content, doc, interactive = true) {
   if (isPltxPath(path)) {
     let outputs = null;
     if (doc && general.saveOutputs !== false) {
@@ -112,7 +167,7 @@ async function writeSource(path, content, doc) {
     await pltxWrite(path, content, outputs);
     return;
   }
-  await saveWithEncoding(path, content);
+  await saveWithEncoding(path, content, { doc, interactive });
 }
 
 // TeXstudio's "remove trailing whitespace on save" — applied as per-line edits
@@ -193,7 +248,7 @@ export function isPyxDoc(doc) {
   return !!doc && !doc.kind;
 }
 
-export function newDocument(content = '', fileName = 'sin-título.pltx', path = null) {
+export function newDocument(content = '', fileName = 'sin-título.pltx', path = null, format = null) {
   const id = nextId++;
   registerDoc(id, content);
   state.documents.push({
@@ -201,6 +256,9 @@ export function newDocument(content = '', fileName = 'sin-título.pltx', path = 
     fileName,
     path,
     modified: false,
+    // {encoding, bom, eol} of the file this came from; null = a new document
+    // (or a container), stored as Configuración → Archivos says.
+    format,
     // No engine until the user picks one in Configuración. A default stored
     // here counted as that explicit choice, so `% !TeX program = pdflatex` in
     // the document never applied; the compiler falls back to the detected
@@ -254,17 +312,39 @@ export async function openFromOs(paths) {
   }
 }
 
-// Open a file by absolute path (side panel, includes, explorer).
-export async function openPath(path) {
-  if (!path) return;
-  const existing = state.documents.findIndex((d) => d.path === path);
+/* Open a file by absolute path (side panel, includes, explorer).
+ *
+ * One tab per FILE. The check used to compare the path strings as they came
+ * (`C:\p\a.tex` ≠ `C:/p/./a.tex` ≠ `c:\P\A.TEX`) and only against documents
+ * that had finished opening — and the file tree opens on a single click, so
+ * a double click started two reads of the same file and produced two tabs.
+ * Two tabs on one file is a data-loss bug: saving the stale one silently
+ * overwrites what the other just wrote. So the comparison is on the
+ * normalized path, and an open in flight is shared, not repeated. */
+const opening = new Map(); // normalized path -> Promise of the open in flight
+const pathKey = (p) => normalizePath(p).replace(/\\/g, '/').toLowerCase();
+
+export function openPath(path) {
+  if (!path) return Promise.resolve();
+  const key = pathKey(path);
+  const flying = opening.get(key);
+  if (flying) return flying;
+  const p = openPathNow(path);
+  opening.set(key, p);
+  const done = () => { if (opening.get(key) === p) opening.delete(key); };
+  p.then(done, done);
+  return p;
+}
+
+async function openPathNow(path) {
+  const existing = state.documents.findIndex((d) => !d.kind && samePath(d.path, path));
   if (existing >= 0) {
     switchTo(existing);
     return;
   }
   try {
-    const { text, outputs } = await readSource(path);
-    const id = newDocument(text, baseName(path), path);
+    const { text, outputs, format } = await readSource(path);
+    const id = newDocument(text, baseName(path), path, format);
     // Restore the results saved with the document. Anything whose cell has
     // changed since is dropped by the store — a number that no longer matches
     // its formula must never come back looking current.
@@ -284,6 +364,44 @@ export async function openPath(path) {
     // Say why. A damaged .pltx used to open silently as raw bytes.
     await messageDialog(`No se pudo abrir «${baseName(path)}».\n\n${String((e && e.message) || e)}`,
       { title: 'No se pudo abrir el documento', kind: 'error' }).catch(() => {});
+  }
+}
+
+/** A file or folder was renamed (side panel): the open documents follow it.
+ *  Their tabs used to keep the old path, so the next Ctrl+S quietly re-created
+ *  the file under its old name, beside the renamed one. */
+export function pathRenamed(from, to) {
+  if (!from || !to) return;
+  const strip = (p) => normalizePath(p).replace(/[\\/]+$/, '');
+  const base = strip(from);
+  const key = pathKey(base);
+  for (const d of state.documents) {
+    if (d.kind || !d.path) continue;
+    const mine = normalizePath(d.path);
+    const k = pathKey(mine);
+    if (k === key) {
+      d.path = to;
+      d.fileName = baseName(to);
+    } else if (k.startsWith(`${key}/`)) {
+      // Inside a renamed folder: the same tail under the new folder.
+      d.path = strip(to) + mine.slice(base.length);
+    }
+  }
+}
+
+/** A file or folder was deleted (side panel). A document with nothing unsaved
+ *  closes with its file; one with unsaved edits stays — that text now exists
+ *  nowhere else — and stays marked, so Ctrl+S can put it back. */
+export function pathRemoved(path) {
+  if (!path) return;
+  const key = pathKey(normalizePath(path).replace(/[\\/]+$/, ''));
+  for (const d of [...state.documents]) {
+    if (d.kind || !d.path) continue;
+    const k = pathKey(d.path);
+    if (k !== key && !k.startsWith(`${key}/`)) continue;
+    if (d.modified) continue;
+    const i = state.documents.findIndex((x) => x.id === d.id);
+    if (i >= 0) closeDocument(i);
   }
 }
 
@@ -391,8 +509,9 @@ export function saveDocument(doc, { compile = false, trim = true, interactive = 
     } else {
       const content = getDocContent(doc.id);
       try {
-        await writeSource(doc.path, content, doc);
+        await writeSource(doc.path, content, doc, interactive);
       } catch (e) {
+        if (e && e.cancelled) return false; // the user backed out of a question
         return saveFailed(doc, e, interactive);
       }
       markSavedIfUnchanged(doc, content);
@@ -421,6 +540,7 @@ async function writeAs(doc) {
   try {
     await writeSource(path, content, doc);
   } catch (e) {
+    if (e && e.cancelled) return false;
     return saveFailed({ ...doc, fileName: baseName(path) }, e);
   }
   doc.path = path;

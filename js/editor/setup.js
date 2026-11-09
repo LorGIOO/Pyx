@@ -464,6 +464,27 @@ export function getDocContent(id) {
   return st ? st.doc.toString() : '';
 }
 
+/** Apply changes to a document WHEREVER its text lives. In a pane it is an
+ *  ordinary transaction (undoable, mirrored to sibling panes). A document
+ *  open in a background tab has no view, only its stored state: callers that
+ *  needed a view used to give up there and change the file on DISK instead,
+ *  so the tab kept the old text and the next Ctrl+S reverted the file. */
+export function applyDocChanges(id, changes) {
+  const view = getViewOfDoc(id);
+  if (view) {
+    view.dispatch({ changes });
+    return true;
+  }
+  const st = docStates.get(id);
+  if (!st) return false;
+  // Through a transaction, so the change is in this state's undo history too.
+  docStates.set(id, st.update({ changes }).state);
+  // No view, no update listener: mark it by hand.
+  const doc = appState.documents.find((d) => d.id === id);
+  if (doc && !doc.modified) doc.modified = true;
+  return true;
+}
+
 export function disposeDoc(id) {
   docStates.delete(id);
   for (const [pid, did] of [...paneDocs]) {

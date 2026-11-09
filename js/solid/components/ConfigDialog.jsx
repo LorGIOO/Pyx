@@ -329,8 +329,11 @@ const FIELDS = () => [
     cat: 'compile', sec: ['Archivos', 'Files'], key: 'encoding', type: 'select',
     label: 'Codificación de los archivos', en: 'File encoding',
     opts: ENCODINGS.map((e) => [e, e]),
-    hint: ['UTF-8 es la recomendada (y la que espera XeLaTeX). Al abrir, Pyx detecta UTF-8 y, si no, recurre a Windows-1252 para que los acentos de archivos antiguos se lean bien.',
-      'UTF-8 is recommended (and what XeLaTeX expects). On open, Pyx detects UTF-8 and, failing that, falls back to Windows-1252 so accents in older files read correctly.'],
+    // Choosing an encoding here is an explicit request: the documents that
+    // are open take it too (docStore keeps a format per document).
+    after: () => import('../stores/docStore.js').then((m) => m.applyEncodingSetting()).catch(() => {}),
+    hint: ['UTF-8 es la recomendada (y la que espera XeLaTeX). Cada archivo se guarda como se abrió: con su codificación (Pyx detecta UTF-8 y, si no, Windows-1252), su BOM y sus finales de línea (CRLF o LF). Esta opción es la de los documentos nuevos; al cambiarla se aplica también a los que están abiertos.',
+      'UTF-8 is recommended (and what XeLaTeX expects). Each file is saved the way it was opened: its encoding (Pyx detects UTF-8 and, failing that, Windows-1252), its BOM and its line endings (CRLF or LF). This option is for new documents; changing it also applies to the ones that are open.'],
   },
 
   /* ---------------- Visor PDF ---------------- */

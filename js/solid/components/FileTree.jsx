@@ -4,7 +4,7 @@ import {
   readDir, renamePath, removePath, createFile, createDir,
   readBinaryFile, revealInExplorer, openExternal, askDialog, messageDialog,
 } from '../../core/platform.js';
-import { openPath, openImageTab } from '../stores/docStore.js';
+import { openPath, openImageTab, pathRenamed, pathRemoved } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import { loadPdf } from '../../pdf/preview.js';
 import { showContextMenu } from './ContextMenu.jsx';
@@ -91,13 +91,23 @@ export default function FileTree(props) {
 
   const startRename = (path) => { setSelected(path); setRenaming(path); };
   const commitRename = async (item, newName) => {
+    // Enter commits and removes the input, whose blur then commits again:
+    // only the first one counts.
+    if (renaming() !== item.path) return;
     setRenaming(null);
     const name = (newName || '').trim();
     if (!name || name === item.name) return;
+    // A name, not a path: "..\otro" or "sub/archivo" would move the file.
+    if (/[\\/]/.test(name)) {
+      await messageDialog('El nombre no puede contener «\\» ni «/».', { title: 'Renombrar', kind: 'error' });
+      return;
+    }
+    const to = joinPath(dirOf(item.path), name);
     try {
-      await renamePath(item.path, joinPath(dirOf(item.path), name));
+      await renamePath(item.path, to);
+      pathRenamed(item.path, to); // open tabs follow the file
       refresh(dirOf(item.path));
-    } catch (err) { await messageDialog(String(err), { kind: 'error' }); }
+    } catch (err) { await messageDialog(String(err), { title: 'No se pudo renombrar', kind: 'error' }); }
   };
   const doDelete = async (item) => {
     // Deleting a folder here removes it and everything under it, permanently.
@@ -112,6 +122,7 @@ export default function FileTree(props) {
     if (!ok) return;
     try {
       await removePath(item.path);
+      pathRemoved(item.path); // its tabs close, unless they hold unsaved text
       refresh(dirOf(item.path));
     } catch (err) {
       await messageDialog(String(err), { title: 'No se pudo eliminar', kind: 'error' });

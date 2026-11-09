@@ -7,12 +7,17 @@ use std::process::{Command, Stdio};
 #[derive(Serialize)]
 pub struct CompileResult {
     pub ok: bool,
+    /// The engine's own PDF (`<job>.pdf` in the working directory), set only
+    /// when THIS run wrote it. Its SyncTeX index sits beside it, and it is the
+    /// viewer's identity for the document (annotations are keyed by it). The
+    /// bytes the viewer shows come from `pdf.path`, an immutable copy.
     pub pdf_path: Option<String>,
     pub log: String,
     pub engine: String,
     /// Why the engine was stopped before it finished, if it was: "cancelado"
-    /// (the user), "bucle", "sin-progreso", "tiempo". None for a run that ended
-    /// on its own.
+    /// (the user), "bucle", "sin-progreso", "tiempo", "sustituida" (a newer
+    /// request for the same document arrived while this one waited). None for
+    /// a run that ended on its own.
     pub stopped: Option<String>,
     /// Every file the engine READ (its `-recorder` list plus the graphics its
     /// log names) that is not part of the TeX installation: the document's
@@ -24,6 +29,46 @@ pub struct CompileResult {
     /// When the engine started, in ms since the epoch: an input modified after
     /// this was modified DURING the compile, so the PDF may predate it.
     pub started_ms: u64,
+    /// The request's number, as the app gave it (0 when it gave none).
+    pub gen: u64,
+    /// "pdf" (a new PDF was written), "sin-pdf" (the engine ran and wrote
+    /// none), "detenido" (stopped by the user, the watchdog or a newer
+    /// request) or "error" (the engine could not be run at all).
+    pub outcome: String,
+    /// Why there is no new PDF, in words the user can act on. NEVER empty
+    /// unless `outcome` is "pdf": a compile ends in a PDF or in a reason.
+    pub reason: String,
+    /// The immutable copy of the PDF this run wrote: what the viewer reads.
+    pub pdf: Option<PdfInfo>,
+    /// Where the time went.
+    pub timings: Timings,
+}
+
+/// The copy of a compiled PDF kept for the viewers (see "A PDF nobody is
+/// writing" below).
+#[derive(Serialize, Clone)]
+pub struct PdfInfo {
+    pub path: String,
+    pub size: u64,
+    pub mtime: u64,
+}
+
+/// Where a compile's time went, in milliseconds.
+#[derive(Serialize, Default, Clone)]
+pub struct Timings {
+    /// Waiting for another compile to finish.
+    pub wait_ms: u64,
+    /// Before the first pass: folders, stale copies, the paused engine.
+    pub prep_ms: u64,
+    /// Each engine pass.
+    pub passes_ms: Vec<u64>,
+    /// BibTeX, Biber, makeindex.
+    pub tools_ms: u64,
+    /// After the last pass: checking the PDF, copying it, listing the inputs.
+    pub finish_ms: u64,
+    pub total_ms: u64,
+    /// The first pass was run by the engine left paused after its preamble.
+    pub warm: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -165,13 +210,59 @@ struct Running {
 
 static RUNNING: std::sync::Mutex<Option<std::sync::Arc<Running>>> = std::sync::Mutex::new(None);
 
-/// Stop the compile in flight (the engine and everything it started).
+// ---------------------------------------------------------------------------
+// One compile at a time, numbered
+// ---------------------------------------------------------------------------
+//
+// The app already runs one compile at a time and folds the requests that
+// arrive meanwhile into a single follow-up. This is the same rule enforced
+// HERE, where it cannot be got wrong: the engine, the paused engine and the
+// working directory are shared state, and two runs writing the same `.aux`
+// produce a damaged one.
+//
+// Every request takes a number. A request that waited behind another and
+// finds that a NEWER one for the same working directory arrived meanwhile
+// does not run: the newer one reads the same files and its PDF is the one
+// anybody wants.
+//
+// The numbers are also what makes "Detener" reliable. Stopping used to mean
+// killing whatever engine process was registered at that instant — and
+// between two passes, or while BibTeX ran, none was: the stop was lost and
+// the compile went on. Now a stop marks every request up to the current
+// number, and the compile checks the mark before each pass and each tool.
+
+/// Held for the whole of a compile.
+static COMPILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// The number of the last request that arrived.
+static COMPILE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Every request numbered up to this was asked to stop.
+static CANCEL_UPTO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The request in flight (0: none).
+static IN_FLIGHT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Working directory -> number of the newest request for it.
+static NEWEST: std::sync::Mutex<Option<std::collections::HashMap<String, u64>>> = std::sync::Mutex::new(None);
+
+thread_local! {
+    /// The request this thread is running (0 outside a compile): how the
+    /// watchdog of a pass or a tool knows which stop requests are for it.
+    static THIS_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn stop_asked(seq: u64) -> bool {
+    seq != 0 && CANCEL_UPTO.load(std::sync::atomic::Ordering::SeqCst) >= seq
+}
+
+/// Stop the compile in flight (the engine and everything it started) and any
+/// request waiting behind it. True when there was something to stop.
 pub fn cancel() -> bool {
+    use std::sync::atomic::Ordering;
+    CANCEL_UPTO.store(COMPILE_SEQ.load(Ordering::SeqCst), Ordering::SeqCst);
     let cur = RUNNING.lock().ok().and_then(|g| g.clone());
-    let Some(r) = cur else { return false };
-    r.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-    kill_tree(&r);
-    true
+    if let Some(r) = cur.as_ref() {
+        r.cancel.store(true, Ordering::SeqCst);
+        kill_tree(r);
+    }
+    cur.is_some() || IN_FLIGHT.load(Ordering::SeqCst) != 0
 }
 
 fn kill_tree(r: &Running) {
@@ -363,21 +454,62 @@ fn kill_spawned(mut sp: Spawned) {
     kill_tree(&sp.running);
     let _ = sp.child.kill();
     let _ = sp.child.wait();
-    for r in sp.readers.drain(..) {
-        let _ = r.join();
+    join_readers(&mut sp.readers, &sp.running);
+}
+
+/// Wait for the threads draining the engine's output — but never forever.
+///
+/// They end when the pipes close, and the pipes close when the LAST process
+/// holding them exits. That is normally the engine itself. But anything the
+/// engine started inherits them: a shell-escape command left running, MiKTeX's
+/// package installer, a PDF driver that outlived its parent. A bare `join`
+/// then waited on a process nobody was watching, with the compile already
+/// over — "Compilando…" for ever, every later compile queued behind it.
+///
+/// So: a moment for the pipes to close on their own, then the whole tree is
+/// killed (the engine has exited; whatever is left is a leftover), and a
+/// reader that STILL has not ended is left to finish by itself.
+fn join_readers(readers: &mut Vec<std::thread::JoinHandle<()>>, running: &Running) {
+    use std::time::{Duration, Instant};
+    let wait_until = |deadline: Instant, readers: &Vec<std::thread::JoinHandle<()>>| {
+        while Instant::now() < deadline {
+            if readers.iter().all(|r| r.is_finished()) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        readers.iter().all(|r| r.is_finished())
+    };
+    if !wait_until(Instant::now() + Duration::from_millis(500), readers) {
+        kill_tree(running);
+        wait_until(Instant::now() + Duration::from_secs(2), readers);
+    }
+    for r in readers.drain(..) {
+        if r.is_finished() {
+            let _ = r.join();
+        }
+        // else: detached — it ends when its pipe finally closes.
     }
 }
 
 /// Wait for a spawned engine to finish; never longer than the watchdog allows.
-fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Error> {
+///
+/// `track` registers the run as "the compile in flight", the one `cancel()`
+/// kills. A helper run that is not part of a compile (ChkTeX, on every typing
+/// pause) must not: it used to overwrite the slot while an engine was running,
+/// and "Detener" then killed the linter and left the engine alone.
+fn wait_watched(mut sp: Spawned, limits: Limits, track: bool) -> Result<Watched, std::io::Error> {
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     drop(sp.stdin.take());
     let running = sp.running.clone();
-    if let Ok(mut g) = RUNNING.lock() {
-        *g = Some(running.clone());
+    let seq = if track { THIS_SEQ.with(|c| c.get()) } else { 0 };
+    if track {
+        if let Ok(mut g) = RUNNING.lock() {
+            *g = Some(running.clone());
+        }
     }
     // A warm engine sat paused before this: its silence then was waiting, not
     // a loop. The watchdog's clock starts now.
@@ -391,12 +523,12 @@ fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Err
         if let Some(st) = sp.child.try_wait()? {
             // cancel() kills the tree from ANOTHER thread: the exit can be
             // seen here before the flag is. A killed run is not a finished one.
-            if running.cancel.load(Ordering::SeqCst) {
+            if running.cancel.load(Ordering::SeqCst) || stop_asked(seq) {
                 stopped = Some(("cancelado".into(), "Compilación detenida por el usuario.".into()));
             }
             break Some(st);
         }
-        if running.cancel.load(Ordering::SeqCst) {
+        if running.cancel.load(Ordering::SeqCst) || stop_asked(seq) {
             stopped = Some(("cancelado".into(), "Compilación detenida por el usuario.".into()));
         } else if let Ok(w) = sp.watch.lock() {
             let quiet = w.last_output.map(|t| t.elapsed()).unwrap_or_else(|| started.elapsed());
@@ -415,7 +547,8 @@ fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Err
                     "sin-progreso".into(),
                     format!(
                         "LaTeX llevaba {} s sin dar ninguna señal: casi seguro un bucle \
-                         infinito (una macro que se llama a sí misma, un paquete atascado). \
+                         infinito (una macro que se llama a sí misma, un paquete atascado) \
+                         o el instalador de paquetes de MiKTeX esperando una respuesta. \
                          Pyx ha detenido el motor; las últimas líneas del registro indican \
                          dónde estaba.",
                         limits.stall_secs
@@ -440,10 +573,9 @@ fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Err
         // this sleep, on every pass: 5 ms (a check costs microseconds).
         std::thread::sleep(Duration::from_millis(5));
     };
-    // The readers end when the pipes close (the whole tree is gone by now).
-    for r in sp.readers.drain(..) {
-        let _ = r.join();
-    }
+    // The readers end when the pipes close — see join_readers for when they
+    // do not.
+    join_readers(&mut sp.readers, &running);
     if let Ok(mut g) = RUNNING.lock() {
         if g.as_ref().map(|r| Arc::ptr_eq(r, &running)).unwrap_or(false) {
             *g = None;
@@ -461,7 +593,7 @@ fn wait_watched(mut sp: Spawned, limits: Limits) -> Result<Watched, std::io::Err
 
 /// Run the engine; never longer than the watchdog allows.
 fn run_watched(cmd: Command, limits: Limits) -> Result<Watched, std::io::Error> {
-    wait_watched(spawn_watched(cmd, false)?, limits)
+    wait_watched(spawn_watched(cmd, false)?, limits, true)
 }
 
 #[derive(Serialize)]
@@ -742,7 +874,11 @@ fn texinputs(out_dir: &Path, search_dirs: &[String]) -> String {
 const NOT_READ_BACK: &[&str] = &[
     "log", "pdf", "synctex", "synctex.gz", "fls", "xdv", "dvi", "ps", "aux", "out",
     "idx", "ilg", "ind", "glo", "gls", "glg", "acn", "acr", "alg", "ist",
-    "bcf", "run.xml", "bbl", "blg",
+    // nomencl and the glossaries' symbol list: makeindex inputs and outputs
+    // like the ones above. Left out, each compile of a document with a
+    // nomenclature ran a second full pass for nothing.
+    "nlo", "nls", "nlg", "slo", "sls", "slg",
+    "bcf", "run.xml", "bbl", "blg", "pyxtools",
 ];
 
 /// Content fingerprint of every listing this job writes at `\end{document}`
@@ -772,6 +908,7 @@ fn listings_stamp(out_dir: &Path, job: &str) -> Vec<(String, Vec<u8>)> {
             let ext = name.strip_prefix(&prefix)?.to_string();
             let skip = ext.contains("(busy)")
                 || ext.ends_with(".tex")
+                || ext.ends_with(".pdf")
                 || NOT_READ_BACK.contains(&ext.as_str());
             if skip || !e.file_type().ok()?.is_file() {
                 return None;
@@ -834,17 +971,19 @@ fn clean_intermediates(out_dir: &Path, job: &str) {
         for e in rd.flatten() {
             let p = e.path();
             let Ok(ft) = e.file_type() else { continue };
+            let name = e.file_name().to_string_lossy().to_string();
             if ft.is_dir() {
-                if depth > 0 {
+                // Pyx's own folders (the paused engine's stub, the viewers'
+                // copies of the PDF) are not the engine's state.
+                if depth > 0 && !name.starts_with("_pyx") {
                     walk(&p, job_prefix, depth - 1);
                 }
                 continue;
             }
-            let name = e.file_name().to_string_lossy().to_string();
             let lower = name.to_lowercase();
             let doomed = if let Some(ext) = name.strip_prefix(job_prefix) {
                 let ext = ext.to_lowercase();
-                !(ext == "pdf" || ext == "log" || ext.ends_with("tex"))
+                !(ext.ends_with("pdf") || ext == "log" || ext.ends_with("tex"))
             } else {
                 // \include'd chapters write their own .aux; any interrupted
                 // SyncTeX index too.
@@ -982,7 +1121,21 @@ struct Warm {
     /// Project files the preamble read (from the last run's recorder list),
     /// with their (mtime, size) as they were when the engine started.
     deps: Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)>,
+    /// The job's list files as the last pass left them, read BEFORE this
+    /// engine started. A preamble that opens one for writing (`\makeindex`,
+    /// nomencl, glossaries) empties it at once; comparing "before the pass"
+    /// against that emptied file made every warm compile of such a document
+    /// look like its lists had changed, and run a second pass.
+    listings: Vec<(String, Vec<u8>)>,
     sp: Spawned,
+}
+
+/// Documents whose paused engine gave a different result than a fresh one
+/// (by `warm_key`): they compile the ordinary way for the rest of the session.
+static WARM_OFF: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn warm_off(key: &str) -> bool {
+    WARM_OFF.lock().map(|v| v.iter().any(|k| k == key)).unwrap_or(false)
 }
 
 static WARM: std::sync::Mutex<Option<Warm>> = std::sync::Mutex::new(None);
@@ -1044,20 +1197,41 @@ const WARM_GO: &str = "PYXWARMGO";
 /// What the stub runs after the preamble: say it is ready, wait for a line on
 /// stdin (scrollmode is the lowest mode in which TeX may read the terminal),
 /// go back to nonstopmode, and — only if that line is Pyx's go-ahead — read
-/// the body from the build file itself, found through TEXINPUTS so the path
-/// recorded is the one a normal pass records.
+/// the body from the build file itself (`body_ref`, see `warm_body_ref`).
 ///
 /// Anything else (end of file because Pyx went away, an empty line, a TeX
 /// that does not block on `\read` at all) ends the job right there, before
 /// `\begin{document}`: no page, no .aux, and the PDF on disk is not touched.
-fn warm_tail(build_name: &str) -> String {
+fn warm_tail(body_ref: &str) -> String {
     format!(
         "\n\\def\\pyxwarmok{{{WARM_GO} }}\
-         \\def\\pyxwarmbody{{\\csname @@input\\endcsname\"{build_name}\"\\relax}}\
+         \\def\\pyxwarmbody{{\\csname @@input\\endcsname\"{body_ref}\"\\relax}}\
          \\def\\pyxwarmquit{{\\csname @@end\\endcsname}}\n\
          \\immediate\\write16{{{WARM_READY}}}\\scrollmode\\read-1 to\\pyxwarmgo\\nonstopmode\
          \\ifx\\pyxwarmgo\\pyxwarmok\\expandafter\\pyxwarmbody\\else\\expandafter\\pyxwarmquit\\fi\n"
     )
+}
+
+/// How the stub names the build file whose body it reads.
+///
+/// By its FULL path whenever TeX can take it verbatim. The bare name is looked
+/// up through TEXINPUTS, where the project folder comes first — and versions
+/// of Pyx before the working directory existed wrote their build copies right
+/// there. With one of those left behind, the paused engine read THAT file:
+/// the first compile after starting Pyx (which is handed the full path) showed
+/// the new text and every later one went back to the old, whatever was typed.
+/// "Restarting fixes it, once."
+///
+/// A path with characters TeX would expand or read as a comment falls back to
+/// the name; `remove_shadowing_copies` is what keeps that case right.
+fn warm_body_ref(build: &Path) -> Option<String> {
+    let name = build.file_name()?.to_string_lossy().to_string();
+    if name.contains('"') {
+        return None; // would end the file name; such a file never warms
+    }
+    let abs = build.to_string_lossy().replace('\\', "/");
+    let plain = |c: char| c.is_ascii_alphanumeric() || " /:._-()+,=@!".contains(c);
+    Some(if build.is_absolute() && abs.chars().all(plain) { abs } else { name })
 }
 
 /// The SyncTeX scratch file an engine killed while paused leaves behind: it
@@ -1082,14 +1256,21 @@ pub fn drop_warm() {
 
 /// Project files read while the PREAMBLE was being processed: the recorder's
 /// INPUT lines before the job's `.aux` first appears (LaTeX opens it at
-/// `\begin{document}`). Distribution files and the working directory are left
-/// out, like in `recorded_inputs`.
-fn preamble_inputs(out_dir: &Path, job: &str, run_dir: &Path) -> Vec<PathBuf> {
+/// `\begin{document}`). Distribution files are left out, like in
+/// `recorded_inputs` — and so is the engine's own scratch in the working
+/// directory, but NOT the build copies there: a preamble kept in a file of its
+/// own that Pyx processes (it has a `\py{}`) is read from its `.build.tex`,
+/// and leaving the whole directory out meant an edit to it never retired the
+/// paused engine. The PDF came out with the old preamble, and the next
+/// background compile then saw nothing left to do.
+fn preamble_inputs(out_dir: &Path, job: &str, run_dir: &Path, build: &Path) -> Vec<PathBuf> {
     let Ok(fls) = std::fs::read_to_string(out_dir.join(format!("{job}.fls"))) else {
         return Vec::new();
     };
     let aux = format!("{job}.aux").to_lowercase();
     let out_norm = out_dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    let warm_norm = format!("{}\\{}\\", out_norm.trim_end_matches('\\'), WARM_DIR.to_lowercase());
+    let build_norm = build.to_string_lossy().replace('/', "\\").to_lowercase();
     let mut pwd = run_dir.to_path_buf();
     let mut out: Vec<PathBuf> = Vec::new();
     for l in fls.lines() {
@@ -1108,7 +1289,11 @@ fn preamble_inputs(out_dir: &Path, job: &str, run_dir: &Path) -> Vec<PathBuf> {
         let p = Path::new(f);
         let abs = if p.is_absolute() { p.to_path_buf() } else { pwd.join(p) };
         let k = abs.to_string_lossy().replace('/', "\\").to_lowercase();
-        if installed_file(&k) || k.starts_with(&out_norm) || out.contains(&abs) {
+        // In the working directory only the build copies count; the root one
+        // (and its stub) is compared by its text, not by its stamp.
+        let scratch = k.starts_with(&out_norm)
+            && (!k.ends_with(".tex") || k == build_norm || k.starts_with(&warm_norm));
+        if installed_file(&k) || scratch || out.contains(&abs) {
             continue;
         }
         out.push(abs);
@@ -1121,13 +1306,14 @@ fn preamble_inputs(out_dir: &Path, job: &str, run_dir: &Path) -> Vec<PathBuf> {
 /// next compile runs the usual way.
 fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &Path, search_dirs: &[String]) {
     drop_warm();
+    let key = warm_key(engine_cmd, dir, out_dir, job, search_dirs);
+    if warm_off(&key) {
+        return;
+    }
     let Ok(text) = std::fs::read_to_string(build) else { return };
     let Some(at) = body_start(&text) else { return };
     let Some(name) = build.file_name().map(|n| n.to_string_lossy().to_string()) else { return };
-    // A quote would end the file name in the \input; such a name never warms.
-    if name.contains('"') {
-        return;
-    }
+    let Some(body_ref) = warm_body_ref(build) else { return };
     let preamble = text[..at].to_string();
     let stub_dir = out_dir.join(WARM_DIR);
     if std::fs::create_dir_all(&stub_dir).is_err() {
@@ -1136,12 +1322,14 @@ fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &P
     // Same NAME as the build file (in its own folder): an error in the
     // preamble is reported against the file the log parser already knows.
     let stub = stub_dir.join(&name);
-    if std::fs::write(&stub, format!("{preamble}{}", warm_tail(&name))).is_err() {
+    if std::fs::write(&stub, format!("{preamble}{}", warm_tail(&body_ref))).is_err() {
         return;
     }
+    // Read before the engine starts: its preamble may empty some of them.
+    let listings = listings_stamp(out_dir, job);
     // Stamped BEFORE the engine reads them: a change at any moment after this
     // shows up as a different stamp.
-    let deps = preamble_inputs(out_dir, job, dir)
+    let deps = preamble_inputs(out_dir, job, dir, build)
         .into_iter()
         .map(|p| {
             let st = file_stamp(&p);
@@ -1162,10 +1350,11 @@ fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &P
     let id = WARM_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let w = Warm {
         id,
-        key: warm_key(engine_cmd, dir, out_dir, job, search_dirs),
+        key,
         preamble,
         born: std::time::SystemTime::now(),
         deps,
+        listings,
         sp,
     };
     match WARM.lock() {
@@ -1272,7 +1461,7 @@ fn run_warm(mut w: Warm, build: &Path, out_dir: &Path, job: &str, limits: Limits
         return fail(w);
     }
     // `_restore` puts the build file back when this returns, whatever happened.
-    wait_watched(w.sp, limits).map_err(|_| ())
+    wait_watched(w.sp, limits, true).map_err(|_| ())
 }
 
 /// The marker line is Pyx's, not the document's: keep it out of the log.
@@ -1511,7 +1700,9 @@ pub fn chktex(text: &str) -> Result<Vec<ChkHit>, String> {
         .arg("%l\t%c\t%d\t%k\t%n\t%m\n")
         .arg(&tmp);
     crate::quiet(&mut c);
-    let run = run_watched(c, Limits { loop_repeats: u32::MAX, stall_secs: 10, pass_secs: 20 });
+    // Not "the compile in flight": see wait_watched.
+    let run = spawn_watched(c, false)
+        .and_then(|sp| wait_watched(sp, Limits { loop_repeats: u32::MAX, stall_secs: 10, pass_secs: 20 }, false));
     let _ = std::fs::remove_file(&tmp);
     let run = run.map_err(|e| e.to_string())?;
     Ok(run
@@ -1571,6 +1762,7 @@ fn tectonic_args(src: &Path, dir: &Path, out_dir: &Path, search_dirs: &[String])
     a
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_tectonic(
     exe: &str,
     src: &Path,
@@ -1579,6 +1771,10 @@ fn compile_tectonic(
     job: &str,
     search_dirs: &[String],
     clean_first: bool,
+    mut park: ParkedPdf,
+    mut log: String,
+    mut timings: Timings,
+    t_prep: std::time::Instant,
 ) -> Result<CompileResult, String> {
     drop_warm();
     if clean_first || interrupted_before(out_dir, job) {
@@ -1586,19 +1782,21 @@ fn compile_tectonic(
     }
     let stem = src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| job.to_string());
     let pdf = out_dir.join(format!("{job}.pdf"));
-    let stamp_of = |p: &Path| p.metadata().ok().map(|m| (m.modified().ok(), m.len()));
-    let pdf_before = stamp_of(&pdf);
     let started_ms = now_ms();
+    timings.prep_ms = t_prep.elapsed().as_millis() as u64;
 
     let mut cmd = Command::new(exe);
     cmd.current_dir(dir).args(tectonic_args(src, dir, out_dir, search_dirs));
     crate::quiet(&mut cmd);
     // The first compile may download packages for a while, quietly.
     let limits = Limits { loop_repeats: 400, stall_secs: 600, pass_secs: 20 * 60 };
+    let t_pass = std::time::Instant::now();
     let run = run_watched(cmd, limits).map_err(|e| {
         forget_engine("tectonic");
         crate::spawn_error("tectonic", Some(dir), &e)
     })?;
+    timings.passes_ms.push(t_pass.elapsed().as_millis() as u64);
+    let t_fin = std::time::Instant::now();
 
     // Its outputs carry the INPUT's name: give them the job's.
     if stem != job {
@@ -1609,35 +1807,31 @@ fn compile_tectonic(
             }
         }
     }
-    let mut log = String::from("===== Pasada 1 (tectonic) =====\n");
+    log.push_str("===== Pasada 1 (tectonic) =====\n");
     // The TeX log is what the Problems view reads; Tectonic's own notes go
     // after it.
+    let mut pass_out = String::new();
     if let Ok(tex_log) = std::fs::read_to_string(out_dir.join(format!("{job}.log"))) {
-        log.push_str(&tex_log);
-        log.push('\n');
+        pass_out.push_str(&tex_log);
+        pass_out.push('\n');
     }
-    log.push_str(&run.stdout);
-    log.push_str(&run.stderr);
-    log.push('\n');
+    pass_out.push_str(&run.stdout);
+    pass_out.push_str(&run.stderr);
+    pass_out.push('\n');
+    log.push_str(&pass_out);
     let mut stopped = None;
+    let mut stop_why = String::new();
     if let Some((code, why)) = run.stopped {
         clean_intermediates(out_dir, job);
         log.push_str("===== Pyx: compilación detenida =====\n");
         log.push_str(&why);
         log.push('\n');
+        stop_why = why;
         stopped = Some(code);
     }
-    let written = match (pdf_before, stamp_of(&pdf)) {
-        (None, Some(_)) => true,
-        (Some(b), Some(a)) => a != b,
-        _ => false,
-    };
-    let pdf_fresh = written && pdf_complete(&pdf);
-    if written && !pdf_fresh {
-        let _ = std::fs::remove_file(&pdf);
-        log.push_str("===== Pyx: el PDF no se completó =====\n");
-        log.push_str("Tectonic se detuvo mientras escribía el PDF; se mantiene el anterior.\n");
-    }
+    let (pdf_fresh, info) = settle_pdf(&mut park, out_dir, job, "tectonic", &mut log);
+    let (outcome, reason) = outcome_of(pdf_fresh, stopped.as_deref(), &stop_why, &pass_out, &log, "tectonic");
+    timings.finish_ms = t_fin.elapsed().as_millis() as u64;
     Ok(CompileResult {
         ok: run.success && stopped.is_none() && pdf_fresh,
         pdf_path: pdf_fresh.then(|| pdf.to_string_lossy().to_string()),
@@ -1646,6 +1840,11 @@ fn compile_tectonic(
         stopped,
         inputs: None,
         started_ms,
+        gen: 0,
+        outcome,
+        reason,
+        pdf: info,
+        timings,
     })
 }
 
@@ -1690,12 +1889,617 @@ fn mirror_subdirs(src: &Path, dst: &Path, depth: u32) {
     }
 }
 
+/// When each project's layout was last mirrored (by "project\nworking dir").
+static MIRRORED: std::sync::Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> =
+    std::sync::Mutex::new(None);
+
+/// `mirror_subdirs`, without walking three levels of the project on EVERY
+/// compile — which is what it cost, including the compiles a typing pause
+/// fires, and on a project with a few thousand folders that walk was longer
+/// than the engine's own pass.
+///
+/// The folders of the files the document actually pulls in (`search_dirs`)
+/// are created every time: they are few and they are the ones `\include`
+/// needs. The rest of the layout (a folder a package writes into) is walked
+/// once a minute at most, and always for a compile from scratch.
+fn mirror_project_dirs(dir: &Path, out_dir: &Path, search_dirs: &[String], force: bool) {
+    for d in search_dirs.iter().filter(|d| !d.is_empty()) {
+        if let Ok(rel) = Path::new(d).strip_prefix(dir) {
+            if !rel.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(out_dir.join(rel));
+            }
+        }
+    }
+    let key = format!("{}\n{}", dir.display(), out_dir.display());
+    let recent = MIRRORED
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(&key).copied()))
+        .map(|t| t.elapsed() < std::time::Duration::from_secs(60))
+        .unwrap_or(false);
+    if recent && !force {
+        return;
+    }
+    mirror_subdirs(dir, out_dir, 3);
+    if let Ok(mut g) = MIRRORED.lock() {
+        g.get_or_insert_with(Default::default).insert(key, std::time::Instant::now());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build copies in the project folder: never what gets compiled
+// ---------------------------------------------------------------------------
+
+/// Delete every file of the PROJECT that would be read instead of a build copy
+/// of the working directory.
+///
+/// A parent pulls its processed chapters in by their path inside the working
+/// directory (`\input{cap/uno.build.tex}`), which the engine resolves through
+/// TEXINPUTS — and the project folder is searched first there, on purpose, so
+/// the author's own files always win. Versions of Pyx from before the working
+/// directory existed wrote those very copies INTO the project. One left
+/// behind is found first, and the engine typesets its old text on every
+/// compile, whatever is typed: "nothing I change reaches the PDF".
+///
+/// Only names that exist as a build copy in the working directory right now
+/// are touched, and such a name (`*.build.tex`) is one Pyx generates.
+/// Returns (removed, could not be removed).
+fn remove_shadowing_copies(dir: &Path, out_dir: &Path) -> (Vec<String>, Vec<String>) {
+    let (mut removed, mut stuck) = (Vec::new(), Vec::new());
+    let canon = |p: &Path| std::fs::canonicalize(p).ok();
+    // A project that IS its working directory (a bare engine run on a folder):
+    // the "shadow" would be the build copy itself.
+    if canon(dir).is_some() && canon(dir) == canon(out_dir) {
+        return (removed, stuck);
+    }
+    for (rel, abs) in crate::workspace::walk(out_dir) {
+        if !rel.to_ascii_lowercase().ends_with(".build.tex") || rel.starts_with("_pyx") {
+            continue;
+        }
+        let shadow = dir.join(&rel);
+        if !shadow.is_file() || canon(&shadow) == canon(&abs) {
+            continue;
+        }
+        match std::fs::remove_file(&shadow) {
+            Ok(()) => removed.push(shadow.to_string_lossy().to_string()),
+            Err(_) => stuck.push(shadow.to_string_lossy().to_string()),
+        }
+    }
+    (removed, stuck)
+}
+
+/// Build copies the engine read from OUTSIDE the working directory, from its
+/// recorder list: the check that the rule above held, whatever the search
+/// path was (a `TEXINPUTS` of the user's own comes even before the project).
+fn foreign_build_copies(out_dir: &Path, job: &str, run_dir: &Path) -> Vec<String> {
+    let Ok(fls) = std::fs::read_to_string(out_dir.join(format!("{job}.fls"))) else {
+        return Vec::new();
+    };
+    let out_norm = out_dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    let mut pwd = run_dir.to_path_buf();
+    let mut out: Vec<String> = Vec::new();
+    for l in fls.lines() {
+        if let Some(d) = l.strip_prefix("PWD ") {
+            pwd = PathBuf::from(d.trim());
+        } else if let Some(f) = l.strip_prefix("INPUT ") {
+            let f = f.trim().trim_matches('"');
+            if !f.to_ascii_lowercase().ends_with(".build.tex") {
+                continue;
+            }
+            let p = Path::new(f);
+            let abs = if p.is_absolute() { p.to_path_buf() } else { pwd.join(p) };
+            let s = abs.to_string_lossy().to_string();
+            if !s.replace('/', "\\").to_lowercase().starts_with(&out_norm) && !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// A PDF nobody is writing
+// ---------------------------------------------------------------------------
+//
+// TeXstudio's rule, and the reason it never says "done" over an old PDF: the
+// compile produced a PDF, or it says why not.
+//
+// Two things broke that here.
+//
+// The engine writes `<job>.pdf` in place. If another program holds that file
+// open — and Pyx's own "open in the external application" handed exactly that
+// file to Acrobat, which locks what it shows — the engine cannot write it,
+// says so in a line of a log nobody reads, and the compile ended as "done"
+// with the PDF of an hour ago. So the previous PDF is MOVED out of the way
+// before the engine starts: a move that fails is a locked file, known and
+// reported before any time is spent compiling, and a PDF that exists
+// afterwards was written by this run, whatever its timestamp says.
+//
+// And the viewer read `<job>.pdf` while the NEXT compile could already be
+// writing it. So every good PDF is copied, once, to a file that is never
+// written again; the viewers (the pane, the detached window, the external
+// application) read the copy.
+
+/// Folder of the working directory that holds the viewers' copies.
+pub(crate) const VIEW_DIR: &str = "_pyxview";
+
+/// Job PDF (normalised path) -> its newest copy.
+static VIEW_COPY: std::sync::Mutex<Option<std::collections::HashMap<String, PathBuf>>> = std::sync::Mutex::new(None);
+/// Job PDF (normalised path) -> the copy an external application was given.
+static EXTERNAL_COPY: std::sync::Mutex<Option<std::collections::HashMap<String, PathBuf>>> =
+    std::sync::Mutex::new(None);
+static COPY_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn pdf_key(pdf: &Path) -> String {
+    pdf.to_string_lossy().replace('/', "\\").to_lowercase()
+}
+
+fn parked_path(pdf: &Path) -> Option<PathBuf> {
+    let stem = pdf.file_stem()?.to_string_lossy().to_string();
+    Some(pdf.parent()?.join(VIEW_DIR).join(format!("{stem}.anterior.pdf")))
+}
+
+/// The previous PDF, moved aside for the length of a compile. Dropped without
+/// `keep_new`, it goes back where it was: on every way out of a compile the
+/// document still has the last PDF that was good.
+struct ParkedPdf {
+    pdf: PathBuf,
+    parked: PathBuf,
+    settled: bool,
+}
+
+impl ParkedPdf {
+    /// Err: the PDF could not be moved — some other program has it open.
+    fn park(pdf: &Path) -> Result<ParkedPdf, String> {
+        let parked = parked_path(pdf).ok_or("El PDF no tiene carpeta contenedora")?;
+        if let Some(d) = parked.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        // A compile that died after parking (Pyx was killed mid-compile): the
+        // last good PDF is still the parked one.
+        if !pdf.exists() && parked.exists() {
+            let _ = std::fs::rename(&parked, pdf);
+        }
+        if pdf.exists() {
+            let _ = std::fs::remove_file(&parked);
+            if let Err(e) = std::fs::rename(pdf, &parked) {
+                return Err(format!(
+                    "El PDF anterior no se puede sustituir ({e}): lo tiene abierto otro programa \
+                     (un lector de PDF, un antivirus, una copia en la nube). Ciérralo y vuelve a \
+                     compilar.\n{}",
+                    pdf.display()
+                ));
+            }
+        }
+        Ok(ParkedPdf { pdf: pdf.to_path_buf(), parked, settled: false })
+    }
+    /// This run wrote a good PDF: the previous one is no longer needed.
+    fn keep_new(&mut self) {
+        let _ = std::fs::remove_file(&self.parked);
+        self.settled = true;
+    }
+}
+
+impl Drop for ParkedPdf {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        // Whatever this run left (nothing, or a file cut short) goes; the
+        // previous PDF comes back.
+        if self.parked.exists() {
+            let _ = std::fs::remove_file(&self.pdf);
+            let _ = std::fs::rename(&self.parked, &self.pdf);
+        }
+    }
+}
+
+/// Copy a finished PDF to a file that is never written again, and forget the
+/// older copies. None when it could not be copied (the viewer then reads the
+/// job's PDF itself, as it always did).
+fn snapshot_pdf(pdf: &Path, out_dir: &Path, job: &str) -> Option<PdfInfo> {
+    let dir = out_dir.join(VIEW_DIR);
+    std::fs::create_dir_all(&dir).ok()?;
+    let id = COPY_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let name = format!("{job}.{:013}-{id}.pdf", now_ms());
+    let dest = dir.join(&name);
+    let tmp = dir.join(format!("{name}.tmp"));
+    if std::fs::copy(pdf, &tmp).is_err() || std::fs::rename(&tmp, &dest).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return None;
+    }
+    let meta = std::fs::metadata(&dest).ok()?;
+    if let Ok(mut g) = VIEW_COPY.lock() {
+        g.get_or_insert_with(Default::default).insert(pdf_key(pdf), dest.clone());
+    }
+    // Keep this one and the one before it (a viewer may still be reading it);
+    // a copy that cannot be deleted is one somebody has open — next time.
+    let prefix = format!("{job}.");
+    let mut old: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| {
+            n.strip_prefix(&prefix)
+                .and_then(|r| r.strip_suffix(".pdf"))
+                .map(|mid| mid.len() > 13 && mid.as_bytes()[..13].iter().all(|b| b.is_ascii_digit()))
+                .unwrap_or(false)
+        })
+        .collect();
+    old.sort();
+    for n in old.iter().rev().skip(2) {
+        let _ = std::fs::remove_file(dir.join(n));
+    }
+    // An external application was given a copy of this PDF: bring it up to
+    // date (a reader that reloads by itself then follows the compiles).
+    let ext = EXTERNAL_COPY.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&pdf_key(pdf)).cloned()));
+    if let Some(ext) = ext {
+        let _ = std::fs::copy(&dest, &ext);
+    }
+    Some(PdfInfo {
+        path: dest.to_string_lossy().to_string(),
+        size: meta.len(),
+        mtime: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    })
+}
+
+/// The file a viewer should READ for `pdf` (a job's PDF): its newest copy when
+/// there is one, else the PDF itself — and, while a compile has it moved
+/// aside, the moved file.
+pub fn pdf_source(pdf: &str) -> PathBuf {
+    let p = Path::new(pdf);
+    let copy = VIEW_COPY.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&pdf_key(p)).cloned()));
+    if let Some(c) = copy.filter(|c| c.exists()) {
+        return c;
+    }
+    if !p.exists() {
+        if let Some(parked) = parked_path(p).filter(|q| q.exists()) {
+            return parked;
+        }
+    }
+    p.to_path_buf()
+}
+
+/// A copy of `pdf` for an external application to open — never the engine's
+/// own file, which a reader that locks what it shows (Acrobat) would make
+/// impossible to compile again. The copy is refreshed after every compile.
+pub fn external_pdf(pdf: &str) -> Result<String, String> {
+    let p = Path::new(pdf);
+    let src = pdf_source(pdf);
+    // Only a job's PDF (one inside a working directory) is copied; any other
+    // PDF — one opened from the file tree — is the user's own file.
+    let Some(parent) = p.parent().filter(|d| crate::workspace::in_cache(d)) else {
+        return Ok(pdf.to_string());
+    };
+    let dir = parent.join(VIEW_DIR).join("ext");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "documento.pdf".into());
+    let stem = name.strip_suffix(".pdf").unwrap_or(&name).to_string();
+    // The usual name; if a reader has THAT one locked from an earlier time, a
+    // numbered one.
+    for k in 0..20 {
+        let dest = dir.join(if k == 0 { format!("{stem}.pdf") } else { format!("{stem} ({k}).pdf") });
+        if std::fs::copy(&src, &dest).is_ok() {
+            if let Ok(mut g) = EXTERNAL_COPY.lock() {
+                g.get_or_insert_with(Default::default).insert(pdf_key(p), dest.clone());
+            }
+            return Ok(dest.to_string_lossy().to_string());
+        }
+    }
+    Err("No se pudo preparar una copia del PDF para la aplicación externa.".into())
+}
+
+/// After the last pass: is there a new, complete PDF? If so the previous one
+/// goes and the viewers get their copy; if not, the previous one comes back.
+fn settle_pdf(
+    park: &mut ParkedPdf,
+    out_dir: &Path,
+    job: &str,
+    engine: &str,
+    log: &mut String,
+) -> (bool, Option<PdfInfo>) {
+    let pdf = park.pdf.clone();
+    let written = pdf.exists();
+    // …and COMPLETE. A truncated file is not this run's PDF: it is removed, so
+    // it can neither be shown nor packed into the .pltx on the next save, and
+    // the viewer keeps the last good one. The log says why, in words.
+    let fresh = written && pdf_complete(&pdf);
+    if written && !fresh {
+        let _ = std::fs::remove_file(&pdf);
+        log.push_str("===== Pyx: el PDF no se completó =====\n");
+        log.push_str(&format!(
+            "El motor ({engine}) se detuvo mientras escribía el PDF; se mantiene el anterior.\n"
+        ));
+        let missing = missing_images(log);
+        if !missing.is_empty() {
+            log.push_str(&format!(
+                "Imágenes que no se encuentran: {}.\n\
+                 Con xelatex una imagen que falta impide generar el PDF: \
+                 comprueba la ruta y la carpeta de \\graphicspath.\n",
+                missing.join(", ")
+            ));
+        }
+    }
+    if !fresh {
+        return (false, None); // `park` puts the previous PDF back when dropped
+    }
+    park.keep_new();
+    (true, snapshot_pdf(&pdf, out_dir, job))
+}
+
+/// The first error TeX reported in `log`, with its line: "Undefined control
+/// sequence (línea 42)".
+fn first_tex_error(log: &str) -> Option<String> {
+    let mut lines = log.lines();
+    while let Some(l) = lines.next() {
+        let Some(msg) = l.strip_prefix("! ") else { continue };
+        let msg = msg.trim().trim_end_matches('.').to_string();
+        let at = lines
+            .by_ref()
+            .take(12)
+            .find_map(|c| c.strip_prefix("l.").and_then(|r| r.split_whitespace().next().map(str::to_string)))
+            .filter(|n| n.chars().all(|c| c.is_ascii_digit()) && !n.is_empty());
+        return Some(match at {
+            Some(n) => format!("{msg} (línea {n})"),
+            None => msg,
+        });
+    }
+    None
+}
+
+/// Why a run that ended on its own left no PDF, from what its last pass said.
+fn no_pdf_reason(pass_out: &str, engine: &str) -> String {
+    let err = first_tex_error(pass_out);
+    let with_err = |head: &str| match err.as_ref() {
+        Some(e) => format!("{head} Primer error: {e}."),
+        None => head.to_string(),
+    };
+    if pass_out.contains("el PDF no se completó") {
+        return with_err("El motor se detuvo mientras escribía el PDF (suele ser una imagen que falta).");
+    }
+    if pass_out.contains("No pages of output") {
+        return with_err("LaTeX terminó sin producir ninguna página: el cuerpo del documento está vacío o nada de él llegó a componerse.");
+    }
+    if let Some(l) = pass_out.lines().find(|l| l.contains("I can't write on file")) {
+        return format!("LaTeX no pudo escribir en la carpeta de trabajo: {}", l.trim().trim_start_matches("! "));
+    }
+    if pass_out.contains("Emergency stop") || pass_out.contains("Fatal error occurred") {
+        return with_err("LaTeX se detuvo por un error del que no pudo recuperarse.");
+    }
+    with_err(&format!("El motor ({engine}) terminó sin escribir un PDF."))
+}
+
+/// (outcome, reason) of a compile: a PDF, or why not.
+fn outcome_of(
+    pdf_fresh: bool,
+    stopped: Option<&str>,
+    stop_why: &str,
+    last_pass: &str,
+    log: &str,
+    engine: &str,
+) -> (String, String) {
+    if stopped.is_some() {
+        let why = stop_why.split("\n\n").next().unwrap_or(stop_why).trim();
+        return ("detenido".into(), if why.is_empty() { "La compilación se detuvo.".into() } else { why.to_string() });
+    }
+    if pdf_fresh {
+        return ("pdf".into(), String::new());
+    }
+    // The note about a PDF cut short is written to the whole log, after the
+    // pass; everything else is in what the last pass printed.
+    let said = if log.contains("el PDF no se completó") { log } else { last_pass };
+    ("sin-pdf".into(), no_pdf_reason(said, engine))
+}
+
+/// `.bib` (and project-local `.bst`) files of a document that has a
+/// bibliography. TeX never opens them — BibTeX and Biber do — so the recorder
+/// list does not name them, and an edit to nothing but the `.bib` then looked
+/// like "nothing the PDF depends on changed": the background compile skipped
+/// the engine and the new reference never appeared.
+fn bibliography_inputs(dir: &Path, out_dir: &Path, job: &str, search_dirs: &[String]) -> Vec<String> {
+    let uses_bib = out_dir.join(format!("{job}.bcf")).exists() || bibtex_inputs(out_dir, job).is_some();
+    if !uses_bib {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut dirs: Vec<PathBuf> = vec![dir.to_path_buf()];
+    dirs.extend(search_dirs.iter().filter(|d| !d.is_empty()).map(PathBuf::from));
+    for d in dirs {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            let is = |x: &str| p.extension().map(|e| e.eq_ignore_ascii_case(x)).unwrap_or(false);
+            if is("bib") || is("bst") {
+                out.push(p.to_string_lossy().to_string());
+            }
+        }
+    }
+    out
+}
+
+/// What to do about the NEXT compile's preamble once this one is done.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Prewarm {
+    No,
+    /// Before returning (the tests: they look at the paused engine at once).
+    #[allow(dead_code)]
+    Now,
+    /// After the result has been handed over — see `PrewarmJob`.
+    Later,
+}
+
+pub struct CompileOpts {
+    /// The TeX `-jobname`, so `doc.build.tex` produces `doc.pdf`.
+    pub jobname: Option<String>,
+    pub search_dirs: Vec<String>,
+    /// Start from nothing: no .aux, lists or SyncTeX index of earlier runs.
+    pub clean_first: bool,
+    /// The engine left paused after the last compile may run the first pass.
+    /// A compile the user asked for by hand does not take it: that one is the
+    /// ground truth, run the way TeXstudio would.
+    pub use_warm: bool,
+    pub prewarm: Prewarm,
+    /// The app's own number for this request; it comes back in the result.
+    pub gen: u64,
+}
+
+/// Starting the next compile's engine, put off until this compile's result has
+/// reached the window.
+///
+/// It used to start BEFORE the result was returned: a second engine loading
+/// fonts and packages at the very moment the viewer was parsing and painting
+/// the new PDF, on the same cores. It also must not start if another compile
+/// has begun meanwhile — that one owns the working directory now.
+pub struct PrewarmJob {
+    seq: u64,
+    engine_cmd: String,
+    dir: PathBuf,
+    out_dir: PathBuf,
+    job: String,
+    build: PathBuf,
+    search_dirs: Vec<String>,
+}
+
+impl PrewarmJob {
+    pub fn start_later(self) {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            self.start();
+        });
+    }
+    fn start(self) {
+        use std::sync::atomic::Ordering;
+        let _lock = match COMPILE_LOCK.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return, // a compile is running
+        };
+        if COMPILE_SEQ.load(Ordering::SeqCst) != self.seq {
+            return; // a newer compile came and went: it left its own
+        }
+        spawn_warm(&self.engine_cmd, &self.dir, &self.out_dir, &self.job, &self.build, &self.search_dirs);
+    }
+}
+
+/// Marks a request as the one in flight, for `cancel()` and the watchdogs.
+struct InFlight;
+impl InFlight {
+    fn enter(seq: u64) -> InFlight {
+        IN_FLIGHT.store(seq, std::sync::atomic::Ordering::SeqCst);
+        THIS_SEQ.with(|c| c.set(seq));
+        InFlight
+    }
+}
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        IN_FLIGHT.store(0, std::sync::atomic::Ordering::SeqCst);
+        THIS_SEQ.with(|c| c.set(0));
+    }
+}
+
+/// A result for a request that did not run the engine.
+fn not_run(engine: &str, stopped: Option<&str>, outcome: &str, reason: String, log: String) -> CompileResult {
+    CompileResult {
+        ok: false,
+        pdf_path: None,
+        log,
+        engine: engine.to_string(),
+        stopped: stopped.map(str::to_string),
+        inputs: Some(Vec::new()),
+        started_ms: now_ms(),
+        gen: 0,
+        outcome: outcome.to_string(),
+        reason,
+        pdf: None,
+        timings: Timings::default(),
+    }
+}
+
+/// One line per compile in `%LOCALAPPDATA%\Pyx\logs\compile.jsonl`: what was
+/// asked, how it ended and where the time went. "It said done and nothing
+/// changed" can then be answered from a file instead of from memory.
+fn log_compile(path: &str, res: &Result<(CompileResult, Option<PrewarmJob>), String>, seq: u64, gen: u64) {
+    if cfg!(test) {
+        return;
+    }
+    let line = match res {
+        Ok((r, _)) => serde_json::json!({
+            "t": now_ms(), "seq": seq, "gen": gen, "doc": path, "engine": r.engine,
+            "outcome": r.outcome, "reason": r.reason, "stopped": r.stopped,
+            "ok": r.ok, "pdf": r.pdf.as_ref().map(|p| p.size), "timings": r.timings,
+        }),
+        Err(e) => serde_json::json!({
+            "t": now_ms(), "seq": seq, "gen": gen, "doc": path, "outcome": "error", "reason": e,
+        }),
+    };
+    crate::workspace::append_log("compile.jsonl", &line.to_string());
+}
+
 /// Compile a `.tex` file with the chosen engine. Runs `passes` times so table
 /// of contents / cross references can settle (1 is fastest, 2 resolves refs).
 ///
-/// `jobname` (optional) sets the TeX `-jobname`, so a build file like
-/// `doc.build.tex` can produce `doc.pdf`. The output PDF is `<jobname>.pdf`
-/// (or `<stem>.pdf` when no jobname is given).
+/// The output PDF is `<jobname>.pdf` (or `<stem>.pdf` when no jobname is
+/// given). One compile runs at a time: a request that arrives while another
+/// runs waits, and does not run at all if a newer one for the same working
+/// directory arrived meanwhile (see "One compile at a time, numbered").
+pub fn compile_with(
+    path: &str,
+    project_dir: &str,
+    engine: &str,
+    passes: u32,
+    opts: CompileOpts,
+) -> Result<(CompileResult, Option<PrewarmJob>), String> {
+    use std::sync::atomic::Ordering;
+    let t_all = std::time::Instant::now();
+    let seq = COMPILE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let dir_key = Path::new(path)
+        .parent()
+        .map(|d| d.to_string_lossy().replace('/', "\\").to_lowercase())
+        .unwrap_or_default();
+    if let Ok(mut g) = NEWEST.lock() {
+        g.get_or_insert_with(Default::default).insert(dir_key.clone(), seq);
+    }
+    let _lock = COMPILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let wait_ms = t_all.elapsed().as_millis() as u64;
+    let _flight = InFlight::enter(seq);
+    let newest = NEWEST.lock().ok().and_then(|g| g.as_ref().and_then(|m| m.get(&dir_key).copied())).unwrap_or(seq);
+    let mut res = if newest != seq {
+        Ok((
+            not_run(engine, Some("sustituida"), "detenido", "Sustituida por una compilación más reciente del mismo documento.".into(), String::new()),
+            None,
+        ))
+    } else if stop_asked(seq) {
+        Ok((
+            not_run(
+                engine,
+                Some("cancelado"),
+                "detenido",
+                "Compilación detenida por el usuario.".into(),
+                "===== Pyx: compilación detenida =====\nCompilación detenida por el usuario.\n".into(),
+            ),
+            None,
+        ))
+    } else {
+        compile_locked(seq, path, project_dir, engine, passes, &opts)
+    };
+    if let Ok((r, _)) = res.as_mut() {
+        r.gen = opts.gen;
+        r.timings.wait_ms = wait_ms;
+        r.timings.total_ms = t_all.elapsed().as_millis() as u64;
+    }
+    log_compile(path, &res, seq, opts.gen);
+    res
+}
+
+/// `compile_with` the way the tests call it: `warm` both uses the paused
+/// engine and leaves the next one paused before returning.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub fn compile(
     path: &str,
     project_dir: &str,
@@ -1706,6 +2510,28 @@ pub fn compile(
     clean_first: bool,
     warm: bool,
 ) -> Result<CompileResult, String> {
+    let opts = CompileOpts {
+        jobname,
+        search_dirs: search_dirs.to_vec(),
+        clean_first,
+        use_warm: warm,
+        prewarm: if warm { Prewarm::Now } else { Prewarm::No },
+        gen: 0,
+    };
+    compile_with(path, project_dir, engine, passes, opts).map(|(r, _)| r)
+}
+
+fn compile_locked(
+    seq: u64,
+    path: &str,
+    project_dir: &str,
+    engine: &str,
+    passes: u32,
+    opts: &CompileOpts,
+) -> Result<(CompileResult, Option<PrewarmJob>), String> {
+    let t_prep = std::time::Instant::now();
+    let search_dirs: &[String] = &opts.search_dirs;
+    let clean_first = opts.clean_first;
     let src = Path::new(path);
     if !src.exists() {
         return Err(format!("No existe el archivo: {path}"));
@@ -1733,9 +2559,9 @@ pub fn compile(
         )
     })?;
 
+    let jobname = opts.jobname.clone().filter(|s| !s.trim().is_empty());
     let out_name = jobname
         .clone()
-        .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| src.file_stem().unwrap_or_default().to_string_lossy().to_string());
 
     // ---- one folder for every scratch file the engine produces ----
@@ -1745,10 +2571,6 @@ pub fn compile(
     // that is dozens of files the author never asked for and cannot tell apart
     // from their own. `-output-directory` sends all of it into ONE place.
     //
-    // The PDF and the SyncTeX index are then moved back next to the document,
-    // because those two are not scratch: the viewer opens the PDF from there,
-    // and `synctex` resolves its index relative to the PDF it is given.
-    //
     // The engine still RUNS from the document's folder, so relative paths in
     // the source (\includegraphics{xref/…}, \input{cap/…}) resolve exactly as
     // they did before. And keeping the .aux files between runs is what lets
@@ -1757,39 +2579,72 @@ pub fn compile(
         .map_err(|e| format!("No se pudo crear la carpeta de compilación: {e}"))?;
     // Until this returns, a save must not pack this directory (workspace.rs).
     let _busy = crate::workspace::mark_busy(&out_dir);
-    mirror_subdirs(dir, &out_dir, 3);
+    mirror_project_dirs(dir, &out_dir, search_dirs, clean_first);
 
-    // Snapshot the PDF's mtime BEFORE compiling: success is "this run wrote a
-    // PDF", never "a PDF from some earlier compile is still lying around".
+    let mut log = String::new();
+    let mut timings = Timings::default();
+
+    // No file of the project may stand in for a build copy (see
+    // remove_shadowing_copies). One that cannot be deleted stops the compile:
+    // going on would typeset its old text and call that a result.
+    let (removed, stuck) = remove_shadowing_copies(dir, &out_dir);
+    if !removed.is_empty() {
+        log.push_str("===== Pyx: copias de compilación antiguas =====\n");
+        log.push_str(
+            "En la carpeta del proyecto había copias de compilación de una versión anterior de Pyx; \
+             el motor las habría leído en lugar del texto actual. Se han borrado:\n",
+        );
+        for r in &removed {
+            log.push_str(&format!("  {r}\n"));
+        }
+        log.push('\n');
+    }
+    if !stuck.is_empty() {
+        let reason = format!(
+            "En la carpeta del proyecto hay copias de compilación antiguas que no se pueden borrar \
+             y que el motor leería en lugar del texto actual. Bórralas a mano: {}",
+            stuck.join(", ")
+        );
+        log.push_str(&format!("===== Pyx: no se ha compilado =====\n{reason}\n"));
+        return Ok((not_run(engine, None, "error", reason, log), None));
+    }
+
+    // The previous PDF steps aside: from here on, a `<job>.pdf` that exists
+    // was written by this run. If it cannot be moved, another program has it
+    // open, and no engine could write it either — say so now.
     let pdf = out_dir.join(format!("{out_name}.pdf"));
-    // (modified, length): a PDF counts as written by this run if EITHER moved.
-    // The mtime alone missed rewrites on filesystems with coarse timestamps
-    // (FAT, some network shares), where a fast recompile can land in the same
-    // tick — and then the viewer was never told there was a new PDF.
-    let stamp_of = |p: &Path| p.metadata().ok().map(|m| (m.modified().ok(), m.len()));
-    let pdf_before = stamp_of(&pdf);
+    let mut park = match ParkedPdf::park(&pdf) {
+        Ok(p) => p,
+        Err(reason) => {
+            log.push_str(&format!("===== Pyx: no se ha compilado =====\n{reason}\n"));
+            return Ok((not_run(engine, None, "sin-pdf", reason, log), None));
+        }
+    };
 
     if engine == "tectonic" {
         // Its own reruns and BibTeX; none of the pass logic below applies.
-        return compile_tectonic(&engine_cmd, src, dir, &out_dir, &out_name, search_dirs, clean_first);
+        return compile_tectonic(
+            &engine_cmd, src, dir, &out_dir, &out_name, search_dirs, clean_first, park, log, timings, t_prep,
+        )
+        .map(|r| (r, None));
     }
 
     let passes = passes.clamp(1, 3);
     const MAX_PASSES: u32 = 3;
-    let mut log = String::new();
     let mut clean = false;
     let mut stopped: Option<String> = None;
+    let mut stop_why = String::new();
     let started_ms = now_ms();
+    let warm_id = warm_key(&engine_cmd, dir, &out_dir, &out_name, search_dirs);
 
     // The engine left paused after the last compile, if it can run this one
     // (see "Warm engine"). Taken BEFORE the check below: while it waits, the
     // SyncTeX index it has open is marked busy, and that is not a dead pass.
-    let mut warm_engine = if warm && !clean_first && passes == 1 {
-        let key = warm_key(&engine_cmd, dir, &out_dir, &out_name, search_dirs);
+    let mut warm_engine = if opts.use_warm && !clean_first && passes == 1 {
         std::fs::read_to_string(src)
             .ok()
             .and_then(|t| body_start(&t).map(|at| t[..at].to_string()))
-            .and_then(|pre| take_warm(&key, &pre, &out_dir, &out_name))
+            .and_then(|pre| take_warm(&warm_id, &pre, &out_dir, &out_name))
     } else {
         drop_warm();
         None
@@ -1806,9 +2661,28 @@ pub fn compile(
         clean_intermediates(&out_dir, &out_name);
     }
     let mut healed = false;
+    // The pass the paused engine ran did not end clean and is being repeated
+    // by a fresh engine: if THAT one is clean, the paused engine was wrong.
+    let mut recheck_cold = false;
+    let mut last_pass = String::new();
+    timings.prep_ms = t_prep.elapsed().as_millis() as u64;
+
+    let stop_note = |log: &mut String| {
+        log.push_str("===== Pyx: compilación detenida =====\nCompilación detenida por el usuario.\n");
+    };
 
     let mut i = 0;
     while i < MAX_PASSES {
+        // "Detener" between two passes, or while a tool ran: no engine was
+        // there to kill, so the request is honoured here.
+        if stop_asked(seq) {
+            clean_intermediates(&out_dir, &out_name);
+            stop_note(&mut log);
+            stopped = Some("cancelado".into());
+            stop_why = "Compilación detenida por el usuario.".into();
+            clean = false;
+            break;
+        }
         let mut cmd = Command::new(&engine_cmd);
         // Like TeXstudio: NO -halt-on-error. In nonstopmode TeX recovers from
         // errors and still emits a PDF when it can; the problems stay visible
@@ -1840,14 +2714,21 @@ pub fn compile(
                 }
             }
         }
-        if let Some(j) = jobname.as_ref().filter(|s| !s.trim().is_empty()) {
+        if let Some(j) = jobname.as_ref() {
             cmd.arg(format!("-jobname={j}"));
         }
         // Every file the engine opens, for the app's "did anything change?"
         cmd.arg("-recorder");
         crate::quiet(&mut cmd);
-        let listings_before = listings_stamp(&out_dir, &out_name);
         cmd.arg(&file);
+        // The list files as the previous pass left them. For a pass the paused
+        // engine runs, as they were BEFORE it started: its preamble may have
+        // emptied some since (see Warm::listings).
+        let listings_before = match warm_engine.as_ref() {
+            Some(w) => w.listings.clone(),
+            None => listings_stamp(&out_dir, &out_name),
+        };
+        let t_pass = std::time::Instant::now();
         // The paused engine runs the first pass when it can; a failure to
         // hand it the body falls back to the ordinary pass, same result.
         let warm_run = warm_engine
@@ -1862,6 +2743,8 @@ pub fn compile(
                 crate::spawn_error(engine, Some(dir), &e)
             })?,
         };
+        timings.passes_ms.push(t_pass.elapsed().as_millis() as u64);
+        timings.warm |= warmed;
 
         log.push_str(&format!(
             "===== Pasada {} ({}{}) =====\n",
@@ -1875,6 +2758,7 @@ pub fn compile(
             log.push_str(&run.stderr);
         }
         log.push('\n');
+        last_pass = format!("{pass_out}\n{}", run.stderr);
         if let Some((code, why)) = run.stopped {
             // Whatever this pass was writing is half-written: the next compile
             // must not build on it.
@@ -1891,6 +2775,7 @@ pub fn compile(
                     log.push('\n');
                 }
             }
+            stop_why = why;
             stopped = Some(code);
             clean = false;
             break;
@@ -1899,6 +2784,36 @@ pub fn compile(
         // means errors were recovered — the pass still ran to completion, so
         // reference-settling reruns are still meaningful.
         clean = run.success;
+        // A pass run by the paused engine is trusted only when it is beyond
+        // doubt: no error and a complete PDF. Anything else is repeated right
+        // here by a fresh engine, the way a normal compile would have run —
+        // an error must be the DOCUMENT's, never an artefact of how the pass
+        // was started. (It used to be taken as it came, and the next engine
+        // was left paused on top of it.)
+        if warmed && !(clean && pdf.exists() && pdf_complete(&pdf)) {
+            let _ = std::fs::remove_file(&pdf);
+            log.push_str(
+                "===== Pyx: la pasada con el preámbulo ya cargado no terminó limpia; \
+                 se repite con un motor nuevo =====\n",
+            );
+            recheck_cold = true;
+            continue;
+        }
+        if recheck_cold {
+            recheck_cold = false;
+            if clean && pdf.exists() && pdf_complete(&pdf) {
+                // Same text, a clean result this time: the paused engine does
+                // not reproduce a normal compile of this document. No more of
+                // it for this document in this session.
+                if let Ok(mut off) = WARM_OFF.lock() {
+                    off.push(warm_id.clone());
+                }
+                log.push_str(
+                    "===== Pyx: este documento se compilará sin precargar el preámbulo \
+                     (el motor en espera dio un resultado distinto) =====\n",
+                );
+            }
+        }
         // The first error came from reading what an EARLIER run wrote (an .aux
         // cut short, from a version of the document with different macros):
         // start over from a clean state, once.
@@ -1919,7 +2834,9 @@ pub fn compile(
         // compiles still finish in a single, fast pass.
         // Bibliography and index tools run between passes, latexmk-style, and
         // only when their input changed; new output means one more pass.
+        let t_tools = std::time::Instant::now();
         let tools_changed = run_aux_tools(dir, &out_dir, &out_name, search_dirs, &mut log);
+        timings.tools_ms += t_tools.elapsed().as_millis() as u64;
         let needs_rerun = tools_changed
             || pass_out.contains("Rerun to get")
             || pass_out.contains("rerun LaTeX")
@@ -1930,63 +2847,88 @@ pub fn compile(
         }
         i += 1;
     }
+    // Stopped while a tool ran (the tool was killed; no pass followed).
+    if stopped.is_none() && stop_asked(seq) {
+        stop_note(&mut log);
+        stopped = Some("cancelado".into());
+        stop_why = "Compilación detenida por el usuario.".into();
+        clean = false;
+    }
 
     // Nothing is moved back: the PDF and its SyncTeX index stay in the working
     // directory, side by side, which is exactly where the `synctex` CLI expects
-    // to find the index for a given PDF. The viewer opens it from there, and
-    // the user's folder keeps only what the user put in it.
-
-    // Fresh = created now, or overwritten (mtime advanced) by this run.
-    let written = match (pdf_before, stamp_of(&pdf)) {
-        (None, Some(_)) => true,
-        (Some(before), Some(after)) => after != before,
-        _ => false,
-    };
-    // …and COMPLETE. A truncated file is not this run's PDF: it is removed, so
-    // it can neither be shown nor packed into the .pltx on the next save, and
-    // the viewer keeps the last good one. The log says why, in words.
-    let pdf_fresh = written && pdf_complete(&pdf);
-    if written && !pdf_fresh {
-        let _ = std::fs::remove_file(&pdf);
-        log.push_str("===== Pyx: el PDF no se completó =====\n");
-        log.push_str(&format!(
-            "El motor ({engine}) se detuvo mientras escribía el PDF; se mantiene el anterior.\n"
-        ));
-        let missing = missing_images(&log);
-        if !missing.is_empty() {
-            log.push_str(&format!(
-                "Imágenes que no se encuentran: {}.\n\
-                 Con xelatex una imagen que falta impide generar el PDF: \
-                 comprueba la ruta y la carpeta de \\graphicspath.\n",
-                missing.join(", ")
-            ));
-        }
-    }
+    // to find the index for a given PDF. The user's folder keeps only what the
+    // user put in it.
+    let t_fin = std::time::Instant::now();
+    let (pdf_fresh, info) = settle_pdf(&mut park, &out_dir, &out_name, engine, &mut log);
 
     let inputs = if stopped.is_none() {
-        Some(recorded_inputs(&out_dir, &out_name, dir, &log))
+        let mut v = recorded_inputs(&out_dir, &out_name, dir, &log);
+        for b in bibliography_inputs(dir, &out_dir, &out_name, search_dirs) {
+            if !v.iter().any(|x| x.eq_ignore_ascii_case(&b)) {
+                v.push(b);
+            }
+        }
+        // The check that no stale build copy was what the engine read.
+        let foreign = foreign_build_copies(&out_dir, &out_name, dir);
+        if !foreign.is_empty() {
+            log.push_str("===== Pyx: copia de compilación fuera de la carpeta de trabajo =====\n");
+            log.push_str(
+                "El motor ha leído estas copias de compilación, que no son las que Pyx acaba de \
+                 escribir: el PDF puede mostrar texto antiguo. Bórralas:\n",
+            );
+            for f in &foreign {
+                log.push_str(&format!("  {f}\n"));
+            }
+        }
+        Some(v)
     } else {
         Some(Vec::new())
     };
-    // Get the NEXT compile's preamble out of the way now, while the user reads
-    // this PDF. After everything above has read this run's .log and .fls: the
-    // new engine starts by truncating them.
-    if warm && stopped.is_none() {
-        spawn_warm(&engine_cmd, dir, &out_dir, &out_name, src, search_dirs);
+    let (outcome, reason) = outcome_of(pdf_fresh, stopped.as_deref(), &stop_why, &last_pass, &log, engine);
+    if outcome != "pdf" && !log.contains(&reason) {
+        log.push_str(&format!("===== Pyx: sin PDF nuevo =====\n{reason}\n"));
     }
-    Ok(CompileResult {
-        ok: clean && pdf_fresh,
-        pdf_path: if pdf_fresh {
-            Some(pdf.to_string_lossy().to_string())
-        } else {
+
+    // Get the NEXT compile's preamble out of the way, while the user reads
+    // this PDF — only from a compile that ended clean (an engine paused on top
+    // of a document with errors would have to be repeated cold anyway), and
+    // after everything above has read this run's .log and .fls: the new engine
+    // starts by truncating them.
+    let prewarm = (opts.prewarm != Prewarm::No && stopped.is_none() && clean && pdf_fresh).then(|| PrewarmJob {
+        seq,
+        engine_cmd: engine_cmd.clone(),
+        dir: dir.to_path_buf(),
+        out_dir: out_dir.clone(),
+        job: out_name.clone(),
+        build: src.to_path_buf(),
+        search_dirs: search_dirs.to_vec(),
+    });
+    let prewarm = match (opts.prewarm, prewarm) {
+        (Prewarm::Now, Some(job)) => {
+            spawn_warm(&job.engine_cmd, &job.dir, &job.out_dir, &job.job, &job.build, &job.search_dirs);
             None
+        }
+        (_, job) => job,
+    };
+    timings.finish_ms = t_fin.elapsed().as_millis() as u64;
+    Ok((
+        CompileResult {
+            ok: clean && pdf_fresh && stopped.is_none(),
+            pdf_path: pdf_fresh.then(|| pdf.to_string_lossy().to_string()),
+            log,
+            engine: engine.to_string(),
+            stopped,
+            inputs,
+            started_ms,
+            gen: 0,
+            outcome,
+            reason,
+            pdf: info,
+            timings,
         },
-        log,
-        engine: engine.to_string(),
-        stopped,
-        inputs,
-        started_ms,
-    })
+        prewarm,
+    ))
 }
 
 #[cfg(test)]
@@ -2270,6 +3212,9 @@ Texto del capitulo dos.
         assert!(first.log.contains("===== Pyx: makeindex ====="));
         let bbl = fs::read_to_string(work.join("main.bbl")).unwrap();
         assert!(bbl.contains("TeXbook"));
+        // TeX never opens the .bib, but an edit to it must count as a change.
+        let inputs = first.inputs.clone().unwrap_or_default();
+        assert!(inputs.iter().any(|p| p.to_lowercase().ends_with("refs.bib")), "{inputs:?}");
         assert!(work.join("main.ind").exists());
         // Resolved in the final pass: no "undefined citations" left.
         let last = first.log.rsplit("===== Pasada ").next().unwrap();
@@ -2698,6 +3643,505 @@ Texto del capitulo dos.
         }
         assert!(!interrupted_before(&d, "main"));
         let _ = fs::remove_dir_all(&d);
+    }
+
+    /// "Compile 10 000 times and all 10 000 must compile and show."
+    ///
+    /// Every round changes the body (`\typeout{PYXGEN=n}` and the text
+    /// "GEN n"), alternates between the paused engine and a cold pass, and
+    /// checks that THIS round's text is what the engine typeset: the log names
+    /// this generation, the PDF's bytes changed, no engine process is left
+    /// over and the app's handle count is not creeping up.
+    ///
+    /// The project folder holds a stale `main.build.tex` on purpose: older
+    /// versions of Pyx wrote the build copies there, and a leftover one must
+    /// never be what gets compiled.
+    ///
+    /// `cargo test --release -- --ignored stress --nocapture`, with
+    /// `PYX_STRESS_N` rounds (default 1000) and `PYX_STRESS_ENGINE`.
+    #[test]
+    #[ignore]
+    fn stress_every_compile_typesets_its_own_text() {
+        let _turn = engine_turn();
+        let wanted = std::env::var("PYX_STRESS_ENGINE").ok();
+        let Some(engine) = ["pdflatex", "xelatex", "lualatex"]
+            .into_iter()
+            .find(|e| wanted.as_deref().map(|w| w == *e).unwrap_or(true) && engine_works(e))
+        else {
+            return;
+        };
+        let rounds: u32 = std::env::var("PYX_STRESS_N").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
+        let (base, proj, work) = scratch("stress");
+        let main = work.join("main.build.tex");
+        fs::write(
+            proj.join("main.build.tex"),
+            "\\documentclass{article}\n\\begin{document}\n\\typeout{PYXGEN=STALE}VIEJO\n\\end{document}\n",
+        )
+        .unwrap();
+        let doc = |n: u32| {
+            // Every 25 rounds the preamble changes too: the paused engine
+            // must then be thrown away, not used.
+            let pre = if n % 25 == 0 { format!("\\newcommand\\ronda{{{n}}}\n") } else { String::new() };
+            format!(
+                "\\documentclass{{article}}\n{pre}\\begin{{document}}\n\\typeout{{PYXGEN={n}}}\nGEN {n}\\label{{g}} \\ref{{g}}\n\\end{{document}}\n"
+            )
+        };
+        let handles0 = handle_count();
+        let t0 = std::time::Instant::now();
+        let mut last_pdf: Vec<u8> = Vec::new();
+        let mut warmed = 0u32;
+        for n in 1..=rounds {
+            fs::write(&main, doc(n)).unwrap();
+            // Two warm compiles, then one that must run cold, and so on.
+            let warm = n % 3 != 0;
+            let res = compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, warm)
+                .unwrap_or_else(|e| panic!("ronda {n}: {e}"));
+            let pdf = res.pdf_path.unwrap_or_else(|| panic!("ronda {n}: sin PDF\n{}", res.log));
+            assert!(res.log.contains(&format!("PYXGEN={n}\n")) || res.log.contains(&format!("PYXGEN={n}\r")),
+                "ronda {n}: el motor compuso otro texto\n{}", res.log);
+            assert!(!res.log.contains("PYXGEN=STALE"), "ronda {n}: se compiló la copia vieja del proyecto");
+            let bytes = fs::read(&pdf).unwrap();
+            assert!(bytes != last_pdf, "ronda {n}: el PDF no cambió");
+            last_pdf = bytes;
+            if res.log.contains("preámbulo ya cargado") {
+                warmed += 1;
+            }
+            assert_eq!(res.outcome, "pdf", "ronda {n}: {}", res.reason);
+            if n % 100 == 0 || n == rounds {
+                let grew = handle_count().saturating_sub(handles0);
+                assert!(grew < 200, "ronda {n}: {grew} handles más que al empezar");
+                println!("ronda {n}/{rounds}: {:.0} ms por compilación, {warmed} en caliente, +{grew} handles",
+                    t0.elapsed().as_millis() as f64 / n as f64);
+            }
+        }
+        drop_warm();
+        assert!(warmed > rounds / 4, "el motor en espera casi no se usó: {warmed} de {rounds}");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert_eq!(engines_alive(&base), 0, "quedaron motores vivos");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Engine processes whose command line names this scratch folder.
+    fn engines_alive(dir: &Path) -> usize {
+        #[cfg(windows)]
+        {
+            let marker = dir.file_name().unwrap().to_string_lossy().to_string();
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "@(Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{marker}*' -and $_.Name -notlike 'powershell*' }}).Count"
+                ),
+            ]);
+            crate::quiet(&mut c);
+            c.output().ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok()).unwrap_or(0)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = dir;
+            0
+        }
+    }
+
+    /// Open handles of this process: a leak of one per compile shows here.
+    fn handle_count() -> u32 {
+        #[cfg(windows)]
+        {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetCurrentProcess() -> *mut core::ffi::c_void;
+                fn GetProcessHandleCount(process: *mut core::ffi::c_void, count: *mut u32) -> i32;
+            }
+            let mut n = 0u32;
+            unsafe {
+                GetProcessHandleCount(GetCurrentProcess(), &mut n);
+            }
+            n
+        }
+        #[cfg(not(windows))]
+        {
+            0
+        }
+    }
+
+    // ---- every compile ends in a new PDF or in a reason -----------------------
+
+    fn simple_doc(body: &str) -> String {
+        format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n")
+    }
+
+    /// Build copies left in the PROJECT by an old version of Pyx used to be
+    /// what the engine read: the root's by the paused engine, a chapter's by
+    /// every pass. They are deleted, the log says so, and the text typeset is
+    /// the working directory's.
+    #[test]
+    fn a_stale_build_copy_in_the_project_is_never_compiled() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("stale");
+        fs::create_dir_all(proj.join("cap")).unwrap();
+        fs::create_dir_all(work.join("cap")).unwrap();
+        fs::write(proj.join("main.build.tex"), simple_doc("\\typeout{RAIZ=VIEJA}x")).unwrap();
+        fs::write(proj.join("cap/uno.build.tex"), "\\typeout{CAP=VIEJO}viejo\n").unwrap();
+        // The author's own files are not touched, whatever they are called.
+        fs::write(proj.join("cap/uno.tex"), "fuente del capitulo\n").unwrap();
+        fs::write(proj.join("otro.build.tex"), "no es una copia de este proyecto\n").unwrap();
+        let main = work.join("main.build.tex");
+        fs::write(work.join("cap/uno.build.tex"), "\\typeout{CAP=NUEVO}nuevo\n").unwrap();
+        let run = |n: u32| {
+            fs::write(&main, simple_doc(&format!("\\typeout{{RAIZ={n}}}\\input{{cap/uno.build.tex}}"))).unwrap();
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, true)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        let first = run(1);
+        assert!(first.log.contains("copias de compilación antiguas"), "{}", first.log);
+        assert!(first.log.contains("CAP=NUEVO") && !first.log.contains("CAP=VIEJO"), "{}", first.log);
+        assert!(!proj.join("main.build.tex").exists() && !proj.join("cap/uno.build.tex").exists());
+        assert!(proj.join("cap/uno.tex").exists() && proj.join("otro.build.tex").exists());
+        // The second one is run by the paused engine: still the new text.
+        let second = run(2);
+        assert!(second.log.contains("preámbulo ya cargado"), "{}", second.log);
+        assert!(second.log.contains("RAIZ=2") && !second.log.contains("RAIZ=VIEJA"), "{}", second.log);
+        assert_eq!(second.outcome, "pdf");
+        assert!(second.reason.is_empty());
+        drop_warm();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A PDF another program holds open cannot be rewritten by any engine.
+    /// That is said before compiling, the PDF is left as it was, and the next
+    /// compile works once the file is released.
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_pdf_is_reported_and_left_alone() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("locked");
+        let main = work.join("main.build.tex");
+        let run = |text: &str| {
+            fs::write(&main, simple_doc(text)).unwrap();
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        let first = run("Uno");
+        assert_eq!(first.outcome, "pdf", "{}", first.log);
+        let before = fs::read(work.join("main.pdf")).unwrap();
+        // The way Acrobat opens what it shows: nobody else may write or move it.
+        let held = fs::OpenOptions::new().read(true).share_mode(1).open(work.join("main.pdf")).unwrap();
+        let blocked = run("Dos");
+        assert_eq!(blocked.outcome, "sin-pdf");
+        assert!(blocked.pdf_path.is_none() && !blocked.ok);
+        assert!(blocked.reason.contains("otro programa"), "{}", blocked.reason);
+        assert!(blocked.log.contains(&blocked.reason));
+        assert_eq!(fs::read(work.join("main.pdf")).unwrap(), before, "el PDF bloqueado no se toca");
+        drop(held);
+        let after = run("Tres");
+        assert_eq!(after.outcome, "pdf", "{}", after.log);
+        assert_ne!(fs::read(work.join("main.pdf")).unwrap(), before);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The engine ran and wrote nothing: the result says why, and the PDF of
+    /// the last good compile is still there.
+    #[test]
+    fn a_compile_without_a_pdf_says_why_and_keeps_the_last_one() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("nopdf");
+        let main = work.join("main.build.tex");
+        let run = |text: String| {
+            fs::write(&main, text).unwrap();
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        let good = run(simple_doc("Bien"));
+        assert_eq!(good.outcome, "pdf");
+        let kept = fs::read(work.join("main.pdf")).unwrap();
+        // No page at all.
+        let empty = run(simple_doc(""));
+        assert_eq!(empty.outcome, "sin-pdf", "{}", empty.log);
+        assert!(empty.pdf_path.is_none() && empty.pdf.is_none());
+        assert!(empty.reason.contains("ninguna página"), "{}", empty.reason);
+        assert_eq!(fs::read(work.join("main.pdf")).unwrap(), kept, "se conserva el último PDF bueno");
+        // A fatal error before any page.
+        let fatal = run("\\documentclass{article}\n\\begin{document}\n\\nosuchmacro\n\\end{nada}\n\\csname @@end\\endcsname\n".into());
+        assert_eq!(fatal.outcome, "sin-pdf", "{}", fatal.log);
+        assert!(fatal.reason.contains("Undefined control sequence"), "{}", fatal.reason);
+        assert!(fatal.reason.contains("línea 3"), "{}", fatal.reason);
+        assert_eq!(fs::read(work.join("main.pdf")).unwrap(), kept);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The viewers read a copy that no later compile writes; old copies go.
+    #[test]
+    fn the_viewers_get_a_copy_nobody_writes() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("copy");
+        let main = work.join("main.build.tex");
+        let mut paths = Vec::new();
+        for n in 1..=4 {
+            fs::write(&main, simple_doc(&format!("Version {n}"))).unwrap();
+            let res = compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false)
+                .expect("la compilacion deberia ejecutarse");
+            let job = res.pdf_path.clone().expect("PDF");
+            let info = res.pdf.expect("copia para el visor");
+            assert_ne!(info.path, job);
+            assert_eq!(fs::read(&info.path).unwrap(), fs::read(&job).unwrap());
+            assert_eq!(info.size, fs::metadata(&job).unwrap().len());
+            assert_eq!(pdf_source(&job), PathBuf::from(&info.path));
+            assert!(res.timings.total_ms > 0 && res.timings.passes_ms.len() == 1);
+            paths.push(info.path);
+        }
+        let copies = fs::read_dir(work.join(VIEW_DIR)).unwrap().flatten().count();
+        assert_eq!(copies, 2, "solo quedan las dos últimas copias");
+        assert!(!Path::new(&paths[0]).exists() && Path::new(&paths[3]).exists());
+        // The copies are not part of the engine's state: a clean start keeps them.
+        clean_intermediates(&work, "main");
+        assert!(Path::new(&paths[3]).exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A request that waited behind another does not run when a newer one for
+    /// the same document arrived meanwhile; the newest always does.
+    #[test]
+    fn a_request_overtaken_while_waiting_does_not_run() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("overtaken");
+        let main = work.join("main.build.tex");
+        fs::write(&main, simple_doc("Texto")).unwrap();
+        let go = |gen: u64| {
+            let (m, p) = (main.to_string_lossy().to_string(), proj.to_string_lossy().to_string());
+            std::thread::spawn(move || {
+                let opts = CompileOpts {
+                    jobname: Some("main".into()),
+                    search_dirs: Vec::new(),
+                    clean_first: false,
+                    use_warm: false,
+                    prewarm: Prewarm::No,
+                    gen,
+                };
+                compile_with(&m, &p, engine, 1, opts).unwrap().0
+            })
+        };
+        let a = go(1);
+        // Until A holds the lock…
+        for _ in 0..200 {
+            if IN_FLIGHT.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // …then B, and after it C, both waiting behind A.
+        let b = go(2);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let c = go(3);
+        let (a, b, c) = (a.join().unwrap(), b.join().unwrap(), c.join().unwrap());
+        assert_eq!((a.gen, a.outcome.as_str()), (1, "pdf"), "{}", a.log);
+        assert_eq!((b.gen, b.outcome.as_str()), (2, "detenido"));
+        assert_eq!(b.stopped.as_deref(), Some("sustituida"));
+        assert!(!b.reason.is_empty());
+        assert_eq!((c.gen, c.outcome.as_str()), (3, "pdf"), "{}", c.log);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// "Detener" reaches a compile that has no engine process at that instant
+    /// (between passes, waiting its turn): it is marked by number, not by
+    /// whatever process happened to be registered.
+    #[test]
+    fn a_stop_reaches_a_compile_with_no_engine_running() {
+        use std::sync::atomic::Ordering;
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("stopmark");
+        let main = work.join("main.build.tex");
+        fs::write(&main, simple_doc("Texto")).unwrap();
+        let before = CANCEL_UPTO.load(Ordering::SeqCst);
+        // As if the stop had landed just before this request's first pass.
+        CANCEL_UPTO.store(COMPILE_SEQ.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+        let res = compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false).unwrap();
+        CANCEL_UPTO.store(before, Ordering::SeqCst);
+        assert_eq!(res.stopped.as_deref(), Some("cancelado"));
+        assert_eq!(res.outcome, "detenido");
+        assert!(res.reason.contains("detenida"));
+        // …and only that one: the next compiles.
+        let next = compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, false).unwrap();
+        assert_eq!(next.outcome, "pdf", "{}", next.log);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A build copy the PREAMBLE reads (a preamble kept in its own processed
+    /// file) retires the paused engine when it changes.
+    #[test]
+    fn a_build_copy_read_by_the_preamble_retires_the_paused_engine() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("predep");
+        let main = work.join("main.build.tex");
+        let pre = work.join("pre.build.tex");
+        fs::write(&pre, "\\newcommand\\marca{A}\n").unwrap();
+        let run = |body: &str| {
+            fs::write(&main, format!("\\documentclass{{article}}\n\\input{{pre.build.tex}}\n\\begin{{document}}\n{body}\\typeout{{MARCA=\\marca}}\n\\end{{document}}\n")).unwrap();
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, true)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        run("uno");
+        let warm = run("dos");
+        assert!(warm.log.contains("preámbulo ya cargado"), "{}", warm.log);
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        fs::write(&pre, "\\newcommand\\marca{BB}\n").unwrap();
+        let after = run("tres");
+        assert!(!after.log.contains("preámbulo ya cargado"), "el preámbulo cambió: {}", after.log);
+        assert!(after.log.contains("MARCA=BB"), "{}", after.log);
+        drop_warm();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A preamble that opens a list for writing (`\makeindex`) empties it when
+    /// the paused engine starts. That must not read as "the list changed": an
+    /// unchanged document still compiles in one pass.
+    #[test]
+    fn a_paused_engine_does_not_cost_an_index_a_second_pass() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        if resolve_engine("makeindex").is_none() {
+            return;
+        }
+        let (base, proj, work) = scratch("warmidx");
+        let main = work.join("main.build.tex");
+        let run = |n: u32| {
+            fs::write(&main, format!("\\documentclass{{article}}\n\\usepackage{{makeidx}}\\makeindex\n\\begin{{document}}\n\\tableofcontents\\section{{S}}Texto {n}\\index{{palabra}}\n\\printindex\n\\end{{document}}\n")).unwrap();
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, true)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        run(1);
+        run(2);
+        let steady = run(3);
+        assert!(steady.log.contains("preámbulo ya cargado"), "{}", steady.log);
+        assert_eq!(passes_run(&steady.log), 1, "{}", steady.log);
+        assert!(steady.timings.warm);
+        drop_warm();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A pass run by the paused engine that ends with an error is repeated by
+    /// a fresh engine in the same compile, and no engine is left paused on top
+    /// of a document with errors.
+    #[test]
+    fn a_warm_pass_with_errors_is_repeated_cold() {
+        let _turn = engine_turn();
+        let Some(engine) = some_engine() else { return };
+        let (base, proj, work) = scratch("warmerr");
+        let main = work.join("main.build.tex");
+        let run = |body: &str| {
+            fs::write(&main, simple_doc(body)).unwrap();
+            compile(main.to_str().unwrap(), proj.to_str().unwrap(), engine, 1, Some("main".into()), &[], false, true)
+                .expect("la compilacion deberia ejecutarse")
+        };
+        run("Bien");
+        assert!(WARM.lock().unwrap().is_some());
+        let bad = run("Mal \\nosuchmacro fin");
+        assert!(bad.log.contains("se repite con un motor nuevo"), "{}", bad.log);
+        assert_eq!(passes_run(&bad.log), 2);
+        assert!(bad.pdf_path.is_some() && !bad.ok, "TeX se recupera del error: hay PDF, con avisos");
+        assert!(WARM.lock().unwrap().is_none(), "no se deja un motor en espera sobre un documento con errores");
+        // The error is the document's: the paused engine is not blamed for it.
+        assert!(!warm_off(&warm_key(&resolve_engine(engine).unwrap(), &proj, &work, "main", &[])));
+        let good = run("Bien otra vez");
+        assert!(good.ok && WARM.lock().unwrap().is_some());
+        drop_warm();
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Something the engine started that outlives it and keeps its output pipe
+    /// open must not keep the compile waiting.
+    #[cfg(windows)]
+    #[test]
+    fn a_leftover_child_holding_the_pipes_does_not_hang_the_run() {
+        let _turn = engine_turn();
+        let mut c = Command::new("cmd");
+        // `start /b` leaves ping running with cmd's own stdout; cmd exits at once.
+        c.args(["/c", "start", "/b", "ping", "-n", "30", "127.0.0.1"]);
+        crate::quiet(&mut c);
+        let t = std::time::Instant::now();
+        let run = run_watched(c, Limits::default()).unwrap();
+        assert!(run.stopped.is_none());
+        assert!(t.elapsed().as_secs() < 10, "esperó {:?} a un proceso que nadie vigilaba", t.elapsed());
+    }
+
+    /// ChkTeX runs on typing pauses, also during a compile: it must not take
+    /// the place of "the compile in flight".
+    #[test]
+    fn a_linter_run_is_not_the_compile_in_flight() {
+        let _turn = engine_turn();
+        let exe = if cfg!(windows) { "cmd" } else { "sh" };
+        let mut c = Command::new(exe);
+        if cfg!(windows) {
+            c.args(["/c", "ping", "-n", "3", "127.0.0.1"]);
+        } else {
+            c.args(["-c", "sleep 2"]);
+        }
+        crate::quiet(&mut c);
+        let sp = spawn_watched(c, false).unwrap();
+        let h = std::thread::spawn(move || wait_watched(sp, Limits::default(), false).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(RUNNING.lock().unwrap().is_none(), "una ejecución auxiliar no ocupa el sitio del motor");
+        let _ = h.join();
+    }
+
+    /// "Abrir en la aplicación externa" hands over a copy, never the file the
+    /// engine writes; a PDF that is not a compiled one is opened as it is.
+    #[test]
+    fn an_external_application_gets_a_copy_of_a_compiled_pdf() {
+        let work = crate::workspace::build_dir(&format!("C:/pyx-prueba-externa-{}/doc.tex", std::process::id()));
+        let _ = fs::remove_dir_all(&work);
+        fs::create_dir_all(&work).unwrap();
+        let pdf = work.join("doc.pdf");
+        fs::write(&pdf, b"%PDF-1.7 uno %%EOF").unwrap();
+        let given = external_pdf(pdf.to_str().unwrap()).unwrap();
+        assert_ne!(PathBuf::from(&given), pdf);
+        assert!(given.replace('\\', "/").contains(&format!("{VIEW_DIR}/ext/")), "{given}");
+        assert_eq!(fs::read(&given).unwrap(), fs::read(&pdf).unwrap());
+        // The next compile's copy reaches it too.
+        fs::write(&pdf, b"%PDF-1.7 dos %%EOF").unwrap();
+        snapshot_pdf(&pdf, &work, "doc").expect("copia para el visor");
+        assert_eq!(fs::read(&given).unwrap(), fs::read(&pdf).unwrap());
+        let _ = fs::remove_dir_all(&work);
+
+        let (base, proj, _work) = scratch("externo");
+        let own = proj.join("plano.pdf");
+        fs::write(&own, b"%PDF-1.7 %%EOF").unwrap();
+        assert_eq!(external_pdf(own.to_str().unwrap()).unwrap(), own.to_str().unwrap());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_first_tex_error_is_quoted_with_its_line() {
+        let log = "(./main.tex\n! Undefined control sequence.\n<recently read> \\foo \n\nl.42 \\foo\n       bar\n! Missing $ inserted.\nl.50 x\n";
+        assert_eq!(first_tex_error(log).as_deref(), Some("Undefined control sequence (línea 42)"));
+        assert_eq!(first_tex_error("! Emergency stop.\n").as_deref(), Some("Emergency stop"));
+        assert!(first_tex_error("todo bien\n").is_none());
+        assert!(no_pdf_reason("No pages of output.\n", "xelatex").contains("ninguna página"));
+        assert!(!no_pdf_reason("", "xelatex").is_empty(), "sin PDF siempre hay un motivo");
+    }
+
+    /// The stub names the build file by its full path when TeX can read it
+    /// verbatim, and by its bare name otherwise.
+    #[test]
+    fn the_paused_engine_names_its_body_by_full_path_when_it_can() {
+        let p = if cfg!(windows) { r"C:\Users\ana\AppData\Local\Pyx\build\mi_doc-0f\main.build.tex" } else { "/home/ana/.cache/Pyx/build/mi_doc-0f/main.build.tex" };
+        let r = warm_body_ref(Path::new(p)).unwrap();
+        assert!(r.ends_with("/Pyx/build/mi_doc-0f/main.build.tex") && !r.contains('\\'), "{r}");
+        // A character TeX would expand (~), read as a comment (%) or as an
+        // active character under pdflatex (ñ): the name alone.
+        for odd in ["Pyx~1", "100%", "año"] {
+            let q = p.replace("ana", odd);
+            assert_eq!(warm_body_ref(Path::new(&q)).as_deref(), Some("main.build.tex"), "{q}");
+        }
+        assert!(warm_body_ref(Path::new("a\"b.build.tex")).is_none());
     }
 
     #[test]

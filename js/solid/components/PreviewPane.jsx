@@ -1,4 +1,4 @@
-import { onMount, createSignal, createEffect, Show, For } from 'solid-js';
+import { onMount, onCleanup, createSignal, createEffect, Show, For } from 'solid-js';
 import { state } from '../../core/state.js';
 import {
   setPreviewContainer, rerender, zoomBy, setZoom, setFit,
@@ -12,7 +12,7 @@ import {
 } from '../stores/previewStore.js';
 import { undo, redo, clearPage, correctionsText, TEXT_TOOLS } from '../../pdf/annotate.js';
 import {
-  openExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
+  openExternal, openPdfExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
 } from '../../core/platform.js';
 import { icons as ICO } from './ribbon/icons.js';
 import PdfOutline from './PdfOutline.jsx';
@@ -189,8 +189,17 @@ function PdfSearchBar() {
 export default function PreviewPane() {
   let scrollRef;
   onMount(() => setPreviewContainer(scrollRef));
+  // No pane, nothing to lay out or paint: a PDF compiled while the viewer is
+  // hidden is loaded when it is shown again.
+  onCleanup(() => setPreviewContainer(null));
 
-  const floatWindow = () => { const p = getPdfPath(); if (p) openExternal(p); };
+  // A COPY goes to the external application (Rust keeps it up to date after
+  // every compile): a reader that locks the file it shows would otherwise
+  // keep the engine from ever writing the PDF again.
+  const floatWindow = () => {
+    const p = getPdfPath();
+    if (p) openPdfExternal(p).catch(() => openExternal(p));
+  };
   // The compiled PDF lives in the project's working directory, out of sight
   // with the rest of the build. Exporting is how a copy leaves it.
   const exportPdf = async () => {

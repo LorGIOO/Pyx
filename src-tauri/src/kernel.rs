@@ -4,10 +4,21 @@
 //! newline-delimited JSON on stdin/stdout. Access is serialized through a
 //! `Mutex`, so requests are handled one at a time and the response that comes
 //! back always matches the request we just sent.
+//!
+//! NO REQUEST WAITS FOR EVER. The answer used to be read with a blocking
+//! `read_until` while holding that mutex: a Python that had died without its
+//! pipe closing (something it started still held it), or a housekeeping
+//! request stuck on a busy Jupyter, never returned — the compile that was
+//! waiting never ended, every later one queued behind it, and the only way
+//! out was to restart Pyx. The pipe is now drained by a thread of its own and
+//! the wait is a timed one: it notices a dead interpreter, and it enforces a
+//! time limit per request (`request_limit`).
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// The embedded kernel script. Shipped in the binary so there is nothing to
 /// install or locate at runtime — we drop it into a temp file and run it.
@@ -19,7 +30,9 @@ pub struct KernelProc {
     /// reading the response. `exec` holds this only for the microseconds it
     /// takes to write a request, never for the duration of a cell.
     stdin: Arc<Mutex<ChildStdin>>,
-    reader: BufReader<ChildStdout>,
+    /// The interpreter's stdout, one line per message, read by a thread of its
+    /// own so that waiting for an answer can be timed. Closed at end of file.
+    lines: Receiver<Vec<u8>>,
     python: String,
     /// Tail of the interpreter's stderr (drained by a thread so the pipe can
     /// never fill up and block Python). Shown when the kernel dies, so a crash
@@ -324,7 +337,21 @@ fn spawn() -> Result<KernelProc, String> {
         *g = Some(stdin.clone());
     }
     let stdout = child.stdout.take().ok_or("sin stdout")?;
-    let mut reader = BufReader::new(stdout);
+    let (tx, lines) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut rd = BufReader::new(stdout);
+        loop {
+            let mut raw: Vec<u8> = Vec::new();
+            match rd.read_until(b'\n', &mut raw) {
+                Ok(n) if n > 0 => {
+                    if tx.send(raw).is_err() {
+                        break; // the kernel was dropped: nobody is listening
+                    }
+                }
+                _ => break, // end of file (or a broken pipe): `tx` closes
+            }
+        }
+    });
 
     // Drain stderr on a thread (an unread pipe fills up and would BLOCK the
     // interpreter mid-cell); keep only a bounded tail for diagnostics.
@@ -357,16 +384,14 @@ fn spawn() -> Result<KernelProc, String> {
     // Wait for the kernel's "ready" handshake, skipping stray banner lines.
     // EOF means Python died on startup — surface its stderr as the cause.
     let mut got_ready = false;
+    // An interpreter that starts but never says "ready" (an antivirus holding
+    // it, a site hook waiting on the network) is a failed start, not a wait.
+    let give_up = Instant::now() + Duration::from_secs(90);
     for _ in 0..50 {
         // A banner printed before the kernel takes over its descriptors
         // (a sitecustomize, a noisy site hook) may not be UTF-8: skip it.
-        let mut raw: Vec<u8> = Vec::new();
-        let n = reader
-            .read_until(b'\n', &mut raw)
-            .map_err(|e| format!("El kernel no respondió: {e}"))?;
-        if n == 0 {
-            break;
-        }
+        let left = give_up.saturating_duration_since(Instant::now());
+        let Ok(raw) = lines.recv_timeout(left) else { break };
         let line = String::from_utf8_lossy(&raw);
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
             if v.get("type").and_then(|t| t.as_str()) == Some("ready") {
@@ -394,7 +419,7 @@ fn spawn() -> Result<KernelProc, String> {
     Ok(KernelProc {
         child,
         stdin,
-        reader,
+        lines,
         python,
         stderr_tail,
     })
@@ -409,11 +434,40 @@ struct FrameId {
     id: Option<serde_json::Value>,
 }
 
+/// How long a request may take before the kernel is interrupted.
+///
+/// The user's own code — a cell, a `\\py{}` expression, a macro — has no limit
+/// unless one was asked for (`timeout_ms`, from the "tiempo máximo por celda"
+/// setting): a simulation that runs for ten minutes is a simulation, the
+/// status bar says Python is running, and "Detener" stops it.
+///
+/// Everything else is Pyx's own housekeeping (completions, the values of a
+/// linked notebook, the imports warmed up in the background…), which the user
+/// did not start, cannot see and so cannot stop. Those always have a limit.
+fn request_limit(req: &serde_json::Value) -> Option<Duration> {
+    if let Some(ms) = req.get("timeout_ms").and_then(|v| v.as_u64()).filter(|ms| *ms > 0) {
+        return Some(Duration::from_millis(ms));
+    }
+    let has = |k: &str| req.get(k).is_some();
+    if has("code") || has("evals") || has("macro") {
+        return None;
+    }
+    // Importing a scientific stack from a cold disk takes its time.
+    Some(Duration::from_secs(if has("prewarm") || has("starnames") { 300 } else { 120 }))
+}
+
+/// After the limit: how long the interrupted request has to answer before the
+/// interpreter is given up on and replaced.
+const INTERRUPT_GRACE: Duration = Duration::from_secs(5);
+
 impl KernelProc {
     /// Send one request and return the matching response frame as its JSON
     /// TEXT, untouched. The app parses it once; the old path parsed it here
     /// into a value tree and Tauri serialized that tree back into text for
     /// the window — twice the work on every result, megabytes for a figure.
+    ///
+    /// Err means the interpreter is no longer usable (it died, or it did not
+    /// answer in time even after being interrupted): the caller drops it.
     fn request_raw(&mut self, req: &serde_json::Value) -> Result<String, String> {
         let line = serde_json::to_string(req).map_err(|e| e.to_string())?;
         {
@@ -427,28 +481,59 @@ impl KernelProc {
         }
 
         let want_id = req.get("id").cloned();
+        let limit = request_limit(req);
+        let started = Instant::now();
+        let mut interrupted: Option<Instant> = None;
+        let mut exited: Option<Instant> = None;
+        let died = |stderr_tail: &Arc<Mutex<String>>| {
+            let tail = stderr_tail.lock().map(|b| b.clone()).unwrap_or_default();
+            if tail.trim().is_empty() {
+                "El kernel de Python terminó inesperadamente.".to_string()
+            } else {
+                format!("El kernel de Python terminó inesperadamente:\n{tail}")
+            }
+        };
         loop {
+            let raw = match self.lines.recv_timeout(Duration::from_millis(200)) {
+                Ok(raw) => raw,
+                Err(RecvTimeoutError::Disconnected) => return Err(died(&self.stderr_tail)),
+                Err(RecvTimeoutError::Timeout) => {
+                    // Dead, but its pipe still open (a process it started
+                    // inherited it): end of file will not come. What it wrote
+                    // before dying is already here or a moment away.
+                    if exited.is_none() && matches!(self.child.try_wait(), Ok(Some(_))) {
+                        exited = Some(Instant::now());
+                    }
+                    if exited.map(|t| t.elapsed() > Duration::from_secs(1)).unwrap_or(false) {
+                        return Err(died(&self.stderr_tail));
+                    }
+                    if let Some(limit) = limit {
+                        match interrupted {
+                            None if started.elapsed() > limit => {
+                                // First the polite way: KeyboardInterrupt in
+                                // whatever is running, which keeps the session.
+                                if let Ok(mut w) = self.stdin.lock() {
+                                    let _ = w.write_all(b"{\"type\":\"interrupt\"}\n").and_then(|_| w.flush());
+                                }
+                                interrupted = Some(Instant::now());
+                            }
+                            Some(t) if t.elapsed() > INTERRUPT_GRACE => {
+                                return Err(format!(
+                                    "Python no respondió en {} s ni atendió a la interrupción: \
+                                     Pyx ha cerrado ese proceso y abrirá uno nuevo.",
+                                    limit.as_secs().max(1)
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+            };
             // Bytes, then lossy text: a frame is always valid UTF-8 (the kernel
             // guarantees it), but a stray invalid byte on this pipe must be a
             // skipped line, not an error that kills the kernel and the session.
-            let mut raw: Vec<u8> = Vec::new();
-            let n = self
-                .reader
-                .read_until(b'\n', &mut raw)
-                .map_err(|e| format!("Error leyendo del kernel: {e}"))?;
             let buf = String::from_utf8_lossy(&raw);
-            if n == 0 {
-                let tail = self
-                    .stderr_tail
-                    .lock()
-                    .map(|b| b.clone())
-                    .unwrap_or_default();
-                return Err(if tail.trim().is_empty() {
-                    "El kernel de Python terminó inesperadamente.".to_string()
-                } else {
-                    format!("El kernel de Python terminó inesperadamente:\n{tail}")
-                });
-            }
             let trimmed = buf.trim();
             if trimmed.is_empty() {
                 continue;
@@ -570,6 +655,62 @@ mod tests {
         let raw = exec_raw(&state, serde_json::json!({"id": 42, "evals": ["x + 1"]})).unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["evals"]["x + 1"]["value"], serde_json::json!("3"));
+        shutdown(&state).unwrap();
+    }
+
+    /// The user's code has no limit unless one is asked for; Pyx's own
+    /// housekeeping always has one.
+    #[test]
+    fn only_housekeeping_requests_are_limited_by_default() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        assert!(request_limit(&j(r#"{"id":1,"code":"x=1"}"#)).is_none());
+        assert!(request_limit(&j(r#"{"id":1,"evals":["x"]}"#)).is_none());
+        assert!(request_limit(&j(r#"{"id":1,"macro":"x"}"#)).is_none());
+        assert_eq!(request_limit(&j(r#"{"id":1,"code":"x=1","timeout_ms":2500}"#)), Some(Duration::from_millis(2500)));
+        assert!(request_limit(&j(r#"{"id":1,"code":"x=1","timeout_ms":0}"#)).is_none());
+        assert_eq!(request_limit(&j(r#"{"id":1,"nblink":"fetch"}"#)), Some(Duration::from_secs(120)));
+        assert_eq!(request_limit(&j(r#"{"id":1,"complete":"np."}"#)), Some(Duration::from_secs(120)));
+        assert_eq!(request_limit(&j(r#"{"id":1,"prewarm":["scipy"]}"#)), Some(Duration::from_secs(300)));
+    }
+
+    /// A request past its limit is interrupted and ANSWERS (the session's
+    /// variables survive); the kernel is usable right after.
+    #[test]
+    fn a_request_past_its_limit_is_interrupted_not_waited_for() {
+        if chosen_python().is_none() {
+            return;
+        }
+        let state: Mutex<Option<KernelProc>> = Mutex::new(None);
+        exec_raw(&state, serde_json::json!({"id": 1, "code": "guardado = 7"})).unwrap();
+        let t = Instant::now();
+        let res = exec_raw(
+            &state,
+            serde_json::json!({"id": 2, "code": "import time\nfor _ in range(600):\n    time.sleep(0.1)", "timeout_ms": 1000}),
+        );
+        assert!(t.elapsed() < Duration::from_secs(15), "esperó {:?}", t.elapsed());
+        let v: serde_json::Value = serde_json::from_str(&res.expect("la interrupción responde")).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "{v}");
+        let raw = exec_raw(&state, serde_json::json!({"id": 3, "evals": ["guardado"]})).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["evals"]["guardado"]["value"], serde_json::json!("7"));
+        shutdown(&state).unwrap();
+    }
+
+    /// An interpreter that dies mid-request is an error at once — and the next
+    /// request starts a new one — never a wait.
+    #[test]
+    fn a_dead_interpreter_fails_the_request_and_is_replaced() {
+        if chosen_python().is_none() {
+            return;
+        }
+        let state: Mutex<Option<KernelProc>> = Mutex::new(None);
+        let t = Instant::now();
+        let res = exec_raw(&state, serde_json::json!({"id": 1, "code": "import os\nos._exit(3)"}));
+        assert!(res.is_err(), "{res:?}");
+        assert!(t.elapsed() < Duration::from_secs(20), "esperó {:?}", t.elapsed());
+        let raw = exec_raw(&state, serde_json::json!({"id": 2, "code": "1 + 1"})).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["result"], serde_json::json!("2"));
         shutdown(&state).unwrap();
     }
 }

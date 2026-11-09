@@ -289,8 +289,15 @@ const FIELDS = () => [
     cat: 'compile', sec: ['Compilación en vivo', 'Live compilation'], key: 'liveDelay', type: 'range',
     label: 'Retardo del compilado en vivo', en: 'Live-compile delay',
     min: 400, max: 3000, step: 100, unit: (v) => `${(v / 1000).toFixed(1)} s`,
-    hint: ['Pyx espera además, como mínimo, el triple de lo que tardó la última compilación: un proyecto muy pesado deja de rehacerse en cada pausa.',
-      'Pyx also waits at least three times what the last compile took: a very heavy project stops rebuilding on every pause.'],
+    hint: ['Lo que Pyx espera, tras la última pulsación, antes de compilar. Si el motor LaTeX tarda más que eso, espera lo que tardó la última vez (10 s como mucho): nunca se queda sin compilar.',
+      'How long Pyx waits after the last keystroke before compiling. If the LaTeX engine takes longer than that, it waits as long as the engine took last time (10 s at most): it never stops compiling.'],
+  },
+  {
+    cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'cellTimeout', type: 'range',
+    label: 'Tiempo máximo por celda de Python', en: 'Time limit per Python cell',
+    min: 0, max: 900, step: 15, unit: (v) => (v ? `${v} s` : '—'),
+    hint: ['0 = sin límite (una simulación larga no es un cuelgue: el estado dice que Python está ejecutando y «Detener» la para). Con un límite, la celda que lo supera se interrumpe sola y la compilación sigue con el aviso.',
+      '0 = no limit (a long simulation is not a hang: the status says Python is running and "Stop" stops it). With a limit, a cell that exceeds it is interrupted and the compile goes on with the warning.'],
   },
   {
     cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'warmEngine', type: 'check',

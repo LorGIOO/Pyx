@@ -151,6 +151,17 @@ export async function readBinaryFile(path) {
   if (ArrayBuffer.isView(bytes)) return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return new Uint8Array(bytes);
 }
+/** The bytes of a PDF for the viewer. For a compiled PDF this is the copy made
+ *  when its compile ended (Rust: read_pdf) — never the file the engine may be
+ *  writing again right now. */
+export async function readPdfFile(path) {
+  if (!isTauri()) return notDesktop('Leer PDF');
+  const bytes = await tauriInvoke('read_pdf', { path });
+  if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
+  if (bytes instanceof Uint8Array) return bytes;
+  if (ArrayBuffer.isView(bytes)) return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return new Uint8Array(bytes);
+}
 export async function writeBinaryFile(path, bytes) {
   if (!isTauri()) return notDesktop('Guardar archivo');
   // Raw body (not a JSON array of numbers); the path rides in a header.
@@ -182,10 +193,11 @@ export const detectEnv = () => invoke('detect_env');
 // the author wrote them. `searchDirs` are the folders of the \input'ed files:
 // an image beside a chapter resolves, behind anything beside the main file.
 // `clean` = start from nothing: no .aux, lists or SyncTeX index from earlier runs.
-// `warm` = let a paused engine (preamble already typeset) run this pass, and
-// leave one paused for the next (latex.rs, "Warm engine").
-export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false, warm = true) =>
-  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean, warm });
+// `warm` = let a paused engine (preamble already typeset) run this pass;
+// `prewarm` = leave one paused for the next (latex.rs, "Warm engine").
+// `gen` = the app's number for this request; it comes back in the result.
+export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false, warm = true, prewarm = warm, gen = 0) =>
+  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean, warm, prewarm, gen });
 // Stop the LaTeX run in flight (engine + PDF driver).
 export const compileCancel = () => invoke('compile_cancel');
 // The project's working directory (created on demand). Everything the build
@@ -230,6 +242,9 @@ export const setupPython = (packages = []) => invoke('setup_python', { packages 
 export const installPackages = (python, packages) => invoke('install_packages', { python, packages });
 export const revealInExplorer = (path) => invoke('reveal_in_explorer', { path });
 export const openExternal = (path) => invoke('open_external', { path });
+// A compiled PDF, in the system's PDF application: a copy of it, kept up to
+// date after every compile (never the file the engine writes).
+export const openPdfExternal = (path) => invoke('open_pdf_external', { path });
 export const openViewerWindow = (path) => invoke('open_viewer_window', { path: encodeURIComponent(path) });
 export const readDir = (path) => invoke('read_dir', { path });
 // Every source file under a folder, with its text (.pltx: its document source).

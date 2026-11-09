@@ -6,12 +6,12 @@ import { state } from './core/state.js';
 import {
   detectEnv, isTauri, openExternal, onAppEvent, focusSelf, invoke,
 } from './core/platform.js';
-import { setChangeHandler } from './editor/setup.js';
+import { setChangeHandler, getViewOfDoc } from './editor/setup.js';
 import {
   openDocument, saveActive, closeActive, splitActivePane, openFromOs,
 } from './solid/stores/docStore.js';
 import { compileActive, cancelCompile, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
-import { loadPdf } from './pdf/preview.js';
+import { loadPdf, pdfSearch } from './pdf/preview.js';
 import { openFind, runAll, gotoLineCol, forwardSearch, buildLineToSource } from './editor/commands.js';
 import { openPath } from './solid/stores/docStore.js';
 import { openNewDoc } from './solid/components/NewDocDialog.jsx';
@@ -29,7 +29,9 @@ import {
 // app's state instead of scraping it from the screen. A normal build replaces
 // the condition with `undefined` and drops this line entirely.
 if (import.meta.env.VITE_PYX_QA) {
-  window.__pyxQA = { state, compileActive, saveActive, openPath, runAction };
+  // getViewOfDoc / pdfSearch: the suite types into the editor and reads back
+  // what the VIEWER holds — "compiled" is only true when the PDF shows it.
+  window.__pyxQA = { state, compileActive, saveActive, openPath, runAction, getViewOfDoc, pdfSearch };
 }
 
 // No web-style right-click menu anywhere (removes "Inspeccionar elemento", etc.).

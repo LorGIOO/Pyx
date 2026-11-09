@@ -12,7 +12,7 @@ import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
 import { docIdOf } from '../editor/doc-id.js';
 import {
-  runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel,
+  runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel, releaseKernelLock,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
   execKey, programOf, forgetNames, ensureStarNames, resolveNotebook, runLinkEntry,
   saveNotebookValues, notebookNote, nsHasRun, captureScope, scopeCurrent,
@@ -43,41 +43,55 @@ import { general } from '../solid/stores/settingsStore.js';
    so writing never blocks. Unsaved documents are skipped — a save dialog must
    never pop up mid-keystroke.
 
-   ADAPTIVE DELAY. The configured delay (~1.1 s) assumes a compile costs about a
-   second. On a thousand-page project with dozens of \input'ed chapters, xelatex
-   takes tens of seconds — so every pause queued another compile behind the one
-   still running, the queue never drained, and the app looked hung while the CPU
-   melted. We now measure how long the last compile actually took and wait
-   proportionally longer before starting the next one. A project that takes a
-   minute to build simply stops auto-compiling on every pause; Ctrl+Shift+B
-   still compiles on demand, immediately. */
+   THE DELAY IS WHAT THE USER SET, and the compile it arms always fires.
+
+   It used to be `max(setting, 3 × how long the last compile took)`, capped at
+   two minutes, and above 40 s live compiling switched itself off. "How long
+   the last compile took" was everything — the Python cells (the first compile
+   of a session imports scipy and matplotlib: tens of seconds) and up to 20 s
+   of waiting for the viewer. So after one slow first compile the next edit
+   waited 45 s, or a minute and a half, before anything happened; past 40 s
+   nothing ever happened again unless a manual compile came in under the
+   limit. That is "it shows up minutes later, or never".
+
+   What is left of the adaptation is only what protects a heavy document from
+   compiling back to back: the wait is at least as long as the ENGINE took
+   last time (LaTeX alone — never Python, never the viewer), and never more
+   than ten seconds. Nothing suspends itself. And when the timer fires while a
+   compile is running it does not arm itself again: compileActive folds the
+   request into the one follow-up compile that starts when the current one
+   ends, reading the text as it is then. */
 let liveTimer = null;
-let lastCompileMs = 0;
+let lastEngineMs = 0;
+const LIVE_DELAY_MAX = 10_000;
 
 /** How long to wait after typing stops before compiling in the background. */
-function liveDelay() {
-  const base = Math.max(300, +general.liveDelay || 1100);
-  // Never spend more than ~1/4 of the time compiling in the background: if the
-  // last build took 20 s, wait at least 60 s before starting another one.
-  const proportional = lastCompileMs * 3;
-  return Math.max(base, Math.min(proportional, 120_000));
+export function liveDelay() {
+  const base = Math.max(300, +general.liveDelay || 1000);
+  return Math.max(base, Math.min(lastEngineMs, LIVE_DELAY_MAX));
 }
 
-/** True when the project is so slow to build that live compiling does more harm
- *  than good. Surfaced in the status bar / log so it isn't a silent surprise. */
+/** Kept for callers of the old API: live compile no longer suspends itself. */
 export function liveCompileSuspended() {
-  return lastCompileMs > 40_000;
+  return false;
+}
+
+/** Drop a background compile that was armed and has not fired. */
+export function cancelLiveCompile() {
+  clearTimeout(liveTimer);
+  liveTimer = null;
+  state.livePending = false;
 }
 
 export function scheduleLiveCompile() {
-  if (!state.liveCompile) return;
+  if (!state.liveCompile) { cancelLiveCompile(); return; }
   const doc = activeDoc();
   if (!doc || doc.kind || !doc.path) return;
   clearTimeout(liveTimer);
-  // A build this heavy must not run off a typing pause at all.
-  if (liveCompileSuspended()) return;
+  state.livePending = true; // the status LED shows "programada"
   liveTimer = setTimeout(() => {
-    if (state.compiling) { scheduleLiveCompile(); return; } // trail the current run
+    liveTimer = null;
+    state.livePending = false;
     const d = activeDoc();
     if (!d || d.kind || !d.path) return;
     // Python-only documents (cells, no LaTeX, no master) run cells ON DEMAND:
@@ -101,6 +115,7 @@ export function scheduleLiveCompile() {
       if (!/\\documentclass|\\begin\s*\{document\}/.test(c)
         && !/^\s*%\s*!TEX\s+root/im.test(c)) return;
     }
+    // Compiling already? compileActive queues it — no second timer.
     compileActive(false);
   }, liveDelay());
 }
@@ -114,6 +129,57 @@ let lastPdfPath = null;
 let compilingRoot = null;
 export function reloadLastPdf() {
   if (lastPdfPath) loadPdf(lastPdfPath).catch(() => {});
+}
+
+/* The compile and the viewer are two things.
+ *
+ * The compile used to wait for the viewer — up to 20 s — before it counted as
+ * finished. While it waited the next compile could not start, the wait was
+ * added to "how long compiling takes" (which stretched the live-compile
+ * delay), and if the viewer never answered the compile ended as "done" with
+ * the old PDF on screen. Now the compile ends when the ENGINE ends. The viewer
+ * loads the PDF on its own, says so while it does (state.pdfLoading), has its
+ * own time limit and retry (preview.js), and reports its own failure. The
+ * newest load always wins; an older one that finishes late is discarded there.
+ */
+let viewLoads = 0;
+function showCompiledPdf(pdfPath, { gen, follow }) {
+  if (auxOpen()) {
+    // The detached window is the active viewer: refresh THAT one (the in-app
+    // pane is closed; it reloads via reloadLastPdf when that window closes).
+    emitToWindow('pdf-viewer', 'viewer:load', encodeURIComponent(pdfPath));
+    return;
+  }
+  const mine = ++viewLoads;
+  state.pdfLoading = true;
+  loadPdf(pdfPath).then(async (info) => {
+    if (!info) return; // superseded by a newer PDF, or no pane to show it in
+    // A compile that typing fired: let the PDF show what was typed.
+    if (follow && general.pdfFollowCursor !== false && lastArea() !== 'pdf') {
+      import('../editor/commands.js').then((m) => m.followCursorInPdf()).catch(() => {});
+    }
+    const paintMs = await Promise.race([info.painted, new Promise((r) => setTimeout(() => r(null), 15000))]);
+    // Where the viewer's time went, under the engine's — if that log is
+    // still this compile's.
+    if (gen === lastRealGen && state.lastLog.includes('===== Tiempos de Pyx =====') && !state.lastLog.includes('\nVisor PDF     :')) {
+      state.lastLog += `\nVisor PDF     : ${paintMs == null ? '—' : Math.round(paintMs)} ms hasta la primera página `
+        + `(leer ${Math.round(info.readMs)} ms, analizar ${Math.round(info.parseMs)} ms)`;
+      lastReal = { ...lastReal, log: state.lastLog };
+    }
+  }).catch((e) => {
+    if (mine !== viewLoads) return;
+    // The viewer's failure is ADDED to the engine's log — it used to replace
+    // it, and the one line left ("Invalid PDF structure") hid every error
+    // that explained it.
+    const why = `El visor no pudo abrir el PDF: ${String((e && e.message) || e)}`;
+    state.compileReason = why;
+    const body = state.lastLog.replace(/^===== Avisos de Pyx =====\n?/, '');
+    state.lastLog = `===== Avisos de Pyx =====\n[Visor] ${why}\n${state.lastLog.startsWith('===== Avisos de Pyx =====') ? '' : '\n'}${body}`;
+    state.lastCompileOk = false;
+    lastReal = { ok: false, log: state.lastLog };
+  }).finally(() => {
+    if (mine === viewLoads) state.pdfLoading = false;
+  });
 }
 
 // Paths from Rust carry the OS separator, paths built here forward slashes.
@@ -676,6 +742,7 @@ let queuedFresh = false; // …or a "Recompilar desde cero"
  * dropping the follow-up compile a queued request would have started. */
 let cancelRequested = false;
 export async function cancelCompile() {
+  cancelLiveCompile(); // one that is only armed: it must not fire after a stop
   if (!state.compiling) return;
   cancelRequested = true;
   queued = null;
@@ -686,6 +753,68 @@ export async function cancelCompile() {
   if (state.kernelStatus === 'busy') {
     try { await interruptKernel(); } catch (_) { /* best effort */ }
   }
+}
+
+/* The compile's own watchdog.
+ *
+ * Every step of a compile that can take long has a limit where it runs — the
+ * engine in latex.rs (a loop, a silent stall, a ceiling per pass), a request
+ * to Python in kernel.rs — so none of them should be able to hold a compile
+ * for ever. This is the net under all of them, for the one thing they cannot
+ * see: a step on THIS side that never comes back (an IPC call that is never
+ * answered, a promise chain that lost its end). Without it that meant
+ * "Compilando…" until Pyx was restarted, with every later request queued
+ * behind it.
+ *
+ * Each step that makes progress marks the time (`beat`). When a phase has
+ * gone longer than its limit without one, the compile is abandoned: the
+ * engine and the running cell are stopped, the slot is freed, the reason is
+ * shown, and whatever was queued runs. The abandoned run is ignored if it
+ * ever unwinds (`runSeq`).
+ *
+ * The limits are far above anything the steps' own watchdogs allow, so this
+ * never fires on a compile that is merely slow. Running the user's cells has
+ * none unless a time limit per cell is set: a long simulation is not a hang,
+ * the status says Python is running, and "Detener" stops it. */
+let runSeq = 0;        // the compile that owns state.compiling
+let lastBeat = 0;
+let watchdog = null;
+const beat = () => { lastBeat = performance.now(); };
+function phaseLimit(phase) {
+  if (phase === 'prep') return 3 * 60_000;
+  // Three passes of at most 20 min each, plus the tools between them.
+  if (phase === 'latex') return 80 * 60_000;
+  if (phase === 'python') {
+    const perCell = +general.cellTimeout || 0;
+    return perCell > 0 ? perCell * 1000 + 60_000 : 0;
+  }
+  return 0;
+}
+function startWatchdog() {
+  beat();
+  clearInterval(watchdog);
+  watchdog = setInterval(() => {
+    if (!state.compiling) { clearInterval(watchdog); watchdog = null; return; }
+    const limit = phaseLimit(state.compilePhase);
+    if (!limit || !Number.isFinite(lastBeat) || performance.now() - lastBeat < limit) return;
+    abandonCompile(state.compilePhase, limit);
+  }, 5000);
+}
+function abandonCompile(phase, limit) {
+  const what = phase === 'latex' ? 'el motor LaTeX' : phase === 'python' ? 'Python' : 'la preparación';
+  const why = `La compilación se abandonó: ${what} llevaba más de ${Math.round(limit / 60000)} min sin avanzar. `
+    + 'Vuelve a compilar; si se repite, usa «Recompilar desde cero».';
+  runSeq++; // the run in flight no longer owns anything
+  clearInterval(watchdog);
+  watchdog = null;
+  compileCancel().catch(() => {});
+  interruptKernel(true).catch(() => {});
+  releaseKernelLock();
+  state.lastLog = `===== Avisos de Pyx =====\n[Pyx] ${why}`;
+  state.lastCompileOk = false;
+  state.compileReason = why;
+  lastReal = { ok: false, log: state.lastLog };
+  finishCompile();
 }
 
 /* What the last engine run READ (its recorder list + graphics), with each
@@ -717,6 +846,30 @@ const NEEDS_REFS = /\\(?:label|ref|pageref|eqref|autoref|cref|Cref|cite|tableofc
    changes" that wiped the Problems list and turned the status bar green over
    a document that still has errors. */
 let lastReal = { ok: null, log: '' };
+let lastRealGen = 0; // the request whose log `lastReal` holds
+
+/** Free the compile slot and serve whatever was asked for meanwhile. */
+function finishCompile() {
+  state.compiling = false;
+  state.compilePhase = null;
+  state.compileFresh = false;
+  compilingRoot = null;
+  // Serve whatever was asked for while this one ran (see `queued`).
+  if (queued !== null && !cancelRequested) {
+    const wantViewer = queued;
+    const wantForce = queuedForce;
+    const wantFresh = queuedFresh;
+    queued = null;
+    queuedForce = false;
+    queuedFresh = false;
+    state.compileQueued = false;
+    // A queued "Compilar" still runs the engine (and a queued "desde cero"
+    // stays one); a queued background compile may still skip the engine
+    // when nothing it reads has changed.
+    compileActive(wantViewer, { force: wantForce, fresh: wantFresh });
+  }
+  cancelRequested = false;
+}
 
 /**
  * @param {boolean} showViewer  someone asked to SEE the result (open the viewer)
@@ -754,12 +907,25 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
   state.compiling = true;
   state.compilePhase = 'prep';
   state.compileFresh = fresh;
+  // This run's number. `mine()` turns false if the watchdog abandons it: from
+  // then on it must not touch the app's state, whatever it still has to do.
+  const run = ++runSeq;
+  const mine = () => run === runSeq;
+  const gen = ++state.compileGen;
+  // A background compile that was armed is this one, or is overtaken by it.
+  cancelLiveCompile();
+  startWatchdog();
 
   // A file must exist on disk for the engine (and relative paths) to work.
   if (!doc.path) {
+    lastBeat = Infinity; // a save dialog is open: the user's time, not a stall
     const ok = await saveActiveAs().catch(() => false);
+    beat();
+    if (!mine()) return;
     doc = activeDoc();
     if (!ok || !doc || !doc.path) {
+      clearInterval(watchdog);
+      watchdog = null;
       state.compiling = false;
       state.compilePhase = null;
       state.compileFresh = false;
@@ -773,7 +939,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
   // Where the time actually goes, reported at the end of the log. Compiling is
   // this app's inner loop, and when it feels slow the only useful question is
   // "slow doing what" — guessing that answer has already been wrong once.
-  const phase = { cells: 0, tex: 0, ran: 0, total: 0 };
+  const phase = { cells: 0, tex: 0, ran: 0, total: 0, prep: 0, build: 0 };
+  // Did the ENGINE run in this compile (and for how long)? Only that feeds
+  // the live-compile delay.
+  let engineMs = null;
   // The detached viewer replaces the in-app pane: don't reopen it while the
   // auxiliary window is the one showing the PDF.
   if (showViewer && !auxOpen()) state.previewVisible = true;
@@ -796,6 +965,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     //    \input tree below it). The root may be open (use its live content) or
     //    only on disk.
     const rootPath = await resolveRootPath(doc, content);
+    beat();
+    if (!mine()) return null;
     compilingRoot = rootPath; // which project this run is building (showSavedPdf)
     let rootDoc = doc;
     let rootContent = content;
@@ -831,6 +1002,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     //    gatherTree analyzed each file exactly once — read the results, never
     //    rescan the text here.
     const files = await gatherTree(rootPath, rootContent, cwd);
+    beat();
+    if (!mine()) return null;
+    phase.prep = performance.now() - t0;
     const rootF = files.get(rootPath);
     const isPyx = rootF.isPyx;
     const pythonOnly = isPyx && !/\\documentclass|\\begin\s*\{document\}/.test(rootContent);
@@ -1006,6 +1180,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           stop: () => cancelRequested, // "Detener": not one more cell
           forget: forgetNames,
           run: async (i, watch) => {
+            beat(); // a cell starting is progress
             const { path, cell, nth, notebook, link } = runOrder[i];
             if (link) {
               // A notebook's values: loaded, not computed (nothing of it runs).
@@ -1117,6 +1292,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         }
       });
       phase.cells = performance.now() - tCells;
+      beat();
+      if (!mine()) return null;
+      state.compilePhase = 'prep';
       for (const [nbPath, nbPlan] of nbPlans) {
         const note = notebookNote(nbPath, nbPlan, nbRan.has(nbPath));
         if (note) nbNotes.push(note);
@@ -1163,6 +1341,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     if (cancelRequested) {
       state.lastLog = '===== Avisos de Pyx =====\n[Pyx] Compilación detenida por el usuario.';
       state.lastCompileOk = false;
+      state.compileReason = 'Compilación detenida por el usuario.';
       return null;
     }
     // Python-only .pltx (no LaTeX document): running the cells IS the compile.
@@ -1172,6 +1351,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         'Documento sin LaTeX: se han ejecutado las celdas Python (no se genera PDF).'
         + (nbNotes.length ? `\n\nArchivos vinculados:\n${nbNotes.map((n) => `  ${n}`).join('\n')}` : '');
       state.lastCompileOk = !problems;
+      state.compileReason = '';
       return;
     }
 
@@ -1240,6 +1420,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
      * layout so `\input{cap/uno}` keeps working — the engine finds it through
      * TEXINPUTS. A file that sits outside the project (a chapter reached with
      * `../shared/…`) gets a flattened, fingerprinted name instead. */
+    const tBuild = performance.now();
     const outDir = await buildDirFor(rootPath);
     const buildRel = new Map();
     for (const path of files.keys()) {
@@ -1363,6 +1544,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       } catch (_) { /* unstamped → rewritten next compile */ }
     }
     const buildPath = joinPath(outDir, buildRel.get(rootPath));
+    phase.build = performance.now() - tBuild;
+    beat();
+    if (!mine()) return null;
 
     // Published for forward/inverse SyncTeX and the log parser — keyed by the
     // build file's lowercase basename. These are plain data (arrays of tens of
@@ -1433,8 +1617,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       state.lastLog = (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '')
         + (lastReal.log || 'Sin cambios que afecten al PDF: no se ha recompilado.');
       state.lastCompileOk = problems ? false : (lastReal.ok ?? true);
+      state.compileReason = '';
       if (showViewer && !auxOpen() && !samePath(getPdfPath(), expectedPdf)) {
-        try { await loadPdf(expectedPdf); markPdfForeign(false); } catch (_) { /* the next compile shows it */ }
+        markPdfForeign(false);
+        showCompiledPdf(expectedPdf, { gen, follow: false });
       }
       return null;
     }
@@ -1449,9 +1635,19 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // keeps them — that is what lets most compiles finish in ONE pass.
     // (A damaged .aux from an interrupted run is cleaned by latex.rs anyway.)
     state.compilePhase = 'latex';
+    beat();
+    // The engine left paused after the last compile (preamble already typeset)
+    // runs BACKGROUND compiles only. One the user asked for — "Compilar" — is
+    // the ground truth: a fresh engine from the first line, as TeXstudio would
+    // run it. Either kind leaves the next engine paused, for the typing that
+    // follows.
+    const warmOn = general.warmEngine !== false;
     const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh,
-      general.warmEngine !== false);
+      warmOn && !force, warmOn, gen);
     phase.tex = performance.now() - tTex;
+    engineMs = phase.tex;
+    beat();
+    if (!mine()) return null;
     // Remember what this run read, to know next time whether it may be
     // skipped. A file changed WHILE it ran may not be in this PDF: then the
     // next compile must run.
@@ -1467,18 +1663,27 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     if (res.stopped) {
       problems += res.stopped === 'cancelado'
         ? '\n[LaTeX] Compilación detenida por el usuario.'
-        : '\n[LaTeX] Pyx detuvo el motor: '
-          + (res.stopped === 'bucle' ? 'el mismo error se repetía sin fin (bucle).'
-            : res.stopped === 'sin-progreso' ? 'llevaba demasiado tiempo sin avanzar (bucle infinito).'
-              : 'superó el tiempo máximo de una pasada.')
-          + ' Detalles al final del registro.';
+        : res.stopped === 'sustituida'
+          ? '\n[LaTeX] Sustituida por una compilación más reciente.'
+          : '\n[LaTeX] Pyx detuvo el motor: '
+            + (res.stopped === 'bucle' ? 'el mismo error se repetía sin fin (bucle).'
+              : res.stopped === 'sin-progreso' ? 'llevaba demasiado tiempo sin avanzar (bucle infinito).'
+                : 'superó el tiempo máximo de una pasada.')
+            + ' Detalles al final del registro.';
     }
+    // A compile ends in a new PDF or in a reason — never in "done" over the
+    // PDF of an hour ago. latex.rs always gives one when it wrote no PDF.
+    const reason = res.pdf_path ? '' : (res.reason || 'El motor terminó sin escribir un PDF.');
+    state.compileReason = reason;
     // What the engine actually did: the backend adds passes when TeX needs them.
     const ranPasses = ((res.log || '').match(/===== Pasada /g) || []).length || passes;
     // The engine died writing the PDF (latex.rs explains why and names any
     // missing image): list it as a problem, not only deep in the raw log.
-    const cut = /===== Pyx: el PDF no se completó =====\n([\s\S]*)$/.exec(res.log || '');
+    const cut = /===== Pyx: el PDF no se completó =====\n([\s\S]*?)(?:\n=====|$)/.exec(res.log || '');
     if (cut) problems += `\n[PDF] ${cut[1].trim().replace(/\s*\n\s*/g, ' ')}`;
+    else if (reason && !res.stopped) problems += `\n[PDF] No hay PDF nuevo: ${reason.replace(/\s*\n\s*/g, ' ')}`;
+    const tm = res.timings || {};
+    const passesMs = (tm.passes_ms || []).map((x) => `${x} ms`).join(' + ');
 
     state.lastLog =
       (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') + (res.log || '')
@@ -1486,7 +1691,13 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       + `Celdas Python : ${Math.round(phase.cells)} ms `
       + `(${phase.ran} ejecutada${phase.ran === 1 ? '' : 's'} de ${phase.total})\n`
       + `Motor LaTeX   : ${Math.round(phase.tex)} ms `
-      + `(${engine}, ${ranPasses} pasada${ranPasses === 1 ? '' : 's'})\n`
+      + `(${engine}, ${ranPasses} pasada${ranPasses === 1 ? '' : 's'}`
+      + `${tm.warm ? ', preámbulo ya cargado' : ''})\n`
+      + (passesMs ? `  pasadas     : ${passesMs}`
+        + `${tm.tools_ms ? `; bibliografía e índices ${tm.tools_ms} ms` : ''}`
+        + `; antes ${tm.prep_ms || 0} ms; PDF y lista de archivos ${tm.finish_ms || 0} ms`
+        + `${tm.wait_ms > 20 ? `; en espera ${tm.wait_ms} ms` : ''}\n` : '')
+      + `Preparación   : ${Math.round(phase.prep)} ms leer el proyecto, ${Math.round(phase.build)} ms escribir las copias\n`
       + `Total         : ${Math.round(performance.now() - t0)} ms`
       + (fresh ? '\nModo          : desde cero (kernel nuevo, sin datos auxiliares)' : '')
       + (pythonNote ? `\nPython        : ${pythonNote}` : '')
@@ -1497,6 +1708,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // is what sent people pressing compile again and again.
     state.lastCompileOk = res.ok ? true : (res.pdf_path ? 'warn' : false);
     lastReal = { ok: state.lastCompileOk, log: state.lastLog };
+    lastRealGen = gen;
 
     // TeXstudio-style: pdf_path is only set when THIS run wrote a PDF, so show
     // it even if TeX recovered from errors — they stay listed in the log panel.
@@ -1513,66 +1725,33 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       }
       // This PDF IS the active document's: whatever warning was up is stale.
       markPdfForeign(false);
-      state.compilePhase = 'pdf';
-      if (auxOpen()) {
-        // The detached window is the active viewer: refresh THAT one (the
-        // in-app pane is closed; it reloads via reloadLastPdf when the
-        // auxiliary window closes).
-        emitToWindow('pdf-viewer', 'viewer:load', encodeURIComponent(res.pdf_path));
-      } else {
-        try {
-          // The compile is done: the viewer finishing its load (a huge PDF)
-          // must never hold the NEXT compile hostage. It goes on loading.
-          const load = loadPdf(res.pdf_path);
-          await Promise.race([load, new Promise((r) => setTimeout(r, 20000))]);
-          load.catch(() => {}); // a late failure is shown in the viewer itself
-          // A compile that typing fired: let the PDF show what was typed.
-          if (!showViewer && general.pdfFollowCursor !== false && lastArea() !== 'pdf') {
-            import('../editor/commands.js').then((m) => m.followCursorInPdf()).catch(() => {});
-          }
-        } catch (e) {
-          // The viewer's failure is ADDED to the engine's log. It used to
-          // replace it (via the catch below), and the one line left —
-          // "Invalid PDF structure" — hid every error that explained it.
-          state.lastLog = `===== Avisos de Pyx =====${problems}\n[Visor] No se pudo abrir el PDF:`
-            + ` ${String((e && e.message) || e)}\n\n${state.lastLog.replace(/^===== Avisos de Pyx =====[\s\S]*?\n\n/, '')}`;
-          state.lastCompileOk = false;
-          lastReal = { ok: false, log: state.lastLog };
-        }
-      }
+      // The compile is done. Showing its PDF is the viewer's business and
+      // holds nothing back (see showCompiledPdf).
+      showCompiledPdf(res.pdf_path, { gen, follow: !showViewer });
     }
     // Never force the log open: compilation is silent unless the user opens it.
     return res;
   } catch (e) {
+    if (!mine()) return null;
     // In the "Avisos de Pyx" shape, so the Problems view LISTS the failure. A
     // bare message there read "✓ Sin errores ni avisos detectados" under a
     // status bar that said the compile had failed.
-    state.lastLog = `===== Avisos de Pyx =====\n[Pyx] ${String((e && e.message) || e)}`;
+    const why = String((e && e.message) || e);
+    state.lastLog = `===== Avisos de Pyx =====\n[Pyx] ${why}`;
     state.lastCompileOk = false;
+    state.compileReason = why;
   } finally {
-    // Feed the live-compile backoff: the next background build waits in
-    // proportion to how long this one really took.
-    lastCompileMs = performance.now() - t0;
-    state.compileMs = Math.round(lastCompileMs);
-    state.liveSuspended = liveCompileSuspended();
-    state.compiling = false;
-    state.compilePhase = null;
-    state.compileFresh = false;
-    compilingRoot = null;
-    // Serve whatever was asked for while this one ran (see `queued`).
-    if (queued !== null && !cancelRequested) {
-      const wantViewer = queued;
-      const wantForce = queuedForce;
-      const wantFresh = queuedFresh;
-      queued = null;
-      queuedForce = false;
-      queuedFresh = false;
-      state.compileQueued = false;
-      // A queued "Compilar" still runs the engine (and a queued "desde cero"
-      // stays one); a queued background compile may still skip the engine
-      // when nothing it reads has changed.
-      compileActive(wantViewer, { force: wantForce, fresh: wantFresh });
+    // Abandoned by the watchdog: the slot was freed there, and may already
+    // belong to another compile.
+    if (mine()) {
+      clearInterval(watchdog);
+      watchdog = null;
+      // Only the engine's own time stretches the wait before the next
+      // background compile — and only when the engine ran.
+      if (engineMs != null) lastEngineMs = engineMs;
+      state.compileMs = Math.round(performance.now() - t0);
+      state.liveSuspended = false;
+      finishCompile();
     }
-    cancelRequested = false;
   }
 }

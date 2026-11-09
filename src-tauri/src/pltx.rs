@@ -299,6 +299,11 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
                 if rel.starts_with(crate::latex::WARM_DIR) {
                     continue;
                 }
+                // The viewers' copies of the PDF (latex.rs, "A PDF nobody is
+                // writing"): the PDF itself is already packed.
+                if rel.starts_with(crate::latex::VIEW_DIR) {
+                    continue;
+                }
                 // xelatex's intermediate (.xdv): rewritten by every compile and
                 // never read back — as big as the PDF, for nothing.
                 if rel.to_ascii_lowercase().ends_with(".xdv") {

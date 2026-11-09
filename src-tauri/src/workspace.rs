@@ -36,6 +36,31 @@ fn cache_root() -> PathBuf {
     base.unwrap_or_else(std::env::temp_dir).join("Pyx").join("build")
 }
 
+/// Is `dir` one of the working directories (or inside one)?
+pub fn in_cache(dir: &Path) -> bool {
+    let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
+    let root = norm(&cache_root());
+    norm(dir).starts_with(&root)
+}
+
+/// Append one line to a log file under `…/Pyx/logs`, best effort. The file is
+/// started over once it passes 2 MB (the previous one is kept as `.1`): a log
+/// that only grows is a log somebody eventually has to delete by hand.
+pub fn append_log(name: &str, line: &str) {
+    use std::io::Write;
+    let Some(dir) = cache_root().parent().map(|p| p.join("logs")) else { return };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let file = dir.join(name);
+    if std::fs::metadata(&file).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false) {
+        let _ = std::fs::rename(&file, dir.join(format!("{name}.1")));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&file) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// 64-bit fingerprint of a string (FNV-1a). Same shape as the one the frontend
 /// uses; it only has to be stable and collision-free enough to key a folder.
 fn fingerprint(s: &str) -> u64 {

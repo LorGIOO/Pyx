@@ -69,6 +69,7 @@ async fn detect_env() -> Result<latex::EnvInfo, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn compile_latex(
     path: String,
     project_dir: String,
@@ -78,22 +79,29 @@ async fn compile_latex(
     search_dirs: Option<Vec<String>>,
     clean: Option<bool>,
     warm: Option<bool>,
+    prewarm: Option<bool>,
+    gen: Option<u64>,
 ) -> Result<latex::CompileResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let dirs = search_dirs.unwrap_or_default();
-        latex::compile(
-            &path,
-            &project_dir,
-            &engine,
-            passes,
+    let (res, next) = tauri::async_runtime::spawn_blocking(move || {
+        let opts = latex::CompileOpts {
             jobname,
-            &dirs,
-            clean.unwrap_or(false),
-            warm.unwrap_or(true),
-        )
+            search_dirs: search_dirs.unwrap_or_default(),
+            clean_first: clean.unwrap_or(false),
+            use_warm: warm.unwrap_or(false),
+            // Absent = as before this argument existed: follows `warm`.
+            prewarm: if prewarm.or(warm).unwrap_or(false) { latex::Prewarm::Later } else { latex::Prewarm::No },
+            gen: gen.unwrap_or(0),
+        };
+        latex::compile_with(&path, &project_dir, &engine, passes, opts)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    // The next compile's engine starts once this result is on its way to the
+    // window, not before (latex.rs, PrewarmJob).
+    if let Some(job) = next {
+        job.start_later();
+    }
+    Ok(res)
 }
 
 /// ChkTeX style warnings for the text on screen (opt-in, latex-lint-ext.js).
@@ -125,9 +133,41 @@ async fn update_install(app: tauri::AppHandle, asset: update::Asset) -> Result<(
 }
 
 /// Stop the LaTeX run in flight (and the PDF driver it started).
+///
+/// `async`: a synchronous command runs on the UI thread, and stopping a
+/// compile can mean running `taskkill` and waiting for it — with the window
+/// frozen meanwhile, on the one click whose whole point is to get it back.
 #[tauri::command]
-fn compile_cancel() -> bool {
-    latex::cancel()
+async fn compile_cancel() -> bool {
+    tauri::async_runtime::spawn_blocking(latex::cancel).await.unwrap_or(false)
+}
+
+/// The bytes of a compiled PDF, for the viewers.
+///
+/// Read from the copy made when the compile ended (latex.rs, "A PDF nobody is
+/// writing"), never from the file the engine may be rewriting at this very
+/// moment — the next compile starts as soon as the last one ends, while the
+/// viewer is still loading. For any other PDF this is `read_file_bytes`.
+#[tauri::command]
+async fn read_pdf(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let src = latex::pdf_source(&path);
+        std::fs::read(&src).map_err(|e| format!("No se pudo leer {path}: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Open a compiled PDF in the system's PDF application — a COPY of it, kept up
+/// to date after every compile. Handing over the engine's own file let a
+/// reader that locks what it shows (Acrobat) block every later compile.
+#[tauri::command]
+async fn open_pdf_external(path: String) -> Result<(), String> {
+    let copy = tauri::async_runtime::spawn_blocking(move || latex::external_pdf(&path))
+        .await
+        .map_err(|e| e.to_string())??;
+    open_external(copy)
 }
 
 /// Copy a file. Used to export the compiled PDF out of the project's working
@@ -136,7 +176,14 @@ fn compile_cancel() -> bool {
 #[tauri::command]
 async fn copy_file(from: String, to: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        std::fs::copy(&from, &to)
+        // A compiled PDF is exported from the copy made when its compile ended
+        // (latex.rs): the engine's own file may be half-written by the next.
+        let src = if from.to_ascii_lowercase().ends_with(".pdf") {
+            latex::pdf_source(&from)
+        } else {
+            std::path::PathBuf::from(&from)
+        };
+        std::fs::copy(&src, &to)
             .map(|_| ())
             .map_err(|e| format!("No se pudo copiar el archivo: {e}"))
     })
@@ -874,6 +921,14 @@ fn open_external(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Chromium switches of every window. Tauri's own defaults (the first one),
+/// plus smooth scrolling off: the PDF viewer scrolls natively now — on the
+/// compositor, never waiting for the main thread — and a wheel notch must
+/// move the page at once, the way a native reader does, not glide to it.
+/// Keep in sync with `additionalBrowserArgs` in tauri.conf.json.
+const BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-smooth-scrolling";
+
 /// Detach the app's OWN PDF viewer into an auxiliary window: a second webview
 /// running the same bundle, which renders only the viewer UI and loads the PDF.
 ///
@@ -897,6 +952,10 @@ async fn open_viewer_window(app: tauri::AppHandle, path: String) -> Result<(), S
     // from the frontend, so it is safe inside a JS string literal.
     WebviewWindowBuilder::new(&app, "pdf-viewer", WebviewUrl::App("index.html".into()))
         .title("Pyx — Visor PDF")
+        // The SAME browser arguments as the main window (tauri.conf.json):
+        // WebView2 shares one environment per user-data folder and refuses a
+        // second window that asks for different ones.
+        .additional_browser_args(BROWSER_ARGS)
         .inner_size(920.0, 1000.0)
         .min_inner_size(420.0, 480.0)
         .decorations(true)
@@ -1111,6 +1170,8 @@ pub fn run() {
             detect_env,
             compile_latex,
             compile_cancel,
+            read_pdf,
+            open_pdf_external,
             chktex_lint,
             build_dir,
             copy_file,

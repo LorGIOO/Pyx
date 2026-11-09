@@ -43,6 +43,14 @@ export function withKernelLock(fn) {
   run.then(() => { pending--; }, () => { pending--; });
   return run;
 }
+/** Let go of the lock whatever holds it. Only for a sequence that is known
+ *  never to finish (the compile watchdog abandoned it): the chain is a chain
+ *  of promises, and one that never settles would hold every later sequence —
+ *  every compile, every Mayús+Intro — behind it for the rest of the session. */
+export function releaseKernelLock() {
+  kernelChain = Promise.resolve();
+  pending = 0;
+}
 
 /* ---------------- what the namespace holds (incremental execution) ----------------
    Which version of each cell the kernel's namespace reflects, and what it
@@ -497,7 +505,10 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
     // in it — not an exception that left the cell spinning forever.
     await ensureKernel();
     state.kernelStatus = 'busy';
-    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset, watch: watch || [] });
+    // The user's "tiempo máximo por celda", if any (kernel.rs enforces it:
+    // a soft interrupt first, a new interpreter if that is ignored).
+    const timeout_ms = Math.max(0, +general.cellTimeout || 0) * 1000;
+    let res = await kernelExec({ id: reqId++, code, cwd, reset: !!reset, watch: watch || [], timeout_ms });
     if (reset && res && Array.isArray(res.restart) && res.restart.length) {
       // The document modified a library in the running process
       // (`scipy.constants.g = 10`, `math.pi = …`): no in-process reset can
@@ -507,7 +518,7 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
       await kernelReset();
       started = true; forgetProcess();
       lastRestart = res.restart;
-      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd, watch: watch || [] });
+      if (code && code.trim()) res = await kernelExec({ id: reqId++, code, cwd, watch: watch || [], timeout_ms });
       else res = { ...res, restarted: true };
     }
     if (reset) nsReset(cwd);

@@ -5,7 +5,8 @@ import { undo, redo, moveLineUp, moveLineDown } from '@codemirror/commands';
 import { openSearchPanel } from '@codemirror/search';
 import { EditorView } from '@codemirror/view';
 import { state } from '../core/state.js';
-import { getView } from './setup.js';
+import { getView as paneView, getViewOfDoc } from './setup.js';
+import { docIdOf } from './doc-id.js';
 import { insertCellTemplate, runAllCells, clearCellOutputs, runCellAtCursor, setOutputsHidden, collapseAllCells, parseCells } from './cells.js';
 import {
   tableAddRow, tableAddColumn, tableDeleteRow, tableDeleteColumn, tableToggleHline,
@@ -16,6 +17,22 @@ import { lineMapFor, sourceToBuildPath } from '../compile/build-maps.js';
 import { envEnter, envTab } from './latex-env.js';
 import { cleanPaste, freshCellIds } from './paste-table.js';
 import { cellAtLine } from './cell-parse.js';
+
+/* The editor the ribbon acts on: the one showing the ACTIVE document.
+ *
+ * A pane keeps its editor while it displays a viewer tab (an image, an HTML
+ * output) — hidden underneath, still holding the last text document it
+ * showed. Taking "the active pane's view" as it came meant that, with a
+ * figure in front, «Insertar tabla», «Pegar» or «Deshacer» edited that hidden
+ * document: changes the user could not see, in a file they were not looking
+ * at. With a viewer in front there is no editor to act on. */
+function getView() {
+  const d = state.documents[state.activeIndex];
+  if (!d || d.kind) return null;
+  const v = paneView();
+  if (v && docIdOf(v.state) === d.id) return v;
+  return getViewOfDoc(d.id);
+}
 
 const withView = (fn) => () => {
   const v = getView();

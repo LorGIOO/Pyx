@@ -41,6 +41,26 @@ describe('lintLatex: errores de estructura', () => {
     // A chapter of a bigger document: its labels may live elsewhere.
     expect(rules(doc('\\input{cap1}\nVer \\ref{nada}'))).toEqual([]);
   });
+  it('una celda no apaga el aviso de \\ref salvo que ELLA escriba etiquetas', () => {
+    // A cell, and a \label further down in the LaTeX: the check stays on.
+    // (It used to go off for any document with a cell followed by the word
+    // "label" anywhere — a plt.xlabel was enough.)
+    const cell = '%#python\nplt.xlabel("x")\nprint("etiqueta")\n%#end';
+    expect(rules(doc(`${cell}\n\\section{A}\\label{s:a}\nVer \\ref{nada}`))).toEqual(['ref@nada']);
+    // A cell that prints \label may be defining the missing one: no verdict.
+    const labeller = '%#python\nprint(r"\\label{eq:%d}" % 3)\n%#end';
+    expect(rules(doc(`${labeller}\n\\section{A}\\label{s:a}\nVer \\ref{eq:3}`))).toEqual([]);
+    const escaped = '%#python\nprint("\\\\label{eq:3}")\n%#end';
+    expect(rules(doc(`${escaped}\n\\section{A}\\label{s:a}\nVer \\ref{eq:3}`))).toEqual([]);
+  });
+  it('muchas celdas sin etiquetas no cuestan tiempo cuadrático', () => {
+    const cells = Array.from({ length: 4000 }, (_, i) => `%#python\nx${i} = ${i}\n%#end\nTexto ${i}.`).join('\n');
+    const t0 = Date.now();
+    expect(rules(doc(`\\label{a}\n${cells}`))).toEqual([]);
+    // ~10 ms linear; the old expression rescanned to the end from every cell
+    // (seconds here). A generous bound that still tells the two apart.
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
   it('entornos verbatim definidos por el documento', () => {
     const t = '\\documentclass{article}\n\\lstnewenvironment{codigo}{}{}\n\\begin{document}\n'
       + '\\begin{codigo}\nx = {1: 2\n\\begin{itemize}\n\\end{codigo}\n\\end{document}\n';

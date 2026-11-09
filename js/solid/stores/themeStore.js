@@ -10,7 +10,7 @@ export const THEMES = [
   { id: 'blue', label: 'Azul', ink: 'light', swatches: ['#0d1b2a', '#00b4d8', '#1b263b'] },
 ];
 
-// What the app starts on with nothing saved (js/theme-init.js falls through to
+// What the app starts on with nothing saved (public/theme-init.js falls through to
 // it, and js/core/state.js reads it back off the document element). Named here
 // so "restablecer" has something to reset TO.
 export const DEFAULT_THEME = 'light';

@@ -381,6 +381,12 @@ async fn write_bytes(request: tauri::ipc::Request<'_>) -> Result<(), String> {
 /// delete access — an antivirus scan, a sync client).
 pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    // One writer per file at a time. Two at once on the same path (Ctrl+S
+    // while the compiler saves that source) can make Windows refuse one of
+    // the renames, and the plain-write fallback below is exactly the
+    // non-atomic write this function exists to avoid — two of those
+    // interleaving leave a mix of both versions.
+    let _one_writer = write_stripe(path).lock().unwrap_or_else(|e| e.into_inner());
     let is_link = std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
         return std::fs::write(path, bytes);
@@ -388,11 +394,16 @@ pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Res
     if is_link {
         return std::fs::write(path, bytes);
     }
-    let tmp = dir.join(format!(
-        ".{}.pyx-{}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
+    // A read-only file is not writable, and the plain write says so with the
+    // system's own error. Going on would create a temporary that inherits the
+    // read-only bit below — one that then cannot replace the target on
+    // Windows and may not even be removable, left as litter beside the
+    // document on every attempt — or, elsewhere, would quietly replace a
+    // file the user had protected.
+    if std::fs::metadata(path).map(|m| m.permissions().readonly()).unwrap_or(false) {
+        return std::fs::write(path, bytes);
+    }
+    let tmp = atomic_tmp_path(dir, name);
     let written = (|| {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes)?;
@@ -417,6 +428,34 @@ pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Res
             std::fs::write(path, bytes)
         }
     }
+}
+
+/// The lock that serializes writes to `path`: one of a few, picked by the
+/// path's hash (compared without case, as Windows names files), so the same
+/// file always gets the same lock and unrelated files almost never wait for
+/// each other.
+fn write_stripe(path: &std::path::Path) -> &'static std::sync::Mutex<()> {
+    use std::hash::{Hash, Hasher};
+    #[allow(clippy::declare_interior_mutable_const)]
+    const UNLOCKED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static STRIPES: [std::sync::Mutex<()>; 16] = [UNLOCKED; 16];
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.to_string_lossy().to_lowercase().replace('\\', "/").hash(&mut h);
+    &STRIPES[(h.finish() % 16) as usize]
+}
+
+/// The temporary file `write_atomic` writes before the rename: beside the
+/// target, hidden, and UNIQUE per call.
+///
+/// It was named after the target and the process only, so two writes of the
+/// same file at once — a save landing on the compiler's own write of that
+/// source — shared one temporary: both truncated and filled the same file,
+/// and whichever renamed first could put a mix of the two in place of the
+/// document (the other then failed on a temporary that was already gone).
+fn atomic_tmp_path(dir: &std::path::Path, name: &std::ffi::OsStr) -> std::path::PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    dir.join(format!(".{}.pyx-{}-{}.tmp", name.to_string_lossy(), std::process::id(), n))
 }
 
 /// Undo `encodeURIComponent`: `%XX` escapes are UTF-8 bytes.
@@ -925,6 +964,60 @@ fn rename_guarded(from: &std::path::Path, to: &std::path::Path) -> Result<(), St
     std::fs::rename(from, to).map_err(|e| format!("No se pudo renombrar: {e}"))
 }
 
+/// Send a file or folder to the system's recycle bin (Windows).
+///
+/// Deleting from the side panel was permanent — `remove_dir_all` on a folder
+/// picked by mistake, with no way back. The shell's own "delete to the
+/// recycle bin" is reached through the .NET wrapper PowerShell ships with, so
+/// no extra dependency is needed; the path travels in an environment
+/// variable, never inside the script text. Where there is no recycle bin for
+/// the volume (most network shares) the shell deletes for good.
+///
+/// Anything that goes wrong is an error and NOTHING is deleted: the window
+/// then asks whether to delete permanently (`remove_path`).
+#[tauri::command]
+async fn trash_path(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || move_to_recycle_bin(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "windows")]
+fn move_to_recycle_bin(path: &std::path::Path) -> Result<(), String> {
+    if std::fs::symlink_metadata(path).is_err() {
+        return Err("El archivo ya no existe.".into());
+    }
+    let script = "$ErrorActionPreference = 'Stop'; \
+        Add-Type -AssemblyName Microsoft.VisualBasic; \
+        $p = $env:PYX_TRASH_PATH; \
+        $ui = [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs; \
+        $bin = [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin; \
+        if (Test-Path -LiteralPath $p -PathType Container) { \
+            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, $ui, $bin) \
+        } else { \
+            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, $ui, $bin) \
+        }";
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("PYX_TRASH_PATH", path);
+    quiet(&mut cmd);
+    let out = cmd
+        .output()
+        .map_err(|e| format!("No se pudo usar la papelera de reciclaje: {e}"))?;
+    if !out.status.success() || std::fs::symlink_metadata(path).is_ok() {
+        let why = String::from_utf8_lossy(&out.stderr);
+        let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        return Err(format!("No se pudo enviar a la papelera de reciclaje. {why}").trim().to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn move_to_recycle_bin(_path: &std::path::Path) -> Result<(), String> {
+    Err("En este sistema Pyx no usa la papelera.".into())
+}
+
+/// Delete a file or folder PERMANENTLY (see `trash_path` for the recycle bin).
 #[tauri::command]
 async fn remove_path(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -960,16 +1053,34 @@ async fn create_dir(path: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Start Explorer with its argument written VERBATIM, the path in quotes.
+///
+/// Explorer splits its command line at COMMAS, and Rust only quotes an
+/// argument that contains a space: `C:\Obras\Puente,v2\informe.pdf` reached
+/// Explorer bare, was cut at the comma, and "Mostrar en el Explorador" opened
+/// the Documents folder instead (and "abrir" did nothing useful). Quoted, a
+/// comma is part of the path. (A Windows path cannot contain a quote.)
+#[cfg(target_os = "windows")]
+fn explorer(raw: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("explorer")
+        .raw_arg(raw)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Open a file in its default application as a separate window (the PDF viewer's
 /// "floating window" tool opens the compiled PDF this way).
 #[tauri::command]
 fn open_external(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        // A link (https://…, mailto:…) goes as it is; a file path with the
+        // backslashes Explorer expects.
+        let is_url = path.contains("://") || path.to_ascii_lowercase().starts_with("mailto:");
+        let target = if is_url { path.clone() } else { path.replace('/', "\\") };
+        explorer(format!("\"{}\"", target.replace('"', "")))?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -1042,11 +1153,8 @@ async fn open_viewer_window(app: tauri::AppHandle, path: String) -> Result<(), S
 fn reveal_in_explorer(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        // Explorer only selects a path written with backslashes.
+        explorer(format!("/select,\"{}\"", path.replace('"', "").replace('/', "\\")))?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -1075,17 +1183,29 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
 /// same interpreter the kernel uses (so installs are visible to the cells),
 /// launched directly to avoid shell-quoting pitfalls; anything else goes
 /// through the OS shell so pipes, builtins, etc. work.
-fn build_invocation(input: &str) -> (String, Vec<String>) {
+///
+/// `python` is the interpreter the kernel is running, as the window knows it
+/// (the one chosen in Configuración, or the detected one). The terminal used
+/// to detect its own, so with a chosen interpreter `pip install` put the
+/// package into a DIFFERENT Python than the cells import from — the install
+/// "worked" and the cell still said the module was missing.
+fn build_invocation(input: &str, python: Option<&str>) -> (String, Vec<String>) {
     let parts: Vec<String> = input.split_whitespace().map(|s| s.to_string()).collect();
     let first = parts.first().map(|s| s.as_str()).unwrap_or("");
+    let interpreter = || {
+        python
+            .filter(|p| !p.trim().is_empty() && std::path::Path::new(p).exists())
+            .map(str::to_string)
+            .or_else(kernel::find_python)
+    };
     if matches!(first, "pip" | "pip3") {
-        if let Some(py) = kernel::find_python() {
+        if let Some(py) = interpreter() {
             let mut args = vec!["-m".to_string(), "pip".to_string()];
             args.extend(parts.iter().skip(1).cloned());
             return (py, args);
         }
     } else if matches!(first, "python" | "python3" | "py") {
-        if let Some(py) = kernel::find_python() {
+        if let Some(py) = interpreter() {
             return (py, parts.iter().skip(1).cloned().collect());
         }
     }
@@ -1099,10 +1219,60 @@ fn build_invocation(input: &str) -> (String, Vec<String>) {
     }
 }
 
+/// PID of the terminal command in flight, for `terminal_stop`. One at a time:
+/// the panel does not take another command while one runs.
+static TERMINAL_PID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(None);
+
 /// Run a command for the in-app terminal, streaming stdout/stderr to the UI as
 /// `terminal:line` events and the exit code as `terminal:done`.
+///
+/// `async` + `spawn_blocking` like every other heavy command: this one was
+/// synchronous, i.e. on the MAIN thread, and resolving `pip`/`python` probes
+/// the interpreters on the machine by running them — the whole window froze
+/// for as long as that took, before the command had even started.
 #[tauri::command]
-fn run_command(app: tauri::AppHandle, command: String, cwd: Option<String>) -> Result<(), String> {
+async fn run_command(
+    app: tauri::AppHandle,
+    command: String,
+    cwd: Option<String>,
+    python: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || start_terminal_command(app, command, cwd, python))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Stop the terminal command in flight, and everything it started (`cmd /C`
+/// is only the parent of what the user actually ran). The waiting thread
+/// then reports its exit through `terminal:done` as usual.
+#[tauri::command]
+async fn terminal_stop() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let pid = TERMINAL_PID.lock().ok().and_then(|g| *g);
+        let Some(pid) = pid else { return false };
+        #[cfg(windows)]
+        {
+            let mut c = std::process::Command::new("taskkill");
+            c.args(["/PID", &pid.to_string(), "/F", "/T"]);
+            quiet(&mut c);
+            let _ = c.status();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).status();
+        }
+        true
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn start_terminal_command(
+    app: tauri::AppHandle,
+    command: String,
+    cwd: Option<String>,
+    python: Option<String>,
+) -> Result<(), String> {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
 
@@ -1112,7 +1282,7 @@ fn run_command(app: tauri::AppHandle, command: String, cwd: Option<String>) -> R
         return Ok(());
     }
 
-    let (program, args) = build_invocation(&input);
+    let (program, args) = build_invocation(&input, python.as_deref());
     let mut cmd = Command::new(&program);
     cmd.args(&args);
     if let Some(dir) = cwd.as_ref() {
@@ -1156,9 +1326,19 @@ fn run_command(app: tauri::AppHandle, command: String, cwd: Option<String>) -> R
             }
         });
     }
+    let pid = child.id();
+    if let Ok(mut g) = TERMINAL_PID.lock() {
+        *g = Some(pid);
+    }
     let a = app.clone();
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
+        // Only this command's own entry: a later one may already be running.
+        if let Ok(mut g) = TERMINAL_PID.lock() {
+            if *g == Some(pid) {
+                *g = None;
+            }
+        }
         let _ = a.emit("terminal:done", code);
     });
 
@@ -1191,11 +1371,20 @@ fn emit_open(app: &tauri::AppHandle, paths: Vec<String>) {
     let app = app.clone();
     // The webview may still be booting when a cold start delivers argv; the
     // frontend replays whatever arrived before it subscribed via `take_pending_open`.
-    if let Ok(mut g) = pending_open().lock() {
-        g.extend(paths.clone());
+    //
+    // Only UNTIL it has asked: from then on it is listening, and the event
+    // below is the delivery. The list kept growing with every document
+    // opened from Explorer for the rest of the session, and nobody read it.
+    if !OPEN_TAKEN.load(std::sync::atomic::Ordering::SeqCst) {
+        if let Ok(mut g) = pending_open().lock() {
+            g.extend(paths.clone());
+        }
     }
     let _ = app.emit("app:open-files", paths);
 }
+
+/// Set once the frontend has collected the documents queued before it was up.
+static OPEN_TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static PENDING_OPEN: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
     std::sync::OnceLock::new();
@@ -1206,6 +1395,7 @@ fn pending_open() -> &'static std::sync::Mutex<Vec<String>> {
 /// Documents that arrived before the frontend was ready to hear about them.
 #[tauri::command]
 fn take_pending_open() -> Vec<String> {
+    OPEN_TAKEN.store(true, std::sync::atomic::Ordering::SeqCst);
     pending_open()
         .lock()
         .map(|mut g| std::mem::take(&mut *g))
@@ -1273,9 +1463,11 @@ pub fn run() {
             open_viewer_window,
             rename_path,
             remove_path,
+            trash_path,
             create_file,
             create_dir,
             run_command,
+            terminal_stop,
             take_pending_open,
             update_check,
             update_download,
@@ -1420,6 +1612,102 @@ mod tests {
         // The bytes the code page leaves undefined still decode to something
         // (and never panic).
         assert_eq!(super::decode_text(vec![0x81, 0xFF]).chars().count(), 2);
+    }
+
+    /// Two writes of one file at the same time never share a temporary: each
+    /// call gets its own name, concurrent writers all succeed, the file ends
+    /// up as exactly ONE of the versions, and nothing is left behind.
+    #[test]
+    fn write_atomic_uses_a_unique_temporary_per_call() {
+        let dir = std::env::temp_dir().join(format!("pyx-atomic-uniq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = std::ffi::OsStr::new("doc.tex");
+        let a = super::atomic_tmp_path(&dir, name);
+        let b = super::atomic_tmp_path(&dir, name);
+        assert_ne!(a, b);
+        assert_eq!(a.parent(), Some(dir.as_path()));
+        assert!(a.file_name().unwrap().to_string_lossy().starts_with(".doc.tex.pyx-"));
+
+        let f = dir.join("doc.tex");
+        std::fs::write(&f, "inicial").unwrap();
+        // Long, distinct contents: an interleaved write would show.
+        let versions: Vec<String> = (0..8).map(|i| format!("{i}").repeat(200_000)).collect();
+        let handles: Vec<_> = versions
+            .iter()
+            .cloned()
+            .map(|v| {
+                let f = f.clone();
+                std::thread::spawn(move || super::write_atomic(&f, v.as_bytes()))
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+        let got = std::fs::read_to_string(&f).unwrap();
+        assert!(versions.contains(&got), "the file is a mix of two writes");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["doc.tex".to_string()], "temporaries left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The recycle bin really takes a file and a folder. Ignored by default:
+    /// it leaves two small items in the machine's recycle bin on every run
+    /// (`cargo test -- --ignored recycle_bin`).
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn recycle_bin_takes_files_and_folders() {
+        let dir = std::env::temp_dir().join(format!("pyx-papelera-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("carpeta, con coma")).unwrap();
+        let f = dir.join("prueba de Pyx, con coma.txt");
+        std::fs::write(&f, "se puede borrar").unwrap();
+        std::fs::write(dir.join("carpeta, con coma").join("dentro.txt"), "x").unwrap();
+        super::move_to_recycle_bin(&f).unwrap();
+        assert!(!f.exists());
+        super::move_to_recycle_bin(&dir.join("carpeta, con coma")).unwrap();
+        assert!(!dir.join("carpeta, con coma").exists());
+        // Gone already: an error, not a panic.
+        assert!(super::move_to_recycle_bin(&f).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A read-only document is refused with the system's error, keeps its
+    /// content, and no temporary is left beside it.
+    #[test]
+    fn write_atomic_refuses_a_read_only_file_and_leaves_no_litter() {
+        let dir = std::env::temp_dir().join(format!("pyx-atomic-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("protegido.tex");
+        std::fs::write(&f, "original").unwrap();
+        let mut perm = std::fs::metadata(&f).unwrap().permissions();
+        perm.set_readonly(true);
+        std::fs::set_permissions(&f, perm).unwrap();
+
+        let res = super::write_atomic(&f, b"nuevo");
+        // (A privileged user on Unix can write a read-only file: then the
+        // write simply succeeds, which is also what a plain write does.)
+        if res.is_err() {
+            assert_eq!(std::fs::read_to_string(&f).unwrap(), "original");
+        }
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["protegido.tex".to_string()], "temporaries left behind");
+
+        let mut perm = std::fs::metadata(&f).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+        std::fs::set_permissions(&f, perm).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The frontend sends `encodeURIComponent(path)`: accents, spaces and a

@@ -4,6 +4,7 @@ import { createSignal, For, Show } from 'solid-js';
 import { t } from '../../core/i18n.js';
 import { getMacros, saveMacros, runMacro, showMacroResult, DEFAULT_MACROS } from '../../editor/macros.js';
 import { registerDialog, closeDialogs } from '../stores/dialogStore.js';
+import { askDialog } from '../../core/platform.js';
 
 const [open, setOpen] = createSignal(false);
 registerDialog(open, () => setOpen(false));
@@ -27,8 +28,12 @@ export default function MacrosDialog() {
     const l = list().filter((_, i) => i !== sel());
     setList(l); saveMacros(l); setSel(Math.max(0, sel() - 1));
   };
-  const reset = () => {
-    if (!window.confirm(t('¿Volver a las macros de ejemplo? Se pierden las tuyas.', 'Restore the example macros? Yours are lost.'))) return;
+  const reset = async () => {
+    // The platform's dialog: `window.confirm` is suppressed in some WebView2
+    // configurations (it answers false and shows nothing).
+    const ok = await askDialog(t('¿Volver a las macros de ejemplo? Se pierden las tuyas.', 'Restore the example macros? Yours are lost.'),
+      { title: t('Macros en Python', 'Python macros'), okLabel: t('Restaurar', 'Restore'), cancelLabel: t('Cancelar', 'Cancel') }).catch(() => false);
+    if (!ok) return;
     const l = DEFAULT_MACROS.map((m) => ({ ...m }));
     setList(l); saveMacros(l); setSel(0);
   };

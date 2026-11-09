@@ -15,7 +15,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+# No "devtools" feature: the web inspector is always available in debug builds
+# (`tauri dev`), and the feature's only effect was to ship it in RELEASE too,
+# where Ctrl+Shift+I gave anyone at the keyboard a console with every command
+# of the app. Add it back here to inspect a release build.
+tauri = { version = "2", features = [] }
+# Not used from the window (see capabilities/default.json): the dialog plugin
+# builds on it.
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 # One running app per machine: double-clicking a second .pltx opens it in the

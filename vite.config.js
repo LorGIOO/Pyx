@@ -21,7 +21,10 @@ export default defineConfig({
   server: {
     port: PORT,
     strictPort: true,
-    host: '0.0.0.0',
+    // Loopback only (Tauri's own template): '0.0.0.0' offered the dev server —
+    // and with it the whole source tree — to every machine on the network.
+    // TAURI_DEV_HOST is set by the Tauri CLI when it needs another address.
+    host: process.env.TAURI_DEV_HOST || false,
     watch: {
       ignored: ['**/src-tauri/**'],
     },

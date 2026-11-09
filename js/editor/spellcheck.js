@@ -150,7 +150,7 @@ export function spellSuggest(word) {
 const MATH_ENVS = new Set(['equation', 'align', 'gather', 'multline', 'displaymath',
   'eqnarray', 'math', 'flalign', 'alignat', 'verbatim', 'lstlisting', 'minted']);
 const BEGIN_RE = /\\begin\s*\{([A-Za-z]+)\*?\}/;
-const END_RE = /\\end\s*\{([A-Za-z]+)\*?\}/;
+const END_ALL = /\\end\s*\{([A-Za-z]+)\*?\}/g;
 
 const skipCache = new WeakMap();
 function skipRanges(state) {
@@ -175,11 +175,18 @@ function skipRanges(state) {
       let i = 0; // scan cursor within this line
       while (i <= text.length) {
         if (env) {
-          const m = END_RE.exec(text.slice(i));
-          if (!m || m[1] !== env) break;   // still inside the environment
-          ranges.push([envStart, pos + i + m.index + m[0].length]);
+          // THIS environment's \end, wherever it is on the line. Only the
+          // first \end used to be looked at, so `\end{aligned}\end{equation}`
+          // (a nested environment closing on the same line) never closed
+          // the equation: everything from there to the end of the document
+          // counted as math and was not spell-checked at all.
+          END_ALL.lastIndex = i;
+          let m;
+          while ((m = END_ALL.exec(text)) && m[1] !== env) { /* another environment's \end */ }
+          if (!m) break;                   // still inside the environment
+          ranges.push([envStart, pos + m.index + m[0].length]);
           env = null;
-          i += m.index + m[0].length;
+          i = m.index + m[0].length;
           continue;
         }
         if (dispStart >= 0) {
@@ -300,6 +307,9 @@ function buildDecos(view) {
   return b.finish();
 }
 
+// How long typing has to pause before the text is checked again.
+const RECHECK_MS = 150;
+
 export const spellCheck = ViewPlugin.fromClass(
   class {
     constructor(view) {
@@ -315,11 +325,34 @@ export const spellCheck = ViewPlugin.fromClass(
     }
     update(u) {
       const refresh = u.transactions.some((t) => t.effects.some((e) => e.is(spellRefresh)));
-      if (u.docChanged || u.viewportChanged || refresh) {
+      if (refresh || (u.viewportChanged && !u.docChanged)) {
+        // A re-check that was asked for, or new lines scrolled into view
+        // (the document is the same one: its skip ranges are cached).
+        clearTimeout(this.timer);
+        this.timer = 0;
         this.decorations = buildDecos(u.view);
+        return;
+      }
+      if (u.docChanged) {
+        /* Typing. Re-checking here meant, on EVERY key press, one more pass
+           over the whole document (the skip ranges are per document version,
+           and every key makes a new version) plus the visible lines again —
+           about 15 ms a key on a 5 MB project, on the thread the key has to
+           be drawn on. The underlines instead move with their text now, and
+           one re-check runs when typing pauses. (It also stops a word from
+           flashing red while it is still being typed.) */
+        this.decorations = this.decorations.map(u.changes);
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.timer = 0;
+          if (!this.disposed) this.view.dispatch({ effects: spellRefresh.of(null) });
+        }, RECHECK_MS);
       }
     }
-    destroy() { this.disposed = true; }
+    destroy() {
+      this.disposed = true;
+      clearTimeout(this.timer);
+    }
   },
   { decorations: (v) => v.decorations }
 );

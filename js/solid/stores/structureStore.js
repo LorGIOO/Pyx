@@ -158,10 +158,22 @@ function stripComment(raw) {
  * a Python cell or a display-math block, and counts words line by line.
  */
 export function countWords(src) {
+  const steps = countWordsSteps(src);
+  let r = steps.next();
+  while (!r.done) r = steps.next();
+  return r.value;
+}
+
+/** countWords as a resumable walk: yields every couple of thousand lines so
+ *  the scheduler below can give the thread back in between (this is by far
+ *  the longest of the derived passes on a big document). Returns the count. */
+function* countWordsSteps(src) {
   let n = 0;
   let inCell = false;
   let inDisplay = false; // \[ … \]  or  $$ … $$
+  let seen = 0;
   for (const raw of eachLine(src)) {
+    if (++seen % 2000 === 0) yield n;
     const t = raw.trim();
     if (!inCell && t.startsWith('%#python')) { inCell = true; continue; }
     if (inCell) { if (t.startsWith('%#end')) inCell = false; continue; }
@@ -213,6 +225,8 @@ const cancelIdle = (h) => (typeof cancelIdleCallback === 'function'
 
 let deriveHandle = 0;
 let deriveTimer = null;
+// How long one slice of the word count may hold the thread.
+const SLICE_MS = 8;
 
 /** Recompute every derived view of the document, off the typing path. */
 export function scheduleDerived(src) {
@@ -223,17 +237,38 @@ export function scheduleDerived(src) {
     return;
   }
   const big = srcLength(src) > 2_000_000;
+  const timeout = big ? 4000 : 1000;
   deriveTimer = setTimeout(() => {
-    deriveHandle = idle(() => {
+    /* One pass per idle slice, not all four in one. Together they were a
+       single task of ~135 ms on a 5 MB project — started a quarter of a
+       second after the last key, i.e. right when the next one arrives, which
+       then waited for all of it. Between slices the browser can serve input;
+       the word count, the longest by far, also yields inside itself. A new
+       edit cancels whatever is still pending (deriveHandle is always the
+       next slice). */
+    // Structure first (it drives the visible tree and the breadcrumbs);
+    // the word count is a number in the corner, so it goes last.
+    const passes = [
+      () => setToc(parseTOC(src)),
+      () => setTodos(parseTodos(src)),
+      () => setIncludes(parseIncludes(src)),
+    ];
+    let words = null;
+    const step = () => {
       deriveHandle = 0;
       try {
-        // Structure first (it drives the visible tree and the breadcrumbs);
-        // the word count is a number in the corner, so it goes last.
-        setToc(parseTOC(src));
-        setTodos(parseTodos(src));
-        setIncludes(parseIncludes(src));
-        setWordCount(countWords(src));
-      } catch (_) { /* document swapped mid-pass */ }
-    }, big ? 4000 : 1000);
+        if (passes.length) {
+          passes.shift()();
+        } else {
+          words = words || countWordsSteps(src);
+          const until = Date.now() + SLICE_MS;
+          let r = words.next();
+          while (!r.done && Date.now() < until) r = words.next();
+          if (r.done) { setWordCount(r.value); return; }
+        }
+      } catch (_) { return; /* document swapped mid-pass */ }
+      deriveHandle = idle(step, timeout);
+    };
+    deriveHandle = idle(step, timeout);
   }, big ? 800 : 250);
 }

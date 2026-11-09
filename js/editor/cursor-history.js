@@ -9,7 +9,7 @@
 
 import { EditorView } from '@codemirror/view';
 import { state as appState } from '../core/state.js';
-import { docIdOf } from './doc-id.js';
+import { docIdOf, syncAnnotation } from './doc-id.js';
 
 const MAX = 100;
 const FAR = 8; // lines: a smaller move is just navigating, not a jump
@@ -30,7 +30,12 @@ function push(entry) {
 export const cursorHistory = EditorView.updateListener.of((u) => {
   const st = u.state;
   const docId = docIdOf(st);
-  if (u.docChanged) {
+  // With the same document in two panes, every edit arrives twice: once from
+  // the pane it was typed in and once as its echo in the other (setup.js
+  // forwards it). Mapping the stored positions through BOTH moved them twice
+  // as far as the text had moved, so Alt+← landed lines away from the place.
+  const echo = u.transactions.some((tr) => tr.annotation(syncAnnotation));
+  if (u.docChanged && !echo) {
     // Keep stored positions on the same text.
     for (const list of [back, fwd]) {
       for (const e of list) if (e.docId === docId) e.pos = u.changes.mapPos(e.pos);

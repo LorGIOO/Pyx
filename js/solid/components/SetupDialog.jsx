@@ -4,7 +4,7 @@
 // Configuración at any time, and for a single package when a cell fails with
 // ModuleNotFoundError. The log of what is being done is shown live.
 
-import { createSignal, For, Show, onCleanup } from 'solid-js';
+import { createSignal, createEffect, For, Show } from 'solid-js';
 import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import {
@@ -83,9 +83,13 @@ async function start() {
 
 export default function SetupDialog() {
   let logEl;
-  const scroll = () => { if (logEl) logEl.scrollTop = logEl.scrollHeight; };
-  const timer = setInterval(scroll, 300);
-  onCleanup(() => clearInterval(timer));
+  // Keep the log scrolled to its end — when a line arrives, not on a timer:
+  // this component is mounted for the whole session, and the 300 ms interval
+  // it used ran for ever, dialog open or not.
+  createEffect(() => {
+    log();
+    if (open()) requestAnimationFrame(() => { if (logEl) logEl.scrollTop = logEl.scrollHeight; });
+  });
   const w = () => want();
   const title = () => (w().packages.length && !w().python && !w().latex
     ? t('Instalar paquete de Python', 'Install a Python package')

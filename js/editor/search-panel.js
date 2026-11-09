@@ -95,7 +95,9 @@ export function pyxSearchPanel(view) {
     view.dispatch({ effects: setSearchQuery.of(currentQuery()) });
     updateCount();
   }
+  let countTimer = 0;
   function updateCount() {
+    clearTimeout(countTimer);
     const q = currentQuery();
     if (!q.search) { count.textContent = ''; return; }
     let n = 0;
@@ -117,7 +119,13 @@ export function pyxSearchPanel(view) {
       updateCount();
     },
     update(u) {
-      if (u.docChanged) updateCount();
+      // Not on the key press itself: counting walks up to 1000 matches from
+      // the top of the document, and with the panel open that ran on every
+      // character typed. Once, when typing pauses, is all the counter needs.
+      if (!u.docChanged) return;
+      clearTimeout(countTimer);
+      countTimer = setTimeout(updateCount, 200);
     },
+    destroy() { clearTimeout(countTimer); },
   };
 }

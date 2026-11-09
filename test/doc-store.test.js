@@ -87,6 +87,49 @@ beforeEach(() => {
   general.encoding = 'UTF-8';
 });
 
+describe('F9 · autosave', () => {
+  it('saves every modified document that has a file — silently', async () => {
+    const compiler = await import('../js/compile/compiler.js');
+    compiler.compileActive.mockClear();
+    const front = docOf(store.newDocument('a', 'a.tex', 'C:\\p\\a.tex'));
+    const back = docOf(store.newDocument('b', 'b.tex', 'C:\\p\\b.tex'));
+    const pltx = docOf(store.newDocument('c', 'c.pltx', 'C:\\p\\c.pltx'));
+    const clean = docOf(store.newDocument('d', 'd.tex', 'C:\\p\\d.tex'));
+    const untitled = docOf(store.newDocument('e', 'sin-título.pltx', null));
+    // A .tex that gained a Python cell: an explicit save asks «Guardar como».
+    const gained = docOf(store.newDocument('f', 'f.tex', 'C:\\p\\f.tex'));
+    // The space just typed at the end of the line must survive.
+    type(front, 'texto con espacio al final \n');
+    type(back, 'b2'); type(pltx, 'c2'); type(untitled, 'e2');
+    type(gained, 'hola\n%#python\nx = 1\n%#end\n');
+    general.trimOnSave = true;
+    try {
+      expect(await store.autosaveAll()).toBe(3);
+    } finally {
+      general.trimOnSave = false;
+    }
+    // Not only the tab in front; the text exactly as typed.
+    expect(h.writes).toEqual([
+      { kind: 'text', path: 'C:\\p\\a.tex', content: 'texto con espacio al final \n' },
+      { kind: 'text', path: 'C:\\p\\b.tex', content: 'b2' },
+      { kind: 'pltx', path: 'C:\\p\\c.pltx', content: 'c2' },
+    ]);
+    expect([front, back, pltx, clean].map((d) => d.modified)).toEqual([false, false, false, false]);
+    // What would need a dialog is left for the user's own save — untouched.
+    expect(untitled.modified).toBe(true);
+    expect(gained.modified).toBe(true);
+    expect(h.asked).toEqual([]);
+    expect(h.messages).toEqual([]);
+    // No compile, so the PDF viewer is not brought up every few minutes.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(compiler.compileActive).not.toHaveBeenCalled();
+    // An explicit save still compiles.
+    type(front, 'otra vez');
+    await store.saveActive();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
 describe('F4 · one tab per file', () => {
   it('the same file under another spelling is the tab that is already open', async () => {
     h.files.set('C:\\p\\a.tex', new TextEncoder().encode('hola'));

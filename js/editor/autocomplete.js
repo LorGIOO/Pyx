@@ -13,7 +13,7 @@ import { notebookRefs, notebookPath, loadNotebook } from './notebooks.js';
 import { pyExprBefore } from './py-expr.js';
 import { state as appState } from '../core/state.js';
 import { dirOf, joinPath } from '../core/paths.js';
-import { getDocContent } from './setup.js';
+import { getDocContent, getDocText } from './setup.js';
 import { readTextFile } from '../core/platform.js';
 
 /* ---------- LaTeX commands and environments: from DATA ----------
@@ -122,13 +122,16 @@ function userCommands(text) {
   return out;
 }
 
-let latexCache = { sig: '', opts: [] };
+let latexCache = { text: null, sig: '', opts: [] };
 function latexOptions() {
   const text = allOpenText();
+  // The very same text as last time (allOpenText hands back the same string
+  // while nothing changed): nothing to scan.
+  if (latexCache.text === text) return latexCache.opts;
   const loaded = loadedPackages(text);
   const user = userCommands(text);
   const sig = [...loaded].join(',') + '|' + [...user].map(([k, v]) => k + v).join(',');
-  if (latexCache.sig === sig) return latexCache.opts;
+  if (latexCache.sig === sig) { latexCache.text = text; return latexCache.opts; }
   const known = new Set(LATEX_DATA.commands.map((c) => c[0]));
   const opts = [
     beginGeneric,
@@ -141,7 +144,7 @@ function latexOptions() {
     const info = { label: '\\' + name, type: n ? 'function' : 'keyword', detail: 'definido en el documento', boost: 10 };
     opts.push(n ? snippetCompletion('\\' + name + args, info) : info);
   }
-  latexCache = { sig, opts };
+  latexCache = { text, sig, opts };
   return opts;
 }
 
@@ -216,24 +219,54 @@ function glossaryOptions() {
 
 // All open text documents joined (master + children), so labels/bib defined in
 // any open file are offered.
+//
+// Rebuilt only when it has to be. Every `\` typed asked for this — and each
+// request turned EVERY open document into a string and joined them, then ran
+// the package / \newcommand scans over the result: ~25 ms per backslash with
+// a large project open, on the key press. Now:
+//   * a document is stringified once per VERSION (CodeMirror's Text is
+//     immutable, so the object itself is the cache key), and the join is
+//     reused while no document changed;
+//   * while typing, the joined text may be up to a second and a half old.
+//     These are suggestion lists: a command defined one second ago shows up
+//     on the next `\`, which nobody can tell from instantly.
+const TEXT_MAX_AGE_MS = 1500;
+const stringOf = new WeakMap(); // Text -> its string
+let joined = { docs: [], text: '', at: 0 };
 function allOpenText() {
-  const parts = [];
+  const docs = [];
   for (const d of appState.documents) {
     if (d.kind) continue;
-    try { parts.push(getDocContent(d.id) || ''); } catch (_) { /* not mounted */ }
+    try {
+      const t = getDocText(d.id);
+      if (t) docs.push(t);
+    } catch (_) { /* not mounted */ }
   }
-  return parts.join('\n');
+  const same = docs.length === joined.docs.length && docs.every((t, i) => t === joined.docs[i]);
+  if (same) return joined.text;
+  // Same set of documents, one of them edited a moment ago: still good enough.
+  if (docs.length === joined.docs.length && Date.now() - joined.at < TEXT_MAX_AGE_MS) return joined.text;
+  const parts = docs.map((t) => {
+    let s = stringOf.get(t);
+    if (s === undefined) { s = t.toString(); stringOf.set(t, s); }
+    return s;
+  });
+  joined = { docs, text: parts.join('\n'), at: Date.now() };
+  return joined.text;
 }
 
-let labelCache = { sig: -1, opts: [] };
+// Keyed by the text itself. It was keyed by the text's LENGTH: renaming a
+// label to another of the same length (eq:aa → eq:zz), or any edit that left
+// the size unchanged, kept offering the old labels.
+let labelCache = { text: null, opts: [] };
 function labelOptions() {
   const text = allOpenText();
-  if (labelCache.sig === text.length) return labelCache.opts;
+  if (labelCache.text === text) return labelCache.opts;
   const set = new Set();
   const re = /\\label\{([^}]+)\}/g;
   let m;
   while ((m = re.exec(text))) set.add(m[1]);
-  labelCache = { sig: text.length, opts: [...set].map((k) => ({ label: k, type: 'property' })) };
+  labelCache = { text, opts: [...set].map((k) => ({ label: k, type: 'property' })) };
   return labelCache.opts;
 }
 
@@ -251,7 +284,10 @@ async function bibOptions() {
   const files = [];
   for (const r of res) {
     const name = /\.bib$/i.test(r) ? r : r + '.bib';
-    files.push(/^[a-zA-Z]:[\\/]/.test(name) ? name : (dir ? joinPath(dir, name) : name));
+    // Absolute: a drive, a network share (\\servidor\…, //servidor/…) or a
+    // POSIX root. A share used to count as relative and was glued onto the
+    // document's folder, so the keys of a .bib on the server were never found.
+    files.push(/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(name) ? name : (dir ? joinPath(dir, name) : name));
   }
   // Keys from any OPEN .bib documents too.
   let openBib = '';

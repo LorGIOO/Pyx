@@ -331,7 +331,14 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
                 }
             }
         }
-        zip.finish().map_err(|e| format!("zip: {e}"))?;
+        let file = zip.finish().map_err(|e| format!("zip: {e}"))?;
+        // On disk BEFORE it takes the document's place. The rename is atomic
+        // for the name, not for the data: without this, a power cut right
+        // after it could leave the document's name on a file whose contents
+        // were still in the system's cache — an empty or truncated .pltx
+        // where the previous good one had been.
+        file.sync_all()
+            .map_err(|e| format!("No se pudo guardar el .pltx: {e}"))?;
     }
     fs::rename(&tmp, p).map_err(|e| format!("No se pudo guardar el .pltx: {e}"))
 }

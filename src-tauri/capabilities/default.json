@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permisos por defecto de Pyx",
+  "description": "Permisos por defecto de Pyx. Sin permisos del plugin fs a propósito: la ventana no lo usa (todos los archivos se leen y escriben con los comandos propios de lib.rs), y concederlos dejaba a cualquier script de la página leer, escribir y borrar en la carpeta del usuario.",
   "windows": ["main", "pdf-viewer"],
   "permissions": [
     "core:default",
@@ -24,24 +24,6 @@
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "dialog:allow-message",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        { "path": "$HOME/**" },
-        { "path": "$DESKTOP/**" },
-        { "path": "$DOCUMENT/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "$TEMP/**" },
-        { "path": "$APPCACHE/**" }
-      ]
-    },
-    "fs:allow-read-text-file",
-    "fs:allow-write-text-file",
-    "fs:allow-read-file",
-    "fs:allow-write-file",
-    "fs:allow-exists",
-    "fs:allow-mkdir",
-    "fs:allow-remove"
+    "dialog:allow-message"
   ]
 }

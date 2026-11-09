@@ -286,7 +286,10 @@ export const readSources = (paths) => invoke('read_sources', { paths });
 // to the window, never the notebook's saved outputs.
 export const readNotebook = (path) => invoke('read_notebook', { path });
 export const renamePath = (from, to) => invoke('rename_path', { from, to });
+// removePath deletes for good; trashPath sends to the recycle bin (Windows
+// only — it rejects elsewhere, and whenever the bin cannot take the item).
 export const removePath = (path) => invoke('remove_path', { path });
+export const trashPath = (path) => invoke('trash_path', { path });
 export const createFile = (path) => invoke('create_file', { path });
 export const createDir = (path) => invoke('create_dir', { path });
 
@@ -304,7 +307,11 @@ export function emitToWindow(label, name, payload) {
 }
 
 /* ---------- Terminal ---------- */
-export const runCommand = (command, cwd) => invoke('run_command', { command, cwd });
+// `python` = the interpreter the kernel runs: `pip`/`python` typed in the
+// terminal go to THAT one, so what is installed is what the cells import.
+export const runCommand = (command, cwd, python = null) => invoke('run_command', { command, cwd, python });
+// Kill the command in flight (and what it started). Its `terminal:done` follows.
+export const stopCommand = () => invoke('terminal_stop');
 // Subscribe to streamed terminal output. Returns a Promise<unlisten>.
 export function onTerminalLine(cb) {
   if (!isTauri()) return Promise.resolve(() => {});

@@ -1,7 +1,7 @@
 import { createEffect, For, Show } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
 import {
-  termLines, termRunning, runTerminal, clearTerminal, pushHistory, getHistory,
+  termLines, termRunning, runTerminal, stopTerminal, clearTerminal, pushHistory, getHistory,
 } from '../stores/terminalStore.js';
 import { dirOf } from '../../core/paths.js';
 
@@ -46,6 +46,9 @@ export default function TerminalPanel() {
       <div class="terminal-header">
         <span>Terminal{termRunning() ? ' · ejecutando…' : ''}</span>
         <div class="terminal-header-actions">
+          <Show when={termRunning()}>
+            <button onClick={stopTerminal} title="Detener el comando en curso">Detener</button>
+          </Show>
           <button onClick={clearTerminal} title="Limpiar la salida">Limpiar</button>
           <button onClick={() => (state.terminalVisible = false)} title="Cerrar">×</button>
         </div>

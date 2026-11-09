@@ -430,14 +430,24 @@ export default function ConfigDialog() {
 
   // Enumerate the installed system fonts once (so the picker shows them all,
   // like Word) — keeping the current selection available even if absent.
-  onMount(() => {
+  //
+  // The first time Configuración is OPENED, not when the app starts: this
+  // component is mounted with the window, and the enumeration starts a
+  // PowerShell process (hundreds of milliseconds, and CPU, at every launch)
+  // for a list most sessions never look at.
+  let fontsAsked = false;
+  createEffect(() => {
+    if (!showConfig() || fontsAsked) return;
+    fontsAsked = true;
     listFonts().then((list) => {
       if (Array.isArray(list) && list.length) {
         const cur = gv('fontFamily');
         const all = cur && !list.includes(cur) ? [cur, ...list] : list;
         setFonts(all);
       }
-    }).catch(() => {});
+    }).catch(() => { fontsAsked = false; /* try again next time it opens */ });
+  });
+  onMount(() => {
     // The magnifier keeps its zoom in a module variable, so the saved value is
     // pushed once at startup (the viewer itself has no access to settings).
     try { setLoupeZoom(+gv('loupeZoom') || 3); } catch (_) {}

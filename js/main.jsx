@@ -5,11 +5,12 @@ import PreviewPane from './solid/components/PreviewPane.jsx';
 import { state } from './core/state.js';
 import {
   detectEnv, isTauri, openExternal, onAppEvent, focusSelf, invoke,
-  onCloseRequested, destroyWindow, askDialog,
+  onCloseRequested, destroyWindow, askDialog, pathExists,
 } from './core/platform.js';
 import { setChangeHandler, getViewOfDoc } from './editor/setup.js';
 import {
   openDocument, saveActive, closeActive, splitActivePane, openFromOs, resolveUnsaved,
+  autosaveAll,
 } from './solid/stores/docStore.js';
 import { compileActive, cancelCompile, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
 import { loadPdf, pdfSearch } from './pdf/preview.js';
@@ -230,8 +231,8 @@ if (viewerBoot) {
   /* ---- autoguardado + sesión (Configuración → General) ----
      One slow timer does both jobs. It remembers which files are open (so
      "restaurar la sesión" can reopen them next launch) and, when autosave is
-     on, saves the active document once its interval has elapsed — only if it
-     already has a path, so a save dialog can never pop up on its own. */
+     on, saves every modified document that has a file once its interval has
+     elapsed — silently: no dialog, no compile, no viewer (docStore.autosaveAll). */
   let lastAutosave = Date.now();
   setInterval(() => {
     try {
@@ -241,14 +242,18 @@ if (viewerBoot) {
     const every = Math.max(1, Math.min(60, Math.round(+gv('autosaveMin') || 5))) * 60_000;
     if (Date.now() - lastAutosave < every) return;
     lastAutosave = Date.now();
-    const doc = state.documents[state.activeIndex];
-    if (doc && !doc.kind && doc.path && doc.modified) saveActive();
+    autosaveAll().catch(() => {});
   }, 5000);
 
   /** Reopen the files of the last session, in order. */
   async function restoreSession() {
     for (const p of getSession()) {
-      try { await openPath(p); } catch (_) { /* moved or deleted — skip it */ }
+      // Moved or deleted since: skipped quietly. openPath reports a file it
+      // cannot open with a dialog — right for a file the user just asked
+      // for, but a session of ten files on an unplugged drive greeted the
+      // user with ten error dialogs before the window was usable.
+      if (!(await pathExists(p))) continue;
+      try { await openPath(p); } catch (_) { /* unreadable — skip it */ }
     }
   }
 

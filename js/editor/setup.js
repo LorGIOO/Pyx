@@ -6,7 +6,7 @@
 // are forwarded between the views as annotated transactions so the text never
 // diverges.
 
-import { EditorState, Annotation, Compartment } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { showMinimap } from '@replit/codemirror-minimap';
 import {
   EditorView,
@@ -36,7 +36,7 @@ import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/sea
 import { closeBrackets, closeBracketsKeymap, autocompletion } from '@codemirror/autocomplete';
 
 import { state as appState } from '../core/state.js';
-import { docIdFacet } from './doc-id.js';
+import { docIdFacet, syncAnnotation } from './doc-id.js';
 import { cellsExtension, selectCellOrAll, refreshCells } from './cells.js';
 import {
   toggleLineComment, smartEnter, smartTab, moveCellOrLineUp, moveCellOrLineDown,
@@ -63,8 +63,8 @@ import { spellCheck, spellRefresh } from './spellcheck.js';
 import { setDocSnap, scheduleDerived } from '../solid/stores/structureStore.js';
 import { gv } from '../solid/stores/settingsStore.js';
 
-// Marks transactions that were forwarded from a sibling pane (prevents loops).
-const syncAnnotation = Annotation.define();
+// (syncAnnotation — doc-id.js — marks transactions that were forwarded from a
+// sibling pane, which prevents loops.)
 
 /** Wrap the selection (or leave the caret inside) — outside Python cells. */
 function latexWrap(view, before, after) {
@@ -195,9 +195,17 @@ export function applyEditorSettings() {
 // and threw away 30 MB per character typed. Holding the rope is O(1); the
 // consumers stream it line by line.
 let docTextTimer = null;
-function pushDocText(doc) {
+function pushDocText(doc, docId) {
   clearTimeout(docTextTimer);
-  docTextTimer = setTimeout(() => publishDoc(doc), 200);
+  docTextTimer = setTimeout(() => {
+    // 200 ms is long enough to change tabs in. The timer then published the
+    // PREVIOUS document's text over the one just shown, and the structure
+    // panel, the breadcrumbs and the word count described a document that
+    // was no longer on screen until the next edit.
+    const shown = paneDocs.get(appState.activePaneId);
+    if (shown !== undefined && shown !== docId) return;
+    publishDoc(doc);
+  }, 200);
 }
 
 function publishDoc(doc) {
@@ -233,7 +241,7 @@ function makeUpdateListener(docId) {
     if (u.docChanged) {
       const doc = appState.documents.find((d) => d.id === docId);
       if (doc && !doc.modified) doc.modified = true;
-      pushDocText(u.state.doc);
+      pushDocText(u.state.doc, docId);
 
       const fromSync = u.transactions.some((tr) => tr.annotation(syncAnnotation));
       if (!fromSync && changeHandler) changeHandler();
@@ -365,6 +373,11 @@ export function unmountPane(paneId) {
   if (view) view.destroy();
   paneViews.delete(paneId);
   paneDocs.delete(paneId);
+  // The debug handle must not keep a destroyed view (and, through its state,
+  // a whole document) alive: point it at a live pane, or at nothing.
+  if (typeof window !== 'undefined' && window.__calcView === view) {
+    window.__calcView = paneViews.values().next().value || null;
+  }
 }
 
 // Save the pane's editor state back to docStates when it's the last view of
@@ -395,6 +408,8 @@ export function showDocInPane(paneId, docId) {
     st = docStates.get(docId) || createDocState(docId, '');
   }
   view.setState(st);
+  // A publish still pending is about the document this pane just left.
+  clearTimeout(docTextTimer);
   publishDoc(view.state.doc);
   if (paneId === appState.activePaneId) requestAnimationFrame(() => view.focus());
 }
@@ -462,6 +477,17 @@ export function getDocContent(id) {
   }
   const st = docStates.get(id);
   return st ? st.doc.toString() : '';
+}
+
+/** The document's text as CodeMirror's immutable `Text`, or null. O(1), and
+ *  the SAME object for as long as the text is unchanged — so callers can key
+ *  a cache on it instead of building a document-sized string to compare. */
+export function getDocText(id) {
+  for (const [pid, vw] of paneViews) {
+    if (paneDocs.get(pid) === id) return vw.state.doc;
+  }
+  const st = docStates.get(id);
+  return st ? st.doc : null;
 }
 
 /** Apply changes to a document WHEREVER its text lives. In a pane it is an

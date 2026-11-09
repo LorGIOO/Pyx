@@ -39,7 +39,7 @@ export function saveMacros(list) {
 
 /** Run a macro on the active editor. Returns {result?, stdout?, error?}. */
 export async function runMacro(macro) {
-  const { getViewOfDoc } = await import('./setup.js');
+  const { getViewOfDoc, getDocText, applyDocChanges } = await import('./setup.js');
   const d = state.documents[state.activeIndex];
   const view = d ? getViewOfDoc(d.id) : null;
   if (!view) return { error: 'No hay ningún documento abierto.' };
@@ -50,15 +50,31 @@ export async function runMacro(macro) {
     line: view.state.doc.lineAt(sel.head).number,
   });
   if (res && res.result != null && !res.error) {
-    // The selection may have moved while the kernel worked: replace what was selected.
-    const cur = view.state.selection.main;
-    const from = Math.min(sel.from, view.state.doc.length), to = Math.min(sel.to, view.state.doc.length);
-    view.dispatch({
-      changes: { from, to, insert: res.result },
-      selection: cur.from === sel.from && cur.to === sel.to ? { anchor: from, head: from + res.result.length } : undefined,
-      userEvent: 'input.macro',
-    });
-    view.focus();
+    /* The kernel took its time, and the user may have changed tabs meanwhile.
+       A pane's view is REUSED for whatever document the pane shows, so the
+       `view` captured above may now hold another document: dispatching there
+       pasted the macro's result into the wrong file, at offsets that meant
+       nothing in it. The result goes to the document the macro was run on,
+       wherever that is now. */
+    const target = getViewOfDoc(d.id);
+    if (target && target === view) {
+      // Still where it was. The selection may have moved while the kernel
+      // worked: replace what was selected.
+      const cur = view.state.selection.main;
+      const from = Math.min(sel.from, view.state.doc.length), to = Math.min(sel.to, view.state.doc.length);
+      view.dispatch({
+        changes: { from, to, insert: res.result },
+        selection: cur.from === sel.from && cur.to === sel.to ? { anchor: from, head: from + res.result.length } : undefined,
+        userEvent: 'input.macro',
+      });
+      view.focus();
+    } else {
+      // In another pane now, or in a background tab (no view at all).
+      const text = getDocText(d.id);
+      if (!text) return { error: 'El documento de la macro se cerró antes de que terminara: no se ha insertado nada.' };
+      const from = Math.min(sel.from, text.length), to = Math.min(sel.to, text.length);
+      applyDocChanges(d.id, { from, to, insert: res.result });
+    }
   }
   return res || {};
 }

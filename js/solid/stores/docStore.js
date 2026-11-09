@@ -559,6 +559,27 @@ export function saveActiveAs() {
   return serialized(doc, () => writeAs(doc));
 }
 
+/* Autosave (Configuración → General): EVERY open document that has a file
+ * and unsaved changes — not just the one in front, which left the chapters
+ * edited in other tabs exactly as unprotected as with autosave off.
+ *
+ * It is unattended, and went through the same code as Ctrl+S, so every few
+ * minutes it also did what only an explicit save should:
+ *   - opened «Guardar como» on a .tex that had gained Python cells;
+ *   - compiled and brought the PDF viewer up;
+ *   - trimmed trailing whitespace — i.e. deleted the space just typed, under
+ *     the cursor, in the middle of a sentence.
+ * None of that here: it writes the text as it is and nothing else. A document
+ * that would need a dialog is left for the user's own save. */
+export async function autosaveAll() {
+  let saved = 0;
+  for (const d of [...state.documents]) {
+    if (d.kind || !d.path || !d.modified) continue;
+    if (await saveDocument(d, { compile: false, trim: false, interactive: false })) saved++;
+  }
+  return saved;
+}
+
 /** Open documents with changes that are not on disk (viewer tabs never are). */
 export function unsavedDocs() {
   return state.documents.filter((d) => d.modified && !d.kind);

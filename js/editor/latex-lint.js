@@ -61,7 +61,7 @@ export function lintLatex(text, tr = ES) {
   let inCell = false;
   let codeDepth = 0;            // > 0 while inside \py{…} and friends
   let pendingCode = false;      // the next { opens a code argument
-  let hasCells = false;
+  let cellsMayLabel = false;    // a cell's code mentions \label
   let topClass = false;         // a \documentclass of its own, outside any env
   const n = text.length;
 
@@ -84,12 +84,14 @@ export function lintLatex(text, tr = ES) {
     // ---- Python cells: not LaTeX at all ----
     if (inCell) {
       if (trimmed.startsWith('%#end')) inCell = false;
+      // A cell that writes `\label` (or `\\label` in a normal string) may be
+      // producing labels this pass cannot see.
+      else if (!cellsMayLabel && line.indexOf('\\label') >= 0) cellsMayLabel = true;
       lineStart = lineEnd + 1;
       continue;
     }
     if (!verbEnv && trimmed.startsWith('%#python')) {
       inCell = true;
-      hasCells = true;
       lineStart = lineEnd + 1;
       continue;
     }
@@ -270,7 +272,12 @@ export function lintLatex(text, tr = ES) {
   // could be writing labels.
   const standalone = topClass && !MULTI_FILE.test(text)
     && !/\\externaldocument/.test(text) && labels.size > 0;
-  const cellsMayLabel = hasCells && /%#python[\s\S]*?\\\\?label/.test(text);
+  // `cellsMayLabel` is gathered while the cells go by, from the cells' own
+  // lines. It used to be one expression over the whole text — "a cell
+  // marker, then the word label anywhere after it" — which was true for any
+  // document with a cell and a \label further down (or a plt.xlabel), so
+  // these warnings were silently off for most documents with cells; and from
+  // every marker it scanned to the end of the text, quadratic in the cells.
   if (standalone && !cellsMayLabel) {
     for (const r of refs) {
       if (!labels.has(r.name)) {

@@ -1,9 +1,10 @@
 import { createSignal, createEffect, For, Show } from 'solid-js';
 import { state } from '../../core/state.js';
 import {
-  readDir, renamePath, removePath, createFile, createDir,
-  readBinaryFile, revealInExplorer, openExternal, askDialog, messageDialog,
+  readDir, renamePath, removePath, trashPath, createFile, createDir,
+  readBinaryFile, revealInExplorer, openExternal, askDialog, messageDialog, fileStamps,
 } from '../../core/platform.js';
+import { openTarget, looksBinary } from '../../core/file-kind.js';
 import { openPath, openImageTab, pathRenamed, pathRemoved } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import { loadPdf } from '../../pdf/preview.js';
@@ -85,7 +86,16 @@ export default function FileTree(props) {
     } else if (CAD_EXT.has(e)) {
       openExternal(item.path); // CAD opens in its native app
     } else {
-      openPath(item.path); // tex / py / text → editor tab
+      // Only TEXT goes to the editor (core/file-kind.js): a .zip or a video
+      // opened there as text, and one Ctrl+S destroyed it.
+      let size = -1;
+      try { size = ((await fileStamps([item.path])) || [])[0]?.size ?? -1; } catch (_) { /* unknown */ }
+      let target = openTarget(item.name, size);
+      if (target === 'sniff') {
+        try { target = looksBinary(await readBinaryFile(item.path)) ? 'external' : 'text'; } catch (_) { target = 'external'; }
+      }
+      if (target === 'text') openPath(item.path); // tex / py / text → editor tab
+      else openExternal(item.path);               // its own program
     }
   };
 
@@ -115,13 +125,31 @@ export default function FileTree(props) {
     // WebView2 configurations suppress outright — a suppressed `confirm()`
     // returns false, so this used to fail closed, but the reverse of that bug
     // would have been silent data loss.
+    //
+    // On Windows it goes to the recycle bin, so a wrong click can be undone;
+    // only when the bin cannot take it is a permanent delete offered, as a
+    // second, explicit question.
+    const what = `"${item.name}"${item.is_dir ? ' y todo su contenido' : ''}`;
+    const bin = /Windows/i.test(navigator.userAgent || '');
     const ok = await askDialog(
-      `¿Eliminar "${item.name}"${item.is_dir ? ' y todo su contenido' : ''}? Esta acción no se puede deshacer.`,
-      { title: 'Eliminar', kind: 'warning', okLabel: 'Eliminar', cancelLabel: 'Cancelar' },
+      bin
+        ? `¿Enviar ${what} a la papelera de reciclaje?\n\n(En una unidad sin papelera, como muchas de red, se elimina definitivamente.)`
+        : `¿Eliminar ${what}? Esta acción no se puede deshacer.`,
+      { title: 'Eliminar', kind: 'warning', okLabel: bin ? 'Enviar a la papelera' : 'Eliminar', cancelLabel: 'Cancelar' },
     );
     if (!ok) return;
     try {
-      await removePath(item.path);
+      let done = false;
+      if (bin) {
+        try { await trashPath(item.path); done = true; } catch (err) {
+          const forever = await askDialog(
+            `${String(err)}\n\n¿Eliminar ${what} definitivamente? Esta acción no se puede deshacer.`,
+            { title: 'Eliminar', kind: 'warning', okLabel: 'Eliminar definitivamente', cancelLabel: 'Cancelar' },
+          );
+          if (!forever) return;
+        }
+      }
+      if (!done) await removePath(item.path);
       pathRemoved(item.path); // its tabs close, unless they hold unsaved text
       refresh(dirOf(item.path));
     } catch (err) {

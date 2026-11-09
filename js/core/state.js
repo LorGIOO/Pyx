@@ -46,8 +46,20 @@ export const state = createMutable({
   liveCompile: true, // TeXstudio-style: background compile shortly after typing stops
   lastLog: '',
   lastCompileOk: null, // null | true | 'warn' (PDF built, LaTeX reported errors) | false (no PDF)
-  compileMs: 0,        // how long the last compile took (drives the live backoff)
-  liveSuspended: false, // project too heavy to rebuild on every typing pause
+  compileMs: 0,        // how long the last compile took, end to end
+  liveSuspended: false, // kept for older UI code; live compile no longer suspends itself
+  // Every compile request gets a number; the viewer shows the PDF of the
+  // highest one that produced a PDF. Lets the UI tell "the PDF on screen is
+  // from compile N" from "compile N+1 is still loading".
+  compileGen: 0,
+  // A typing pause has armed the background compile and it has not fired yet.
+  livePending: false,
+  // The engine is done and the viewer is loading the PDF it wrote. The compile
+  // itself is over by then (state.compiling is false): the next one may start.
+  pdfLoading: false,
+  // Why the last compile did NOT end with a new PDF on screen, in words the
+  // user can act on ('' when it did). Never empty after a compile without PDF.
+  compileReason: '',
   lastPdfPath: null,    // PDF written by the last successful compile
   update: null,         // a newer release found on GitHub (core/updates.js)
   updateBusy: false,    // downloading / starting its installer

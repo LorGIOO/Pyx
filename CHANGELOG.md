@@ -3,6 +3,126 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar]
+
+### Corregido
+
+- **«Compilo y el PDF no cambia».** Desde la 1.6.6, a partir de la segunda
+  compilación de la sesión el visor seguía mostrando las páginas anteriores
+  (el registro decía `doc.destroy is not a function`) y el PDF viejo no se
+  liberaba nunca. Ahora cada compilación termina en un PDF nuevo en pantalla
+  o en un motivo escrito: «LaTeX terminó sin producir ninguna página…», «El
+  PDF está abierto en otro programa», etc.
+- Una copia `.build.tex` que una versión antigua dejó en la carpeta del
+  proyecto ya no es la que se compila (se compilaba esa, y no lo que había en
+  el editor).
+- La compilación al escribir ya no se queda suspendida ni se rearma sin fin
+  con un motor lento: espera lo configurado (como mucho lo que tardó la última
+  compilación, tope 10 s) y, si llega durante otra, queda en cola.
+- «Detener» actúa también entre pasadas y sobre bibtex/makeindex; después se
+  puede volver a compilar al momento.
+- Un intérprete de Python que muere o no responde ya no deja la compilación
+  esperando para siempre («Tiempo máximo por celda» en Configuración; 0 = sin
+  límite).
+- **Cerrar Pyx con cambios sin guardar pregunta** Guardar / No guardar /
+  Cancelar (X, Alt+F4 y barra de tareas); cerrar una pestaña, igual.
+- Lo que se escribe mientras un guardado está en curso ya no queda marcado
+  como guardado.
+- La actualización se descarga y se comprueba antes de preguntar por los
+  documentos abiertos, y sin SHA-256 publicado no se instala nada.
+- Abrir dos veces el mismo archivo (doble clic, o la misma ruta escrita de
+  otra forma) ya no crea dos pestañas.
+- Renombrar no sobrescribe un archivo que ya existe; las pestañas siguen al
+  archivo renombrado.
+- Cada archivo se guarda con la codificación, el BOM y los finales de línea
+  con que se abrió. Un carácter que no cabe en su codificación ya no se
+  escribe como «?»: se pregunta.
+- «Buscar en el proyecto» no se queda en «Buscando…», y reemplazar respeta la
+  codificación de los archivos cerrados y lo que hay en los abiertos.
+- El terminal integrado ya no congela la ventana, usa el Python elegido y se
+  puede detener.
+- El autoguardado guarda todos los documentos con archivo, sin diálogos, sin
+  compilar y sin recortar el espacio recién escrito.
+- Al cambiar de pestaña, nada del documento anterior se queda en la
+  estructura, las macros ni la cinta.
+- El árbol de archivos abre en el editor solo texto; lo demás, con su
+  programa. Borrar desde el árbol envía a la papelera de reciclaje.
+- Archivos vinculados (`\pynotebook`, `\pyfile`):
+  - `\pyfile{datos}` busca `datos.py` (antes `datos.ipynb`, y decía que no
+    existía); la ruta se resuelve igual al compilar, con Mayús+Intro, con
+    Ctrl+clic y en el autocompletado: primero la carpeta del documento
+    principal y después la del capítulo que contiene el comando.
+  - Una misma ruta escrita de dos formas (`./calc/a`, `calc\a`) ya no cuenta
+    como dos cuadernos (se ejecutaba dos veces o «faltaban» sus valores).
+  - En un script `.py` con celdas `# %%`, insertar una celda al principio ya
+    no hace que se ejecuten otra vez todas las siguientes.
+  - Una celda a medio escribir (error de sintaxis) ya no obliga a ejecutar el
+    cuaderno entero en la compilación al escribir.
+  - Leer un `.ipynb` justo mientras Jupyter lo guarda ya no da «no es un
+    cuaderno».
+  - Dos documentos vinculados al mismo cuaderno ya no se tiran los valores el
+    uno al otro; un kernel de Jupyter ocupado en una celda larga no cuesta
+    1,5 s en cada compilación; un kernel recién arrancado que aún no dice qué
+    cuaderno sirve se vuelve a consultar.
+  - Lo que no se pudo traer de Jupyter (un valor que no se puede copiar, una
+    variable que una función solo usa) se dice en el registro en vez de
+    acabar en un `NameError` sin explicación.
+  - Si una celda del cuaderno falla, lo recuperado de la copia guardada no se
+    vuelve a cargar en cada compilación.
+  - Después de editar un script vinculado, de borrar una celda o de cerrar
+    Jupyter, lo que dependía de lo desaparecido se ejecuta una vez y no en
+    cada compilación (se quedaba ejecutándolo siempre, sin decir por qué).
+  - Los valores traídos de Jupyter se conservan cuando Jupyter se cierra: la
+    siguiente compilación ya no los cambia por los del código del cuaderno.
+  - Un archivo de datos (Excel, CSV…) leído por un script vinculado se vigila
+    también cuando el script se ejecutó en Pyx, no solo cuando sus valores
+    venían de una copia guardada.
+
+### Más rápido
+
+- **Visor de PDF con desplazamiento nativo.** El desplazamiento lo hace el
+  navegador y no un manejador de rueda; las páginas que salen de la vista
+  dejan de dibujarse y las capas de texto solo se crean para lo visible. En
+  un informe de 20 páginas con gráficas, recorriendo 24 000 px en 3,8 s: de
+  53 fotogramas con una página en blanco (de 534) a 4 (de 669), sin ninguna
+  tarea larga; la primera página aparece 195 ms después de terminar LaTeX.
+- **Archivos vinculados sin esperas.** Cuando ni el cuaderno, ni sus valores
+  guardados, ni Jupyter han cambiado, la compilación ya no pregunta nada al
+  kernel de Python (0,1 ms en lugar de una consulta por cuaderno y
+  compilación).
+- Escribir en un documento grande: el corrector, el contador de la búsqueda,
+  el autocompletado y el panel de estructura ya no recorren el documento
+  entero en cada pulsación.
+- Las carpetas del proyecto ya no se recorren en cada compilación.
+
+### Añadido
+
+- **Cinta adaptable.** La cinta ya no se desplaza de lado: los grupos pasan
+  de grandes a medianos, a solo iconos y, al final, a un botón que abre el
+  grupo entero. «Compilar» está siempre a un clic. La barra de estado, la de
+  título, las pestañas y la barra del visor caben a media pantalla; el ancho
+  mínimo de la ventana baja de 860 a 640 px.
+- **Indicador de compilación en modo zen.** Un punto de color junto a las
+  pestañas: gris sin compilar, anillo con una compilación programada, azul
+  con LaTeX, amarillo con Python, verde correcto, ámbar con avisos y rojo con
+  error. Clic: va al primer error (o abre el registro); clic derecho: Abrir
+  registro, Detener, Salir de zen. Se puede mostrar siempre desde
+  Configuración → Compilación. Atajo Ctrl+Alt+L para el registro.
+- **Los archivos vinculados se vigilan.** Con «compilar al escribir»
+  activado, Pyx comprueba cada 1,5 s los cuadernos y scripts del último PDF:
+  si se guardan desde otro editor, cambian los datos que leen o se ejecutan
+  celdas en Jupyter, el PDF se actualiza solo, sin tener que escribir nada en
+  Pyx.
+- Una línea por compilación en `logs/compile.jsonl` (resultado, motivo y
+  tiempos por fase) y los tiempos del motor y del visor en «Tiempos de Pyx».
+
+### Seguridad
+
+- Se retiran los permisos del plugin de archivos (no se usaban) y el
+  inspector web en las versiones publicadas.
+- Escritura de archivos más segura: temporal único por escritura, un solo
+  escritor por archivo y sincronización antes de renombrar.
+
 ## [1.6.6] — 2026-11-04
 
 ### Corregido

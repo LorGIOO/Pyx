@@ -3,7 +3,7 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar]
+## [1.7.0] — 2026-11-10
 
 ### Corregido
 

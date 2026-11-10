@@ -15,13 +15,14 @@ import {
   runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel, releaseKernelLock,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
   execKey, programOf, forgetNames, ensureStarNames, resolveNotebook, runLinkEntry,
-  saveNotebookValues, notebookNote, nsHasRun, captureScope, scopeCurrent,
+  saveNotebookValues, notebookNote, nsHasRun, captureScope, scopeCurrent, takeLinkProblems,
 } from '../editor/cell-runner.js';
+import { setLinkWatch } from '../editor/link-watch.js';
 import { executePlan } from '../editor/dep-plan.js';
 import { scopeExpressions, applyScopeTags, occurrencesOf, stripScopeTag } from './py-scope.js';
 import { setScopedValues, refreshGhostIn } from '../editor/py-ghost.js';
 import {
-  notebookPath, loadNotebook, documentReads, documentDefs, LINK_CMD_SRC, hasLinkCmd,
+  resolveLinkPath, notebookRefs, loadNotebook, documentReads, documentDefs, LINK_CMD_SRC, hasLinkCmd,
 } from '../editor/notebooks.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
@@ -391,6 +392,25 @@ async function resolveRootPath(doc, content) {
  * directory, so `figure()` writes into the single project-level `xref` folder
  * instead of sprouting a copy next to every child file, and relative paths in
  * cells behave identically no matter which file the cell lives in. */
+/** The \pynotebook / \pyfile commands of the ROOT document, when the file at
+ *  `path` is one of its chapters ([] when it is its own root). Mayús+Intro in
+ *  a chapter resolves them exactly as a compile does. */
+const rootLinkCache = new Map(); // root path -> { mtime, size, refs }
+export async function rootLinkRefs(path) {
+  const doc = state.documents.find((d) => !d.kind && d.path && samePath(d.path, path));
+  if (!doc) return [];
+  const rootPath = await resolveRootPath(doc, getDocContent(doc.id));
+  if (!rootPath || samePath(rootPath, doc.path)) return [];
+  const open = state.documents.find((d) => !d.kind && samePath(d.path, rootPath));
+  if (open) return notebookRefs(getDocContent(open.id));
+  const [st] = await fileStamps([rootPath]);
+  const hit = rootLinkCache.get(rootPath);
+  if (hit && st && hit.mtime === st.mtime && hit.size === st.size) return hit.refs;
+  const refs = notebookRefs(await readSourceFile(rootPath));
+  if (st) rootLinkCache.set(rootPath, { mtime: st.mtime, size: st.size, refs });
+  return refs;
+}
+
 export async function activeRootDir() {
   const doc = activeDoc();
   if (!doc || doc.kind || !doc.path) return undefined;
@@ -541,7 +561,13 @@ function analyzeFile(path, content) {
           // \pynotebook{cuaderno.ipynb}: the notebook's code cells run HERE.
           if (hasLinkCmd(code)) {
             NOTEBOOK_RE.lastIndex = 0;
-            while ((m = NOTEBOOK_RE.exec(code))) { events.push({ kind: 'notebook', raw: m[1].trim(), at: pos + m.index }); notebooks++; }
+            while ((m = NOTEBOOK_RE.exec(code))) {
+              const cmd = /^\\pyfile/.test(m[0]) ? 'pyfile' : 'pynotebook';
+              const raw = m[1].trim();
+              // `ref` tells \pyfile{datos} (datos.py) from \pynotebook{datos}.
+              events.push({ kind: 'notebook', raw, cmd, ref: `${cmd}{${raw}}`, at: pos + m.index });
+              notebooks++;
+            }
           }
         }
       }
@@ -639,15 +665,20 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
     files.set(path, f);
     // Linked Jupyter notebooks (\pynotebook): their code cells, re-read only
     // when the notebook changed on disk (notebooks.js).
-    const nbRaws = [...new Set(f.events.filter((e) => e.kind === 'notebook').map((e) => e.raw))];
-    if (nbRaws.length) {
+    const nbRefs = new Map(); // ref -> its first event
+    for (const e of f.events) if (e.kind === 'notebook' && !nbRefs.has(e.ref)) nbRefs.set(e.ref, e);
+    if (nbRefs.size) {
       f.notebooks = new Map();
-      await Promise.all(nbRaws.map(async (raw) => {
-        const p = notebookPath(rootDir, raw);
+      // In document order (the Map keeps it), resolved in parallel.
+      for (const ref of nbRefs.keys()) f.notebooks.set(ref, null);
+      await Promise.all([...nbRefs.values()].map(async (ev) => {
+        // The same resolver the editor uses (Mayús+Intro, Ctrl+clic,
+        // autocompletado): root folder first, then this file's own.
+        const p = await resolveLinkPath(rootDir, ev.raw, ev.cmd, dirOf(path));
         try {
-          f.notebooks.set(raw, { path: p, cells: await loadNotebook(p) });
+          f.notebooks.set(ev.ref, { path: p, raw: ev.raw, cells: await loadNotebook(p) });
         } catch (e) {
-          f.notebooks.set(raw, { path: p, cells: [], error: String((e && e.message) || e) });
+          f.notebooks.set(ev.ref, { path: p, raw: ev.raw, cells: [], error: String((e && e.message) || e) });
         }
       }));
     }
@@ -1027,9 +1058,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // variables are then missing, and the NameError alone would not explain why.
     let nbProblems = '';
     const nbNotes = []; // where each linked notebook's values came from (log)
+    let watched = [];   // the linked files this compile used (link-watch.js)
     for (const f of nbFiles) {
-      for (const [raw, nb] of f.notebooks) {
-        if (nb.error) nbProblems += `\n[${baseName(nb.path || raw)}] No se pudo leer: ${nb.error}`;
+      for (const nb of f.notebooks.values()) {
+        if (nb.error) nbProblems += `\n[${baseName(nb.path || nb.raw)}] No se pudo leer: ${nb.error}`;
       }
     }
 
@@ -1087,7 +1119,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           }
           if (ev.kind === 'notebook') {
             // The notebook's values (one entry) or its code cells, here.
-            const nb = f.notebooks && f.notebooks.get(ev.raw);
+            const nb = f.notebooks && f.notebooks.get(ev.ref);
             const plan = nb && !placed.has(nb.path) && nbPlans.get(nb.path);
             if (nb) placed.add(nb.path);
             for (const e of (plan && plan.entries) || []) {
@@ -1316,7 +1348,16 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           nbNotes.push(`${name}: no se pudieron guardar sus valores; la próxima vez se tomarán de Jupyter si está abierto`);
         }
       }
+      // What went wrong around a notebook without stopping the compile
+      // (values not saved, a snapshot that could not be put back).
+      for (const p of takeLinkProblems()) nbNotes.push(`Aviso: ${p}`);
+      // From here on these files are watched (link-watch.js): run in Jupyter
+      // or saved from another editor, they reach the PDF without typing here.
+      watched = [...nbPlans].map(([path, p]) => ({
+        path, needed: docNeeds, cwd, codeHash: p.codeHash, linked: p.mode === 'link',
+      }));
     }
+    setLinkWatch(watched);
     problems += nbProblems;
 
     // The editor's ghost value of a \py{} that reads the value of the file or

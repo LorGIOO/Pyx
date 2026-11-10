@@ -48,6 +48,7 @@ vi.mock('../js/editor/cell-runner.js', () => ({
 }));
 vi.mock('../js/editor/notebooks.js', () => ({
   notebookRefs: () => [], notebookPath: () => null, loadNotebook: async () => [],
+  resolveLinkPath: async () => null,
 }));
 
 const BENCH = !!process.env.PYX_BENCH;

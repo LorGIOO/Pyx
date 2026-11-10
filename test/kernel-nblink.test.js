@@ -126,6 +126,27 @@ describe.skipIf(!python)('\\pynotebook: los valores del cuaderno, sin ejecutarlo
     expect(r.reason).toMatch(/han cambiado los datos que lee \(caudales\.csv\)/);
   });
 
+  it('la respuesta dice de qué archivos depende y si se puede recordar', async () => {
+    // What lets Pyx answer the next compile without asking (cell-runner.js
+    // fetchLink): the files whose change would change the answer.
+    await send({ code: 'Q = 4.0', reset: true });
+    await send({ code: `import os\nst = os.stat(${JSON.stringify(data)})\nms = st.st_mtime_ns // 1000000\nsz = st.st_size` });
+    const ms = Number(await value('ms'));
+    const sz = Number(await value('sz'));
+    await send({ nblink: 'save', notebook: nb, names: ['Q'], codeHash: 'c4', reads: [[data, ms, sz]] });
+    const r = await send({ nblink: 'fetch', notebook: nb, names: ['Q'], codeHash: 'c4' });
+    expect(r.source).toBe('snapshot');
+    expect(r.cacheable).toBe(true); // no Jupyter: nothing changes without a file changing
+    const tail = (p) => p.replace(/\\/g, '/').split('/').pop();
+    expect(tail(r.watch[0])).toBe('meta.json'); // the saved values themselves
+    expect(r.watch.map(tail)).toContain('caudales.csv'); // and the data they came from
+    // A "no" is remembered too, while the same files stay as they are.
+    const no = await send({ nblink: 'fetch', notebook: nb, names: ['Q'], codeHash: 'otro' });
+    expect(no.source).toBe(null);
+    expect(no.cacheable).toBe(true);
+    expect(tail(no.watch[0])).toBe('meta.json');
+  });
+
   it('todo queda en la carpeta privada de la prueba', () => {
     const dir = process.platform === 'win32' ? join(base, 'local', 'Pyx', 'jupyter')
       : process.platform === 'darwin' ? join(base, 'Library', 'Application Support', 'Pyx', 'jupyter')

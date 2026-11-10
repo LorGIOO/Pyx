@@ -30,7 +30,7 @@ import { classifyPythonCached } from './py-highlight.js';
 import { state as appState } from '../core/state.js';
 import { dirOf, baseName } from '../core/paths.js';
 import {
-  notebookRefs, notebookPath, loadNotebook, documentReads, documentDefs,
+  notebookRefs, resolveLinkPath, loadNotebook, documentReads, documentDefs,
 } from './notebooks.js';
 import { findPyExprs, collectPyIfConds } from '../compile/latex-bridge.js';
 import { randomId } from '../core/hash.js';
@@ -200,12 +200,24 @@ function docPath(docId) {
  * variables Jupyter does not have), shown when a cell that reads it fails.
  * `fresh`: the namespace is about to be emptied.
  */
+async function rootLinks(path) {
+  if (!path) return [];
+  try {
+    const m = await import('../compile/compiler.js'); // dynamic: compiler.js imports this module
+    return (await m.rootLinkRefs(path)).map((r) => ({ ...r, line: 0, fromRoot: true }));
+  } catch (_) {
+    return [];
+  }
+}
+
 async function docProgram(docId, cells, view = null, cwd = undefined, { fresh = false } = {}) {
   const path = docPath(docId);
   const own = cells.map((cell) => ({ key: execKey(path, docId, cell), cell }));
   const prefix = `${path || `doc:${docId}`}::`;
   const text = view ? view.state.doc.toString() : '';
-  const refs = view ? notebookRefs(text) : [];
+  // The ROOT's links count too when this is one of its chapters: a compile
+  // sees them, so Mayús+Intro in the chapter must see the same variables.
+  const refs = view ? [...(await rootLinks(path)), ...notebookRefs(text)] : [];
   const nbErrors = [];
   const nbPrefixes = [];
   const plans = new Map(); // notebook path -> resolveNotebook result
@@ -220,7 +232,7 @@ async function docProgram(docId, cells, view = null, cwd = undefined, { fresh = 
     let k = 0;
     for (const ref of refs) {
       while (k < own.length && own[k].cell.headerLine < ref.line) entries.push(own[k++]);
-      const nbPath = notebookPath(cwd || dirOf(path), ref.raw);
+      const nbPath = await resolveLinkPath(cwd || dirOf(path), ref.raw, ref.cmd, ref.fromRoot ? null : dirOf(path));
       if (!nbPath) {
         nbErrors.push(`✗ No se pudo leer el cuaderno \\pynotebook{${ref.raw}}: guarda el documento para que su ruta tenga desde dónde partir`);
         continue;

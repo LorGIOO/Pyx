@@ -9,7 +9,7 @@ import LATEX_DATA from '../data/latex-completions.json';
 import { parseCells } from './cell-parse.js';
 import { analyzePython } from './py-deps.js';
 import { kernelComplete, linkedNames } from './cell-runner.js';
-import { notebookRefs, notebookPath, loadNotebook } from './notebooks.js';
+import { notebookRefs, resolveLinkPath, loadNotebook } from './notebooks.js';
 import { pyExprBefore } from './py-expr.js';
 import { state as appState } from '../core/state.js';
 import { dirOf, joinPath } from '../core/paths.js';
@@ -473,7 +473,8 @@ async function linkedFileNames(state) {
   if (!refs.length) return out;
   const root = await activeCwdQuick();
   for (const ref of refs) {
-    const p = notebookPath(root, ref.raw);
+    const own = appState.documents[appState.activeIndex];
+    const p = await resolveLinkPath(root, ref.raw, ref.cmd, own && own.path ? dirOf(own.path) : null);
     if (!p) continue;
     const file = p.split(/[\\/]/).pop();
     try {

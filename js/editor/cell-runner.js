@@ -1,7 +1,7 @@
 // Bridge between the editor cells and the persistent Python kernel.
 import { state } from '../core/state.js';
 import {
-  kernelExec, kernelStart, kernelReset, kernelSetPython, kernelInterrupt, isTauri,
+  kernelExec, kernelStart, kernelReset, kernelSetPython, kernelInterrupt, isTauri, fileStamps,
 } from '../core/platform.js';
 import { general, setGeneral } from '../solid/stores/settingsStore.js';
 import { createExecState } from './exec-state.js';
@@ -132,39 +132,38 @@ export function nsHasRun(entries) {
  * of these, its cells run here — once: their values are then saved.
  */
 export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = false, own = null } = {}) {
-  const entries = cells.map((cell) => ({ key: execKey(nbPath, null, cell), cell, notebook: true }));
-  const codeHash = notebookCodeHash(cells);
-  const defs = notebookDefs(cells);
-  let names = null;
-  if (needed) names = [...needed].filter((n) => !defs || defs.has(n)).sort();
-  else if (defs) names = [...defs].sort();
-  // The notebook's other values: kept in its snapshot when they are small, so
-  // a \py{} added later is served too, with Jupyter closed.
-  const extras = defs && names ? [...defs].filter((n) => !names.includes(n)).sort() : [];
+  const q = linkQuery(nbPath, cells, needed, cwd);
+  const { entries, names } = q;
   const ranHere = !fresh && nsHasRun(entries);
-  const base = { entries, codeHash, names, asked: names, extras, ranHere };
+  const base = { entries, codeHash: q.codeHash, names, asked: names, extras: q.extras, ranHere };
   if (!names) return { mode: 'run', ...base, reason: 'no se puede saber qué variables usa el documento' };
   if (!names.length) return { mode: 'none', ...base, entries: [] };
   const t0 = performance.now();
-  let r = null;
-  try {
-    r = await notebookLink('fetch', {
-      notebook: nbPath, names, extra: extras, codeHash, required: defs ? names : [], cwd,
-      // Its code: where a function's definition is found when its kernel
-      // cannot give it (kernel.py _from_cells).
-      cells: cells.map((c) => c.code),
-    });
-  } catch (e) {
-    r = { source: null, reason: String((e && e.message) || e) };
-  }
+  const r = await fetchLink(nbPath, q, fresh);
   const ms = performance.now() - t0;
   if (!r || !r.source) {
     if (ranHere) return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
+    const why = (r && (r.reason || r.error)) || '';
+    if (fresh) return { mode: 'run', ...base, ms, reason: why };
     // Its code (or a data file) changed and Jupyter is not there: put back
     // everything Pyx's last run of it left, with the cells it came from, so
     // the dependency graph runs ONLY what changed — not the whole notebook.
-    const restored = fresh ? null : await restoreNotebook(nbPath, entries, cwd);
-    const why = (r && (r.reason || r.error)) || '';
+    //
+    // Once per namespace and snapshot: a notebook with a cell that FAILS never
+    // gets to "ran here", and every compile used to load its whole snapshot
+    // again. What the first restore put back is still there (same epoch) and
+    // the ledger knows which cells are pending.
+    const meta = Array.isArray(r && r.watch) && r.watch.length ? await stampsOf([r.watch[0]]) : null;
+    const memo = restoreMemo.get(nbPath);
+    if (memo && meta && ns.known && memo.epoch === ns.epoch && memo.stamp === meta[0]) {
+      // (Not `restored`: cells that ran since are not in the snapshot, so the
+      // save that follows writes everything, not only this compile's cells.)
+      return memo.kept
+        ? { mode: 'run', ...base, ms: performance.now() - t0, resumed: true, reason: `${why}; solo se ejecuta lo que falta` }
+        : { mode: 'run', ...base, ms, reason: why };
+    }
+    const restored = await restoreNotebook(nbPath, entries, cwd);
+    if (meta) restoreMemo.set(nbPath, { epoch: ns.epoch, stamp: meta[0], kept: restored || 0 });
     if (restored) {
       return { mode: 'run', ...base, ms: performance.now() - t0, restored, reason: `${why}; solo se ejecuta lo que ha cambiado` };
     }
@@ -174,10 +173,7 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   // namespace holds their values already, nothing to load.
   if (ranHere && r.source !== 'jupyter') return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
   const got = r.names || {};
-  const avail = names.filter((n) => Object.prototype.hasOwnProperty.call(got, n));
-  // What its values ARE — the names the document uses and what their
-  // functions need (r.deps): a helper edited in Jupyter loads them again.
-  const token = hashString([...avail, '|', ...(r.deps || [])].map((n) => `${n}:${got[n]}`).join('|'));
+  const { avail, token } = linkToken(r, names);
   const modules = new Map();
   for (const n of avail) if (String(got[n]).startsWith('module:')) modules.set(n, String(got[n]).slice(7));
   const cell = {
@@ -190,8 +186,156 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
     names: avail, source: r.source, from: r.from, label: r.label, when: r.when,
     missing: (r.missing || []).filter((n) => names.includes(n) && !(own && own.has(n))),
     errors: r.errors || {}, ms,
+    // Taken from Jupyter with other code than the file has now (edited since,
+    // not run there): the values may be behind the code — said in the log.
+    codeChanged: !!r.codeChanged,
   };
 }
+
+/* ---------------- a notebook's answer, remembered ("0 ms") ----------------
+   Asking where a notebook's values come from is a round trip to the Python
+   kernel, which in turn looks for Jupyter. Its answer names the files and
+   folders it depends on (`watch`: the snapshot's meta.json, Jupyter's runtime
+   folders, the data files the snapshot read) and says whether it stands while
+   none of them changes (`cacheable` — never while a Jupyter kernel serves the
+   notebook, is busy or is still starting: those change without touching any
+   file). An unchanged notebook is then answered from here: one stat call, no
+   kernel request at all.
+
+   The stamps kept with an answer are taken BEFORE asking, or are provably
+   older than the question: a change that lands while the kernel answers makes
+   the next call ask again — never the other way round. */
+const linkCache = new Map(); // notebook path -> { key, r, watch, stamps, sig, live }
+const restoreMemo = new Map(); // notebook path -> { epoch, stamp, kept } (resolveNotebook)
+
+async function rawStamps(paths) {
+  try {
+    const s = await fileStamps(paths);
+    return Array.isArray(s) && s.length === paths.length ? s : null;
+  } catch (_) {
+    return null; // no desktop: nothing is remembered
+  }
+}
+const stampText = (s) => `${s.mtime}:${s.size}`;
+async function stampsOf(paths) {
+  const s = await rawStamps(paths);
+  return s ? s.map(stampText) : null;
+}
+const sameList = (a, b) => !!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** What a document asks a notebook for, and the cells it would run. */
+function linkQuery(nbPath, cells, needed, cwd) {
+  const entries = cells.map((cell) => ({ key: execKey(nbPath, null, cell), cell, notebook: true }));
+  const codeHash = notebookCodeHash(cells);
+  const defs = notebookDefs(cells);
+  let names = null;
+  if (needed) names = [...needed].filter((n) => !defs || defs.has(n)).sort();
+  else if (defs) names = [...defs].sort();
+  // The notebook's other values: kept in its snapshot when they are small, so
+  // a \py{} added later is served too, with Jupyter closed.
+  const extras = defs && names ? [...defs].filter((n) => !names.includes(n)).sort() : [];
+  const required = defs && names ? names : [];
+  return {
+    entries, codeHash, names, extras, cwd,
+    key: names ? [codeHash, names.join(','), extras.join(','), required.length, cwd || ''].join('|') : '',
+    payload: () => ({
+      notebook: nbPath, names, extra: extras, codeHash, required, cwd,
+      // Its code: where a function's definition is found when its kernel
+      // cannot give it (kernel.py _from_cells).
+      cells: cells.map((c) => c.code),
+    }),
+  };
+}
+
+/** What a notebook's values ARE — the names the document uses and what their
+ *  functions need (r.deps): a helper edited in Jupyter loads them again. */
+function linkToken(r, names) {
+  const got = r.names || {};
+  const avail = names.filter((n) => Object.prototype.hasOwnProperty.call(got, n));
+  return { avail, token: hashString([...avail, '|', ...(r.deps || [])].map((n) => `${n}:${got[n]}`).join('|')) };
+}
+
+/** The kernel's answer for a notebook (kernel.py _nb_fetch) — the remembered
+ *  one while nothing it depends on has changed. `fresh` always asks. */
+async function fetchLink(nbPath, q, fresh = false) {
+  const hit = linkCache.get(nbPath);
+  const pre = hit && hit.watch ? await stampsOf(hit.watch) : null;
+  if (!fresh && hit && hit.r && hit.key === q.key && pre && sameList(pre, hit.stamps)) return hit.r;
+  const asked = Date.now();
+  let r = null;
+  try {
+    r = await notebookLink('fetch', q.payload());
+  } catch (e) {
+    r = { source: null, reason: String((e && e.message) || e) };
+  }
+  const watch = r && Array.isArray(r.watch) && r.watch.length ? r.watch : null;
+  const entry = {
+    key: q.key, r: null, watch, stamps: null,
+    sig: r && r.source ? linkToken(r, q.names).token : null,
+    live: !!(r && r.source === 'jupyter'),
+  };
+  if (watch && r.cacheable) {
+    if (hit && pre && sameList(hit.watch, watch)) {
+      entry.r = r;
+      entry.stamps = pre;
+    } else {
+      // The list is new: these stamps are taken AFTER the answer, so they
+      // vouch for it only if nothing was touched around the question (2 s:
+      // more than any file system's time resolution).
+      const post = await rawStamps(watch);
+      if (post && post.every((s) => s.mtime < asked - 2000)) {
+        entry.r = r;
+        entry.stamps = post.map(stampText);
+      }
+    }
+  }
+  linkCache.set(nbPath, entry);
+  return r;
+}
+
+/** Its remembered answer may no longer hold (a value file is gone, the
+ *  interpreter changed): ask again next time. */
+function forgetLink(nbPath) {
+  if (nbPath === undefined) linkCache.clear();
+  else linkCache.delete(nbPath);
+}
+
+/** For the watcher (link-watch.js): what the last answer for this notebook
+ *  depends on. `sig` — what its values were (null: it had none to give);
+ *  `live` — they came from a running Jupyter kernel, which no file reflects. */
+export function linkWatchInfo(nbPath) {
+  const e = linkCache.get(nbPath);
+  if (!e) return { known: false, watch: [], stamps: null, sig: null, live: false, cached: false };
+  return { known: true, watch: e.watch || [], stamps: e.r ? e.stamps : null, sig: e.sig, live: e.live, cached: !!e.r };
+}
+
+/** Ask for a notebook's values AHEAD of the compile that will use them, with
+ *  the kernel free: Jupyter copies what changed to disk now, and the answer is
+ *  remembered. Nothing enters the namespace and the run ledger is untouched —
+ *  the compile still decides what to load and which cells read it. Never
+ *  starts a kernel and never queues behind a running cell or compile.
+ *  @returns {Promise<{sig: string|null, live: boolean}|null>} null: not asked */
+export function preloadNotebook(nbPath, cells, needed, cwd) {
+  if (!kernelIdle()) return Promise.resolve(null);
+  const q = linkQuery(nbPath, cells, needed, cwd);
+  if (!q.names || !q.names.length) return Promise.resolve(null);
+  return withKernelLock(async () => {
+    if (!started || state.kernelStatus !== 'ready') return null;
+    const r = await fetchLink(nbPath, q);
+    return { sig: r && r.source ? linkToken(r, q.names).token : null, live: !!(r && r.source === 'jupyter') };
+  });
+}
+
+/* What went wrong around a notebook without stopping anything: it used to be
+   swallowed (`catch (_)`), and the only sign was a notebook that ran again or
+   a value that was not the expected one. The compile lists them in its log. */
+const linkProblems = [];
+function noteLinkProblem(msg) {
+  if (linkProblems.length < 20 && !linkProblems.includes(msg)) linkProblems.push(msg);
+}
+export function takeLinkProblems() { return linkProblems.splice(0); }
+const errText = (e) => String((e && e.message) || e);
+const nbName = (p) => String(p).split(/[\\/]/).pop();
 
 const kindOf = (p) => (/\.py$/i.test(String(p)) ? 'archivo' : 'cuaderno');
 
@@ -204,13 +348,21 @@ export function notebookNote(nbPath, plan, ran) {
     const n = plan.names.length;
     const what = `${n} variable${n === 1 ? '' : 's'}`;
     const t = plan.ms != null ? ` en ${Math.round(plan.ms)} ms` : '';
-    if (plan.source === 'jupyter') return `${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el ${kindOf(nbPath)}`;
+    // The file was edited after these values were taken and nothing ran in
+    // Jupyter since: they may be behind the code. Said, never guessed away.
+    const behind = plan.codeChanged
+      ? `. Aviso: el ${kindOf(nbPath)} se ha editado después de tomar estos valores y en Jupyter no se ha ejecutado nada desde entonces; si cambiaste celdas, ejecútalas en Jupyter para actualizarlos`
+      : '';
+    if (plan.source === 'jupyter') return `${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el ${kindOf(nbPath)}${behind}`;
     const when = plan.when ? ` del ${new Date(plan.when * 1000).toLocaleString()}` : '';
     const of = plan.from === 'jupyter' ? `de Jupyter${when}` : `de la última ejecución en Pyx${when}`;
-    return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el ${kindOf(nbPath)}`;
+    return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el ${kindOf(nbPath)}${behind}`;
   }
   if (plan.restored) {
     return `${name}: ${plan.restored} celda${plan.restored === 1 ? '' : 's'} sin cambios recuperada${plan.restored === 1 ? '' : 's'} de la última ejecución; ${ran ? 'solo se ha ejecutado lo que cambió' : 'no ha hecho falta ejecutar nada'}`;
+  }
+  if (plan.resumed) {
+    return `${name}: lo recuperado de la última ejecución sigue cargado; ${ran ? 'solo se ha ejecutado lo que faltaba' : 'no ha hecho falta ejecutar nada'}`;
   }
   if (!ran) return `${name}: ya cargado en esta sesión, sin ejecutar nada`;
   const why = plan.reason ? ` (${plan.reason})` : '';
@@ -225,10 +377,15 @@ async function restoreNotebook(nbPath, entries, cwd) {
   let r;
   try {
     r = await notebookLink('restore', { notebook: nbPath, cwd });
-  } catch (_) {
+  } catch (e) {
+    noteLinkProblem(`${nbName(nbPath)}: no se pudo recuperar su última ejecución (${errText(e)}); se ejecuta entero`);
     return null;
   }
   if (!r || !r.ok || !Array.isArray(r.ledger)) return null;
+  const lost = Object.entries(r.errors || {});
+  if (lost.length) {
+    noteLinkProblem(`${nbName(nbPath)}: no se pudieron recuperar ${lost.slice(0, 5).map(([n, e]) => `${n} (${e})`).join('; ')}; las celdas que los definen se ejecutan de nuevo`);
+  }
   const loaded = new Set(r.loaded || []);
   const current = new Map(entries.map((e) => [e.key, e.cell.codeHash]));
   let kept = 0;
@@ -255,15 +412,23 @@ export async function runLinkEntry(entry, cwd, meta = {}) {
     nsRecord(key, entry.cell.codeHash, cwd, [], meta.D);
     markScope(key); // the apply kept what it gave each name (kernel _SCOPES)
     const bad = Object.entries(res.errors || {});
+    // What the functions it took USE and could not be brought along: without
+    // this line, calling them ends in a NameError nobody can explain.
+    const dep = Object.entries(res.depErrors || {});
+    const lines = [];
+    if (bad.length) lines.push(`No se pudieron cargar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`);
+    if (dep.length) lines.push(`No se pudo traer lo que usan sus funciones: ${dep.map(([n, e]) => `${n} (${e})`).join('; ')}`);
+    // A value file may be gone or unreadable: the remembered answer says
+    // otherwise, so the next compile asks again.
+    if (lines.length) forgetLink(entry.cell.notebook);
     return {
       ok: true,
       unchanged: res.unchanged || [],
-      stderr: bad.length
-        ? `No se pudieron cargar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}${res.hint ? `. ${res.hint}` : ''}`
-        : '',
+      stderr: lines.length ? `${lines.join('. ')}${res.hint ? `. ${res.hint}` : ''}` : '',
       loadErrors: res.errors || {},
     };
   }
+  forgetLink(entry.cell.notebook);
   nsFail(key, meta.D);
   const msg = (res && res.error) || 'sin respuesta del kernel';
   return { ok: false, stdout: '', stderr: msg, error: { type: 'Error', msg: `no se pudieron cargar los valores del cuaderno: ${msg}` } };
@@ -294,7 +459,7 @@ export async function saveNotebookValues(nbPath, plan, cwd, fresh = null) {
   }
   if (!names.size) return null;
   try {
-    return await notebookLink('save', {
+    const res = await notebookLink('save', {
       notebook: nbPath, names: [...names], extra: ledger ? [] : (plan.extras || []), codeHash: plan.codeHash, reads, cwd,
       // What each of its cells gave its names when it ran (captureScope):
       // the file's own values, not what a later file left in their place.
@@ -304,7 +469,10 @@ export async function saveNotebookValues(nbPath, plan, cwd, fresh = null) {
       // Only what the cells that ran this time defined is pickled again.
       fresh: fresh ? [...fresh] : undefined,
     });
-  } catch (_) {
+    if (res && res.error) noteLinkProblem(`${nbName(nbPath)}: no se pudieron guardar sus valores (${res.error})`);
+    return res;
+  } catch (e) {
+    noteLinkProblem(`${nbName(nbPath)}: no se pudieron guardar sus valores (${errText(e)})`);
     return null;
   }
 }
@@ -332,7 +500,10 @@ export async function captureScope(key, names, cwd) {
   try {
     await kernelExec({ id: reqId++, nblink: 'capture', key, names, cwd });
     markScope(key);
-  } catch (_) { /* the \py{} falls back to the final value */ }
+  } catch (e) {
+    // The \py{} falls back to the final value — which may be another file's.
+    noteLinkProblem(`no se pudo conservar el valor de ${names.slice(0, 5).join(', ')} tal como lo dejó su celda (${errText(e)}): un \\py{} que lo lea mostrará el último valor`);
+  }
 }
 
 /** Delete names from the namespace (a removed cell's, before its readers re-run). */
@@ -422,6 +593,7 @@ export async function setKernelPython(path) {
   try {
     const res = await kernelSetPython(path);
     started = true; forgetProcess();
+    forgetLink(); // another interpreter may not read the same value files
     nsReset(undefined);
     state.kernelStatus = 'ready';
     if (res && res.python) state.env.python = res.python;

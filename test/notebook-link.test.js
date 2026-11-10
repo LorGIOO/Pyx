@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,6 +37,8 @@ const env = {
 let proc = null;
 let buf = '';
 const waiting = new Map();
+// How many requests of each kind about linked files reached the kernel.
+const asked = vi.hoisted(() => ({}));
 function startKernel() {
   proc = spawn(python, ['-u', KERNEL], { stdio: ['pipe', 'pipe', 'ignore'], env, cwd: base });
   proc.stdout.setEncoding('utf8');
@@ -62,7 +64,18 @@ vi.mock('../js/core/platform.js', async (orig) => ({
   kernelSetPython: async () => ({ python: 'test' }),
   kernelReset: async () => {},
   kernelInterrupt: async () => {},
+  // The real thing, from disk: what the remembered answers are checked against.
+  fileStamps: async (paths) => paths.map((p) => {
+    try {
+      const s = statSync(p);
+      return { mtime: Math.floor(s.mtimeMs), size: s.size };
+    } catch (_) {
+      return { mtime: -1, size: -1 };
+    }
+  }),
+  readTextFile: async (p) => readFileSync(p, 'utf8'),
   kernelExec: (req) => new Promise((resolve, reject) => {
+    if (req.nblink) asked[req.nblink] = (asked[req.nblink] || 0) + 1;
     const timer = setTimeout(() => reject(new Error('kernel did not answer')), 60000);
     waiting.set(req.id, (f) => { clearTimeout(timer); resolve(f); });
     proc.stdin.write(`${JSON.stringify(req)}\n`);
@@ -163,6 +176,112 @@ describe.skipIf(!python)('\\pynotebook: resolveNotebook con el kernel real', { t
     const plan = await runner.resolveNotebook(nbPath, cells, new Set(['g']), base, { fresh: true });
     expect(plan.mode).toBe('link');
     expect(plan.names).toEqual(['g']);
+  });
+
+  it('sin cambios, volver a preguntar no llega al kernel (0 ms)', async () => {
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    await runner.resolveNotebook(nbPath, cells, needed, base);
+    await runner.resolveNotebook(nbPath, cells, needed, base);
+    const before = asked.fetch;
+    const plan = await runner.resolveNotebook(nbPath, cells, needed, base);
+    expect(asked.fetch).toBe(before); // answered from memory: one stat, no kernel
+    expect(plan.mode).toBe('link');
+    expect(plan.source).toBe('snapshot');
+    await runPlan(plan);
+    expect(await value('factor(Q_max)')).toBe('688.75');
+    // «Recompilar desde cero» always asks; so does a document that reads other names.
+    await runner.resolveNotebook(nbPath, cells, needed, base, { fresh: true });
+    expect(asked.fetch).toBe(before + 1);
+    await runner.resolveNotebook(nbPath, cells, new Set(['g']), base);
+    expect(asked.fetch).toBe(before + 2);
+  });
+
+  it('una celda que falla: lo recuperado no se vuelve a cargar en cada compilación', async () => {
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    const broken = [cells[0], cell('def factor(x):\n    return x * 1.5\ng = 1 / 0', 1)];
+    const first = await runner.resolveNotebook(nbPath, broken, needed, base);
+    expect(first.mode).toBe('run');
+    expect(first.restored).toBe(1);
+    const restores = asked.restore;
+    // The compile runs the broken cell, it fails, nothing is saved — and the
+    // next compile finds the first cell's values where the restore left them.
+    const again = await runner.resolveNotebook(nbPath, broken, needed, base);
+    expect(asked.restore).toBe(restores);
+    expect(again.mode).toBe('run');
+    expect(again.resumed).toBe(true);
+    expect(runner.nsHasRun([again.entries[0]])).toBe(true);
+    expect(runner.nsHasRun([again.entries[1]])).toBe(false);
+    expect(runner.notebookNote(nbPath, again, true)).toMatch(/sigue cargado; solo se ha ejecutado lo que faltaba/);
+    // An emptied namespace holds none of it: restored again.
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    const third = await runner.resolveNotebook(nbPath, broken, needed, base);
+    expect(third.restored).toBe(1);
+    expect(asked.restore).toBe(restores + 1);
+    runner.nsReset(base);
+  });
+
+  it('vigilancia: lo que cambia fuera de Pyx (datos, el propio archivo) pide una compilación', async () => {
+    const watch = await import('../js/editor/link-watch.js');
+    const { loadNotebook } = await import('../js/editor/notebooks.js');
+    const pyPath = join(nbDir, 'aforo.py');
+    const data = join(nbDir, 'aforo.txt');
+    writeFileSync(data, '12');
+    writeFileSync(pyPath, 'caudal = float(open("aforo.txt").read())\ndoble = caudal * 2\n');
+    const reads = new Set(['doble']);
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    let pyCells = await loadNotebook(pyPath);
+    let plan = await runner.resolveNotebook(pyPath, pyCells, reads, base);
+    expect(plan.mode).toBe('run');
+    await runPlan(plan);
+    expect((await runner.saveNotebookValues(pyPath, plan, base)).saved).toContain('doble');
+    // Another session: the saved values, nothing runs.
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    plan = await runner.resolveNotebook(pyPath, pyCells, reads, base);
+    expect(plan.mode).toBe('link');
+    await runPlan(plan);
+    expect(await value('doble')).toBe('24');
+
+    let calls = 0;
+    watch.startLinkWatch(() => { calls++; });
+    watch.stopLinkWatch(); // the test ticks by hand
+    const link = () => ({ path: pyPath, needed: reads, cwd: base, codeHash: plan.codeHash, linked: plan.mode === 'link' });
+    watch.setLinkWatch([link()]);
+    const quiet = asked.fetch;
+    expect(await watch.checkLinks()).toBe(false);
+    expect(asked.fetch).toBe(quiet); // nothing moved: not even a question
+    // The data file the script read changes: its saved values are stale.
+    writeFileSync(data, '100');
+    expect(await watch.checkLinks()).toBe(true);
+    expect(calls).toBe(1);
+    expect(await watch.checkLinks()).toBe(false); // said once
+    expect(calls).toBe(1);
+    // The compile it asked for: the cells run again (and the answer was
+    // already fetched by the watcher — nothing is asked twice).
+    const ready = asked.fetch;
+    plan = await runner.resolveNotebook(pyPath, pyCells, reads, base);
+    expect(plan.mode).toBe('run');
+    expect(asked.fetch - ready).toBeLessThanOrEqual(1);
+    await runPlan(plan);
+    await runner.saveNotebookValues(pyPath, plan, base);
+    expect(await value('doble')).toBe('200');
+
+    // The script saved from another editor.
+    watch.setLinkWatch([link()]);
+    expect(await watch.checkLinks()).toBe(false);
+    writeFileSync(pyPath, 'caudal = float(open("aforo.txt").read())\ndoble = caudal * 3  # corregido\n');
+    expect(await watch.checkLinks()).toBe(true);
+    expect(calls).toBe(2);
+    expect(await watch.checkLinks()).toBe(false);
+    pyCells = await loadNotebook(pyPath);
+    plan = await runner.resolveNotebook(pyPath, pyCells, reads, base);
+    expect(plan.mode).toBe('run');
+    watch.setLinkWatch([]);
+    runner.nsReset(base);
   });
 
   it.skipIf(!hasIpykernel)('con el cuaderno abierto en Jupyter: sus valores, en vivo', async () => {

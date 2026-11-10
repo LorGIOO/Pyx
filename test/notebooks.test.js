@@ -2,7 +2,7 @@
 // the document takes from the notebook (its values, not its code).
 import { describe, it, expect } from 'vitest';
 import {
-  notebookRefs, notebookPath, notebookDefs, documentReads, documentDefs, linkInfo, notebookCodeHash,
+  notebookRefs, notebookPath, linkCandidates, notebookDefs, documentReads, documentDefs, linkInfo, notebookCodeHash,
 } from '../js/editor/notebooks.js';
 import { planRun, executePlan } from '../js/editor/dep-plan.js';
 import { analyzePython } from '../js/editor/py-deps.js';
@@ -87,8 +87,8 @@ describe('\\pynotebook: los cuadernos que enlaza un documento', () => {
       '\\end{document}',
     ].join('\n');
     expect(notebookRefs(text)).toEqual([
-      { raw: 'calculos/modelo.ipynb', line: 3 },
-      { raw: '../999. Recursos/hidro', line: 11 },
+      { raw: 'calculos/modelo.ipynb', line: 3, cmd: 'pynotebook' },
+      { raw: '../999. Recursos/hidro', line: 11, cmd: 'pynotebook' },
     ]);
     expect(notebookRefs('sin cuadernos')).toEqual([]);
   });
@@ -101,5 +101,42 @@ describe('\\pynotebook: los cuadernos que enlaza un documento', () => {
     // An unsaved document has no folder: a relative path cannot be resolved.
     expect(notebookPath(undefined, 'modelo')).toBe(null);
     expect(notebookPath(null, 'C:/datos/modelo.ipynb')).toBe('C:/datos/modelo.ipynb');
+  });
+
+  it('una misma ruta escrita de varias formas es UNA clave (editor y compilador)', () => {
+    // joinPath alone gave `C:\P\calc/a.ipynb`, `C:\P\./a.ipynb`…: each one a
+    // different key in the run ledger and in the kernel's scopes.
+    const same = [
+      notebookPath('C:\\P', 'calc/a.ipynb'),
+      notebookPath('C:\\P', './calc/a.ipynb'),
+      notebookPath('C:\\P', 'calc\\a.ipynb'),
+      notebookPath('C:\\P', 'otra/../calc/a'),
+      notebookPath('C:\\P\\calc', '../calc/a.ipynb'),
+    ];
+    expect(new Set(same)).toEqual(new Set(['C:\\P\\calc\\a.ipynb']));
+    expect(notebookPath('/home/u/p', './n/../m')).toBe('/home/u/p/m.ipynb');
+    // Accents and spaces survive untouched; UNC keeps its two leading slashes.
+    expect(notebookPath('C:\\Mi Proyecto\\1. Cálculo', 'año/oleaje ñ')).toBe('C:\\Mi Proyecto\\1. Cálculo\\año\\oleaje ñ.ipynb');
+    expect(notebookPath('\\\\servidor\\obra', 'datos/a.py')).toBe('\\\\servidor\\obra\\datos\\a.py');
+    expect(notebookPath('C:/P', '\\\\servidor\\obra\\a.ipynb')).toBe('\\\\servidor\\obra\\a.ipynb');
+  });
+
+  it('los candidatos: carpeta raíz, luego la del archivo; la extensión del comando primero', () => {
+    expect(linkCandidates('C:/P', 'datos', 'pyfile', 'C:/P/cap')).toEqual([
+      'C:/P/datos.py', 'C:/P/datos.ipynb', 'C:/P/cap/datos.py', 'C:/P/cap/datos.ipynb',
+    ]);
+    expect(linkCandidates('C:/P', 'datos', 'pynotebook', 'C:/P')).toEqual(['C:/P/datos.ipynb', 'C:/P/datos.py']);
+    expect(linkCandidates('C:/P', 'n.ipynb', 'pynotebook', 'C:/P/cap')).toEqual(['C:/P/n.ipynb', 'C:/P/cap/n.ipynb']);
+    expect(linkCandidates('C:/P', 'D:/x/n.ipynb', 'pynotebook', 'C:/P/cap')).toEqual(['D:/x/n.ipynb']);
+    expect(linkCandidates(null, 'n', 'pynotebook', null)).toEqual([]);
+  });
+
+  it('una celda con un error de sintaxis no obliga a ejecutar el cuaderno entero', () => {
+    // Live compile runs between keystrokes: `E = Hs *` is half a line.
+    const reads = documentReads(['E = Hs *', 'print(T)'], ['E']);
+    expect(reads).not.toBe(null);
+    expect(sorted(reads)).toEqual(expect.arrayContaining(['E', 'Hs', 'T']));
+    // What truly cannot be followed still says so.
+    expect(documentReads(['exec("x = 1")'], [])).toBe(null);
   });
 });

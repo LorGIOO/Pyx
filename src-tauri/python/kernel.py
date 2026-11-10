@@ -3545,7 +3545,11 @@ def _star_names(mods):
 _NB_STAGE = {}       # notebook key -> {"source", "when", "label", "items": {name: item}}
 _NB_APPLIED = {}     # notebook key -> {name: hash last applied}
 _JUPYTER_SEEN = {}   # notebook key -> connection file that served it last
-_JUPYTER_TAKEN = {}  # notebook key -> (kernel run id, names taken) of the last copy
+_BUSY_KERNELS = {}   # connection file -> monotonic time until which it counts as busy
+# What the last search for a notebook's kernel could not settle: a kernel that
+# did not answer, a connection file too new to call dead. While either holds,
+# "Jupyter is not there" may stop being true without any file changing.
+_JUPYTER_LAST = {"busy": False, "unsure": False, "error": ""}
 
 # Evaluated in the user's Jupyter kernel (user_expressions: nothing runs, no
 # history): which notebook it serves — VS Code, JupyterLab/Notebook — and its
@@ -3697,7 +3701,11 @@ def _dumps(v):
         else:
             sys.modules[_REB] = had
 
-t_end = time.perf_counter() + BUDGET
+# The optional extras stop at a total SIZE: the same ones every time. (They
+# used to stop after 0.3 s, so which ones a snapshot held depended on how busy
+# the machine was that instant.) The clock is only a safety net.
+spent = 0
+t_end = time.perf_counter() + 5.0
 SKIP = {"In", "Out", "get_ipython", "exit", "quit", "display"}
 
 def _src_deps(src):
@@ -3747,7 +3755,7 @@ while True:
         continue
     seen.add(n)
     extra = role == "extra"
-    if extra and time.perf_counter() > t_end:
+    if extra and (spent > BUDGET or time.perf_counter() > t_end):
         continue
     if n not in NS:
         if role == "need" and not hasattr(builtins, n):
@@ -3779,11 +3787,16 @@ while True:
                 continue
             b, fn_names = _dumps(v)
         except Exception as e:
-            if role == "need":  # what a function only uses: the builtin may serve
+            # What a function only USES is reported too (it used to vanish, and
+            # the function then failed with a NameError nobody could explain)
+            # — unless a builtin of that name serves (IPython's own `open`).
+            if role == "need" or (role == "dep" and not hasattr(builtins, n)):
                 res[n] = {"error": "%s: %s" % (type(e).__name__, e), "role": role}
             continue
         if extra and len(b) > LIMIT:
             continue
+        if extra:
+            spent += len(b)
         h = hashlib.blake2b(b, digest_size=16).hexdigest()
         deps = _pickle_deps(b) + fn_names
         if getattr(type(v), "__module__", None) == "__main__":
@@ -3816,8 +3829,8 @@ _JUPYTER_TAKE = _NB_COLLECT
 # per value and in total time, so a compile never pays for them.
 # 2: items carry what they need ("deps"): a function travels with its helpers.
 _NB_FORMAT = 2
-_NB_EXTRA_LIMIT = 1_000_000  # bytes per value
-_NB_EXTRA_BUDGET = 0.3       # seconds for all of them
+_NB_EXTRA_LIMIT = 1_000_000     # bytes per value
+_NB_EXTRA_BUDGET = 16_000_000   # bytes for all of them
 
 
 def _pyx_data_dir():
@@ -4013,6 +4026,7 @@ def _jupyter_runtime_dirs():
 
 
 _DEAD_KERNELS = {}  # connection file -> its mtime when its port was found closed
+_SLOW_KERNELS = {}  # connection file (new, port not answering yet) -> monotonic time of its next probe
 
 
 def _live_connection_files(files):
@@ -4030,6 +4044,11 @@ def _live_connection_files(files):
         except OSError:
             continue
         if _DEAD_KERNELS.get(path) == mt:
+            continue
+        if _SLOW_KERNELS.get(path, 0) > time.monotonic():
+            # A new file whose port did not answer a moment ago: asked again
+            # every few seconds, not on every compile (each try costs 250 ms).
+            _JUPYTER_LAST["unsure"] = True
             continue
         try:
             with open(path, encoding="utf-8") as fh:
@@ -4056,6 +4075,9 @@ def _live_connection_files(files):
             path, mt = pending.pop(s)
             ok = s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0 and s not in x
             (alive.add(path) if ok else _DEAD_KERNELS.__setitem__(path, mt))
+            if ok and time.time() - mt < 60:
+                # Just started: it may not know yet which notebook it serves.
+                _JUPYTER_LAST["unsure"] = True
             s.close()
     for s, (path, mt) in pending.items():
         # No answer in 250 ms: a port nobody listens on (Windows retries the
@@ -4063,6 +4085,9 @@ def _live_connection_files(files):
         # brand new, a kernel that may still be starting.
         if time.time() - mt > 60:
             _DEAD_KERNELS[path] = mt
+        else:
+            _JUPYTER_LAST["unsure"] = True
+            _SLOW_KERNELS[path] = time.monotonic() + 3.0
         s.close()
     return [p for p in files if p in alive]
 
@@ -4075,6 +4100,7 @@ def _jupyter_find(nb):
     runs in them: the question is a silent user expression."""
     key = _nb_key(nb)
     folder = os.path.normcase(os.path.dirname(key))
+    _JUPYTER_LAST.update(busy=False, unsure=False, error="")
     files = []
     for rt in _jupyter_runtime_dirs():
         try:
@@ -4108,15 +4134,29 @@ def _jupyter_find(nb):
             client = _JupyterShell(conn, 0.05)  # a kernel that is gone refuses at once
             mid = client.execute("", {"p": _JUPYTER_PROBE, "n": _JUPYTER_COUNT,
                                       "x": "__import__('sys').executable"})
-            reply = client.reply(mid, 1.5)
+            # A kernel in the middle of a long cell does not answer: the first
+            # time that costs 1.5 s, and it is then remembered as busy — every
+            # compile of the next seconds asks it with a short wait instead of
+            # paying the 1.5 s again (live mode compiles on every pause).
+            until = _BUSY_KERNELS.get(path)
+            reply = client.reply(mid, 0.2 if until and time.monotonic() < until else 1.5)
             if reply is None:
                 busy = True
+                _JUPYTER_LAST["busy"] = True
+                _BUSY_KERNELS[path] = time.monotonic() + 10.0
                 client.close()
                 continue
+            _BUSY_KERNELS.pop(path, None)
             data = ((reply.get("content") or {}).get("user_expressions") or {}).get("p") or {}
             text = ast.literal_eval((data.get("data") or {}).get("text/plain", "''"))
             served, _sep, cwd = str(text).partition(chr(10))
-            ran = ((reply.get("content") or {}).get("user_expressions") or {}).get("n") or {}
+            if not served:
+                # A kernel that does not say (yet) which notebook it runs — VS
+                # Code tells it on the first cell — may turn out to be this
+                # one's at any moment, and no file changes when it does: the
+                # app must keep asking.
+                _JUPYTER_LAST["unsure"] = True
+            ran =((reply.get("content") or {}).get("user_expressions") or {}).get("n") or {}
             if ran.get("status") == "ok":
                 client.run_id = "%s#%s" % (path, (ran.get("data") or {}).get("text/plain", ""))
             exe = ((reply.get("content") or {}).get("user_expressions") or {}).get("x") or {}
@@ -4125,7 +4165,12 @@ def _jupyter_find(nb):
                     client.python = str(ast.literal_eval((exe.get("data") or {}).get("text/plain", "''")))
                 except Exception:
                     client.python = ""
-        except Exception:
+        except Exception as e:
+            # Not this notebook's kernel as far as anyone can tell — but said
+            # (it used to be skipped in silence): the log shows it when the
+            # notebook then turns out "not open in Jupyter".
+            _JUPYTER_LAST["unsure"] = True
+            _JUPYTER_LAST["error"] = "%s: %s" % (type(e).__name__, _safe_str(e))
             if client is not None:
                 client.close()
             continue
@@ -4144,6 +4189,8 @@ def _jupyter_find(nb):
         return by_cwd[0][0], "Jupyter"
     for other, _p in by_cwd:
         other.close()
+    if not busy and _JUPYTER_LAST["error"]:
+        return None, "no se pudo preguntar a un kernel de Jupyter (%s)" % _JUPYTER_LAST["error"]
     return None, ("su kernel de Jupyter está ocupado" if busy
                   else "no está abierto en Jupyter")
 
@@ -4154,6 +4201,36 @@ def _nb_write_meta(d, meta):
     with open(tmp, "w", encoding="utf-8") as fh:
         _json.dump(meta, fh)
     os.replace(tmp, os.path.join(d, "meta.json"))
+
+
+def _nb_stage_of(meta):
+    """What a snapshot on disk stages: its values, where they came from, the
+    Python that wrote them and (Jupyter's) the kernel run they were copied at."""
+    return {"source": meta.get("source") or "pyx", "label": meta.get("label") or "",
+            "when": meta.get("when") or 0, "items": meta.get("items") or {}, "snapshot": True,
+            "python": meta.get("python") or "", "codeHash": meta.get("codeHash"),
+            "takenHash": meta.get("takenHash"), "run": meta.get("run") or "",
+            "taken": meta.get("taken") or []}
+
+
+def _nb_stage_from_disk(nb):
+    """The notebook's snapshot as a stage, or None (none, or an older format)."""
+    import json as _json
+    try:
+        with open(os.path.join(_nb_dir(nb), "meta.json"), encoding="utf-8") as fh:
+            meta = _json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(meta, dict) or (meta.get("v") or 1) < _NB_FORMAT:
+        return None
+    return _nb_stage_of(meta)
+
+
+def _nb_jupyter_meta(nb, st):
+    return {"v": _NB_FORMAT, "notebook": nb, "codeHash": st.get("codeHash"), "takenHash": st.get("takenHash"),
+            "source": "jupyter", "label": st.get("label") or "", "when": st.get("when") or time.time(),
+            "python": st.get("python") or "", "run": st.get("run") or "", "taken": sorted(st.get("taken") or []),
+            "items": st["items"]}
 
 
 def _nb_tidy(d, keep):
@@ -4181,33 +4258,40 @@ def _nb_fetch(req):
     code_hash = req.get("codeHash")
     key = _nb_key(nb)
     d = _nb_dir(nb)
-    staged = _NB_STAGE.get(key)
-    if not staged:
-        # First fetch since Pyx started: the values on disk from last time
-        # (whatever their code), so Jupyter only writes what changed since.
-        try:
-            with open(os.path.join(d, "meta.json"), encoding="utf-8") as fh:
-                staged = {"items": (_json.load(fh) or {}).get("items") or {}}
-        except Exception:
-            staged = {}
+    # What is staged — or, in a kernel process that has staged nothing yet (the
+    # first fetch since Pyx started, or since the app REPLACED the process),
+    # what the previous one left on disk: Jupyter then only writes what changed.
+    staged = _NB_STAGE.get(key) or _nb_stage_from_disk(nb) or {}
     t0 = time.perf_counter()
-    kc, label = _jupyter_find(nb) if req.get("live", True) else (None, "")
+    searched = bool(req.get("live", True))
+    kc, label = _jupyter_find(nb) if searched else (None, "")
     why = label if kc is None else ""
     live = False
+    watch = [os.path.join(d, "meta.json")] + _jupyter_runtime_dirs()
+    # While none of those files or folders changes, the answer stands (the app
+    # then does not even ask) — unless a kernel was busy, failed to answer or
+    # is still starting: that changes without touching any file.
+    settled = bool(searched and kc is None and not _JUPYTER_LAST["busy"] and not _JUPYTER_LAST["unsure"]
+                   and why in ("Jupyter no está abierto", "no está abierto en Jupyter"))
     if kc is not None:
         try:
-            cur = _NB_STAGE.get(key) or {}
-            prev = _JUPYTER_TAKEN.get(key)
-            if (kc.run_id and prev and prev[0] == kc.run_id and set(names) | set(extra) <= prev[1]
-                    and cur.get("source") == "jupyter" and not cur.get("snapshot")
+            cur = staged
+            same_run = bool(kc.run_id) and cur.get("source") == "jupyter" and cur.get("run") == kc.run_id
+            if (same_run and set(names) | set(extra) <= set(cur.get("taken") or [])
                     and all(os.path.exists(it["path"]) for it in cur["items"].values() if it.get("path"))):
                 # Nothing has run in Jupyter since the last copy: its values are
-                # the ones staged here. No pickling, no files: just the question.
+                # the ones held here. No pickling, no files: just the question.
+                # (Known from the snapshot itself, so a new kernel process of
+                # Pyx does not copy everything again.)
+                cur = dict(cur, snapshot=False, label=cur.get("label") or label)
                 if cur.get("codeHash") != code_hash:
+                    # The notebook's FILE changed and nothing ran there: these
+                    # values are still what Jupyter holds, and the snapshot
+                    # follows the file — but `takenHash` remembers the code
+                    # they were taken with, so the document can say so.
                     cur["codeHash"] = code_hash
-                    _nb_write_meta(d, {"v": _NB_FORMAT, "notebook": nb, "codeHash": code_hash, "source": "jupyter",
-                                       "label": cur.get("label") or label, "when": cur.get("when") or time.time(),
-                                       "items": cur["items"]})
+                    _nb_write_meta(d, _nb_jupyter_meta(nb, cur))
+                _NB_STAGE[key] = cur
                 live = True
             else:
                 os.makedirs(d, exist_ok=True)
@@ -4223,7 +4307,9 @@ def _nb_fetch(req):
                     _JUPYTER_TAKE, names, extra, known, d, _NB_EXTRA_LIMIT, _NB_EXTRA_BUDGET,
                     [c for c in (req.get("cells") or []) if isinstance(c, str)])
                 mid = kc.execute(code)
-                reply = kc.reply(mid, float(req.get("timeout") or 600))
+                # Long enough for a big DataFrame; not the ten minutes it used
+                # to wait for a kernel that started a long cell meanwhile.
+                reply = kc.reply(mid, float(req.get("timeout") or os.environ.get("PYX_NB_TIMEOUT") or 120))
                 status = ((reply or {}).get("content") or {}).get("status")
                 if status != "ok":
                     raise RuntimeError("Jupyter no pudo entregar los valores (%s)" % (
@@ -4239,13 +4325,26 @@ def _nb_fetch(req):
                                     "deps": r.get("deps") or [], "role": r.get("role")}
                     else:
                         items[n] = r
+                taken = set(names) | set(extra)
+                if same_run:
+                    # Nothing ran in Jupyter since the previous copy: what it
+                    # took for ANOTHER document linked to this notebook (or for
+                    # a \py{} since removed) is still current. Dropping it made
+                    # two documents throw away each other's values in turn.
+                    for n, it in (cur.get("items") or {}).items():
+                        if n not in items and _nb_usable(it) and (not it.get("path") or os.path.exists(it["path"])):
+                            items[n] = it
+                    taken |= set(cur.get("taken") or [])
                 now = time.time()
                 _NB_STAGE[key] = {"source": "jupyter", "label": label, "when": now, "items": items,
-                                  "python": kc.python,
-                                  "codeHash": code_hash}
-                _JUPYTER_TAKEN[key] = (kc.run_id, frozenset(names) | frozenset(extra))
-                _nb_write_meta(d, {"v": _NB_FORMAT, "notebook": nb, "codeHash": code_hash, "source": "jupyter",
-                                   "label": label, "when": now, "items": items})
+                                  "python": kc.python, "run": kc.run_id or "", "taken": sorted(taken),
+                                  "codeHash": code_hash,
+                                  # The file's code when this run of the kernel
+                                  # was first seen: a later copy of the SAME run
+                                  # does not make an edited file "the code these
+                                  # values came from".
+                                  "takenHash": (cur.get("takenHash") if same_run else None) or code_hash}
+                _nb_write_meta(d, _nb_jupyter_meta(nb, _NB_STAGE[key]))
                 _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
                 live = True
         except Exception as e:
@@ -4290,13 +4389,20 @@ def _nb_fetch(req):
                 if changed:
                     snap_why = "han cambiado los datos que lee (%s)" % os.path.basename(p)
                     break
+        watch += [r[0] for r in (meta or {}).get("reads") or [] if isinstance(r, list) and r]
         if snap_why:
-            return {"source": None, "reason": "%s y %s" % (why, snap_why) if why else snap_why}
-        _NB_STAGE[key] = {"source": meta.get("source") or "pyx", "label": meta.get("label") or "",
-                          "when": meta.get("when") or 0, "items": snap, "snapshot": True}
+            return {"source": None, "reason": "%s y %s" % (why, snap_why) if why else snap_why,
+                    "watch": watch, "cacheable": settled}
+        _NB_STAGE[key] = _nb_stage_of(meta)
     st = _NB_STAGE[key]
     items = st["items"]
     return {
+        # Taken from Jupyter with OTHER code than the notebook's file has now
+        # (edited since, not run there): the values may be behind the code.
+        "codeChanged": bool(st.get("source") == "jupyter" and st.get("takenHash") and code_hash
+                            and st["takenHash"] != code_hash),
+        "watch": watch,
+        "cacheable": settled and not live,
         "source": "snapshot" if st.get("snapshot") else st["source"],
         "from": st["source"], "label": st.get("label") or "", "when": st.get("when") or 0,
         "names": {n: (it.get("hash") or ("module:" + it["module"] if it.get("module") else "")) for n, it in items.items()
@@ -4474,7 +4580,13 @@ def _nb_apply(req):
     key = _nb_key(nb)
     st = _NB_STAGE.get(key)
     if not st:
-        return {"ok": False, "error": "los valores del cuaderno no están preparados"}
+        # A kernel process that staged nothing: the app replaces the process
+        # when a run leaves it unusable (and may do so between its fetch and
+        # this apply), and what the previous one staged is on disk.
+        st = _nb_stage_from_disk(nb)
+        if not st:
+            return {"ok": False, "error": "los valores del cuaderno no están preparados"}
+        _NB_STAGE[key] = st
     items = st["items"]
     names = [n for n in (req.get("names") or []) if _nb_usable(items.get(n))]
     todo = _nb_closure(items, names)
@@ -4488,9 +4600,27 @@ def _nb_apply(req):
     errors = _nb_load_items(items, todo, fns, "<%s>" % os.path.basename(nb))
     # Something a function only USES that could not travel (IPython's own
     # `open`, say) is not the document's problem: the builtin serves.
+    # ...but it is SAID (it used to vanish): when the function is then called
+    # and fails with a NameError, the log already names what did not arrive.
+    dep_errors = {}
     for n in list(errors):
         if (items.get(n) or {}).get("role") == "dep" and n not in names:
-            del errors[n]
+            e = errors.pop(n)
+            if not hasattr(builtins, n):
+                dep_errors[n] = e
+    # ...and what could not even be COPIED from Jupyter (not picklable): the
+    # same story one step earlier.
+    walk, met = list(todo), set(todo)
+    while walk:
+        for dn in items[walk.pop()].get("deps") or []:
+            if dn in met:
+                continue
+            met.add(dn)
+            it = items.get(dn) or {}
+            if it.get("error") and dn not in names and not hasattr(builtins, dn):
+                dep_errors.setdefault(dn, it["error"])
+            elif _nb_usable(it):
+                walk.append(dn)
     last = _NB_APPLIED.setdefault(key, {})
     unchanged, given = [], {}
     for n in names:
@@ -4512,9 +4642,13 @@ def _nb_apply(req):
     if errors and other and os.path.normcase(os.path.abspath(other)) != os.path.normcase(os.path.abspath(sys.executable)):
         # A value saved by one Python (numpy 2, pandas 2.2…) does not always
         # load in another: say which two are involved.
-        hint = ("Jupyter usa %s y Pyx usa %s: si un valor no se puede cargar, elige en Pyx el mismo "
-                "intérprete que el cuaderno (pestaña Python)." % (other, sys.executable))
-    return {"ok": True, "unchanged": unchanged, "errors": errors, "hint": hint}
+        if st.get("source") == "jupyter":
+            hint = ("Jupyter usa %s y Pyx usa %s: si un valor no se puede cargar, elige en Pyx el mismo "
+                    "intérprete que el cuaderno (pestaña Python)." % (other, sys.executable))
+        else:
+            hint = ("Estos valores se guardaron con %s y Pyx usa ahora %s: vuelve a compilar con «Ejecutar todo» "
+                    "para calcularlos con el intérprete actual." % (other, sys.executable))
+    return {"ok": True, "unchanged": unchanged, "errors": errors, "depErrors": dep_errors, "hint": hint}
 
 
 def _nb_collect(ns, names, extra, out_dir, known=None, cells=None):
@@ -4580,14 +4714,14 @@ def _nb_save(req):
     # snapshot computed from a spreadsheet that has changed since is stale.
     reads = [r for r in (req.get("reads") or []) if isinstance(r, list) and len(r) == 3]
     meta = {"v": _NB_FORMAT, "notebook": nb, "codeHash": req.get("codeHash"), "source": "pyx", "label": "Pyx",
-            "when": time.time(), "items": items, "reads": reads}
+            "when": time.time(), "items": items, "reads": reads, "python": sys.executable}
     # The cells these values came from (full snapshot): _nb_restore hands
     # them back so only the cells that change run again.
     if isinstance(req.get("ledger"), list):
         meta["ledger"] = req["ledger"]
     _nb_write_meta(d, meta)
     _nb_tidy(d, {it["path"] for it in items.values() if it.get("path")})
-    _NB_STAGE[key] = {"source": "pyx", "label": "Pyx", "when": meta["when"], "items": items, "snapshot": True}
+    _NB_STAGE[key] = _nb_stage_of(meta)
     _NB_APPLIED[key] = {n: _nb_token(items, n) for n, it in items.items() if _nb_usable(it)}
     return {"saved": sorted(n for n, it in items.items() if _nb_usable(it) and it.get("role") != "dep"),
             "errors": {n: it["error"] for n, it in items.items() if it.get("error")}}
@@ -4654,8 +4788,14 @@ def _nblink(req):
         if op == "capture":
             return _scope_capture(req)
         return {"error": "operación desconocida: %s" % op}
+    except KeyboardInterrupt:
+        # «Detener» while a notebook's values were on their way: said as what
+        # it is, and the kernel lives on.
+        return {"source": None, "ok": False, "interrupted": True, "reason": "interrumpido",
+                "error": "interrumpido por el usuario"}
     except BaseException as e:
-        return {"source": None, "ok": False, "error": "%s: %s" % (type(e).__name__, _safe_str(e))}
+        return {"source": None, "ok": False, "reason": "%s: %s" % (type(e).__name__, _safe_str(e)),
+                "error": "%s: %s" % (type(e).__name__, _safe_str(e))}
     finally:
         _STDOUT.point_to(_BG_OUT)
         _STDERR.point_to(_BG_ERR)

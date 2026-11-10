@@ -28,9 +28,15 @@ export function createExecState() {
   let ran = new Map();
   let immutable = new Set();
 
-  const clear = () => { history = []; ran = new Map(); immutable = new Set(); };
+  // How many times the namespace was emptied or lost: what was put in it
+  // before (a notebook's restored values) is only there within one epoch.
+  let epoch = 0;
+
+  const clear = () => { history = []; ran = new Map(); immutable = new Set(); epoch++; };
 
   return {
+    get epoch() { return epoch; },
+
     /** The kernel was reset: the namespace is empty, and we know it exactly. */
     reset(dir) { clear(); cwd = dir; known = true; },
 

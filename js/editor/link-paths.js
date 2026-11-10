@@ -8,6 +8,7 @@ import { EditorView, Decoration, ViewPlugin } from '@codemirror/view';
 import { state as appState } from '../core/state.js';
 import { pathExists, readBinaryFile, openExternal } from '../core/platform.js';
 import { dirOf, joinPath, baseName } from '../core/paths.js';
+import { resolveLinkPath } from './notebooks.js';
 
 const FILE_CMD =
   /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting|pynotebook|pyfile)\s*(?:\[[^\]]*\])?\{([^{}]+)\}/g;
@@ -34,6 +35,17 @@ async function openHit(hit) {
   // Forward slashes are what LaTeX sources use and what every OS accepts,
   // Windows included. Rewriting them to backslashes made Ctrl+click on an
   // \input a Windows-only feature — on macOS and Linux the path never resolved.
+  if (hit.cmd === 'pynotebook' || hit.cmd === 'pyfile') {
+    // The file the COMPILE would use (root folder first, then this file's;
+    // \pyfile{x} is x.py): Ctrl+click must not open a different one.
+    let root = base;
+    try { root = (await (await import('../compile/compiler.js')).activeRootDir()) || base; } catch (_) { /* keep base */ }
+    const c = await resolveLinkPath(root, hit.path, hit.cmd, base);
+    if (!c || !(await pathExists(c))) return;
+    if (/\.ipynb$/i.test(c)) openExternal(c);
+    else await (await import('../solid/stores/docStore.js')).openPath(c);
+    return;
+  }
   let p = hit.path.trim();
   const isAbs = /^([a-zA-Z]:[\\/]|\/)/.test(p) || p.startsWith('\\\\');
   if (!isAbs) {
@@ -44,7 +56,6 @@ async function openHit(hit) {
   if (!/\.[a-z0-9]+$/i.test(p)) {
     if (hit.cmd === 'includegraphics') candidates.push(p + '.pdf', p + '.png', p + '.jpg', p + '.jpeg');
     else if (hit.cmd === 'bibliography' || hit.cmd === 'addbibresource') candidates.push(p + '.bib');
-    else if (hit.cmd === 'pynotebook' || hit.cmd === 'pyfile') candidates.push(p + '.ipynb', p + '.py');
     else candidates.push(p + '.tex', p + '.pltx');
   }
   for (const c of candidates) {

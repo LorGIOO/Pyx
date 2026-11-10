@@ -20,6 +20,7 @@ import { openNewDoc } from './solid/components/NewDocDialog.jsx';
 import { closeDialogs } from './solid/stores/dialogStore.js';
 import { lastArea, setPdfSearchOpen, setAuxOpen } from './solid/stores/previewStore.js';
 import { ensureKernel, restartKernel } from './editor/cell-runner.js';
+import { startLinkWatch } from './editor/link-watch.js';
 import {
   initSettings, general, gv, setGeneral, setSession, getSession,
 } from './solid/stores/settingsStore.js';
@@ -95,6 +96,9 @@ if (viewerBoot) {
   // typing pauses, the document compiles in the background without blocking.
   setChangeHandler(() => scheduleLiveCompile());
   if (general.liveCompile === false) state.liveCompile = false;
+  // A linked notebook run in Jupyter, or a linked script saved from another
+  // editor, is a change too — one nobody types here (link-watch.js).
+  startLinkWatch(() => scheduleLiveCompile());
   // When the detached viewer window closes, bring the in-app pane back with
   // the latest PDF (compiles were updating the auxiliary window meanwhile).
   onAppEvent('viewer:closed', () => {

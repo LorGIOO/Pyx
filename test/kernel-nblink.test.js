@@ -147,6 +147,48 @@ describe.skipIf(!python)('\\pynotebook: los valores del cuaderno, sin ejecutarlo
     expect(tail(no.watch[0])).toBe('meta.json');
   });
 
+  it('una función de un archivo vinculado lee sus rutas relativas desde SU carpeta, la llame quien la llame', async () => {
+    // The notebook lives in hidro/ and reads "nivel.csv" next to it; the
+    // document is in the folder above.
+    const sub = join(base, 'hidro');
+    mkdirSync(sub);
+    writeFileSync(join(sub, 'nivel.csv'), '7\n');
+    const nb2 = join(sub, 'hidro.ipynb');
+    // Its cells run in its folder (as the app does: runCwd)…
+    const def = await send({
+      code: 'veces = [0]\ndef cargar():\n    veces[0] += 1\n    return open("nivel.csv").read().strip()',
+      cwd: sub, reset: true,
+    });
+    expect(def.ok).toBe(true);
+    // …and a cell of the DOCUMENT calls the function from the document's folder.
+    const call = await send({ code: 'nivel = cargar()' });
+    expect(call.ok).toBe(true);
+    expect(await value('nivel')).toBe('7');
+    // The file is among what the cell read: a change to it re-runs the cell.
+    expect(call.reads.map((r) => r[0].replace(/\\/g, '/').split('/').pop())).toContain('nivel.csv');
+    // A \py{} too, and without evaluating the expression twice.
+    expect(await value('cargar()')).toBe('7');
+    expect(await value('veces[0]')).toBe('2');
+    // A file of the working folder always wins; one that is nowhere still fails.
+    writeFileSync(join(base, 'nivel.csv'), '9\n');
+    expect(await value('cargar()')).toBe('9');
+    rmSync(join(base, 'nivel.csv'));
+    const missing = await send({ code: 'open("no-existe.csv")' });
+    expect(missing.ok).toBe(false);
+    expect(JSON.stringify(missing.error)).toMatch(/FileNotFoundError/);
+
+    // The same with the values LINKED (nothing of the notebook ran here).
+    const s = await send({ nblink: 'save', notebook: nb2, names: ['cargar', 'veces'], codeHash: 'h1', reads: [] });
+    expect(s.saved).toContain('cargar');
+    await send({ code: 'pass', reset: true });
+    const r = await send({ nblink: 'fetch', notebook: nb2, names: ['cargar'], codeHash: 'h1' });
+    expect(r.source).toBe('snapshot');
+    expect((await send({ nblink: 'apply', notebook: nb2, names: Object.keys(r.names) })).ok).toBe(true);
+    const linked = await send({ code: 'nivel2 = cargar()' });
+    expect(linked.ok).toBe(true);
+    expect(await value('nivel2')).toBe('7');
+  });
+
   it('todo queda en la carpeta privada de la prueba', () => {
     const dir = process.platform === 'win32' ? join(base, 'local', 'Pyx', 'jupyter')
       : process.platform === 'darwin' ? join(base, 'Library', 'Application Support', 'Pyx', 'jupyter')

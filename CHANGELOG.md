@@ -77,6 +77,11 @@ Todas las versiones publicadas de Pyx. El formato sigue
   - Un archivo de datos (Excel, CSV…) leído por un script vinculado se vigila
     también cuando el script se ejecutó en Pyx, no solo cuando sus valores
     venían de una copia guardada.
+  - Una función de un cuaderno o script que está en otra carpeta y abre un
+    archivo con ruta relativa (`open("datos.csv")`, `pd.read_csv("datos.csv")`)
+    lo encuentra en SU carpeta aunque la llame una celda del documento o un
+    `\py{}`, sin evaluar nada dos veces. Un archivo con ese nombre en la
+    carpeta de trabajo sigue teniendo preferencia.
 
 ### Más rápido
 

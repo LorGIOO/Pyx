@@ -1937,6 +1937,10 @@ _cell_seq = 0
 _last_cell_file = ""  # filename of the cell being executed (for error mapping)
 _registered = []      # cell filenames currently held in linecache
 _REGISTERED_MAX = 200
+# Code filename -> the folder that code ran in (a cell), or was linked from (a
+# notebook's functions). See _home_path: a function reads its relative paths
+# from there when the working folder does not have them.
+_CODE_HOME = {}
 
 
 def _register_cell_source(filename, code):
@@ -1958,6 +1962,7 @@ def _register_cell_source(filename, code):
         dead = [f for f in _registered if f not in live and f != filename][:excess]
         for f in dead:
             linecache.cache.pop(f, None)
+            _CODE_HOME.pop(f, None)
         gone = set(dead)
         _registered[:] = [f for f in _registered if f not in gone]
 
@@ -2172,6 +2177,10 @@ def _run(code):
     filename = "<calc-cell-%d>" % _cell_seq
     _last_cell_file = filename
     _register_cell_source(filename, code)
+    try:
+        _CODE_HOME[filename] = os.getcwd()
+    except OSError:
+        pass
 
     # Re-apply the adaptations in case a library slipped in unpatched.
     _patch_mpl_show()
@@ -3366,8 +3375,10 @@ def _evals(req):
                 except FileNotFoundError:
                     # A function of a linked notebook that opens a file by a
                     # relative path ("Datos.csv") ran from the DOCUMENT's
-                    # folder; in Jupyter it runs from the notebook's. Try
-                    # there, as it would.
+                    # folder; in Jupyter it runs from the notebook's. What
+                    # goes through open() already found it there (_home_path)
+                    # without running anything twice; this is for the readers
+                    # that do not (pyarrow, h5py): try there, as it would.
                     value = None
                     here = os.getcwd()
                     for d in _linked_dirs():
@@ -4563,6 +4574,7 @@ def _nb_restore(req):
         sys.path.append(folder)
     # Run-mode semantics: the notebook's cells live in the document's
     # namespace (as if they had just run there).
+    _CODE_HOME["<%s>" % os.path.basename(nb)] = folder
     errors = _nb_load_items(items, todo, NS, "<%s>" % os.path.basename(nb))
     loaded = [n for n in todo if n not in errors and n in NS]
     return {"ok": True, "ledger": ledger, "loaded": loaded, "errors": errors,
@@ -4597,6 +4609,7 @@ def _nb_apply(req):
         sys.path.append(folder)
     fns = {"__builtins__": builtins, "__name__": "__main__"}
     _NB_NS[key] = fns
+    _CODE_HOME["<%s>" % os.path.basename(nb)] = folder
     errors = _nb_load_items(items, todo, fns, "<%s>" % os.path.basename(nb))
     # Something a function only USES that could not travel (IPython's own
     # `open`, say) is not the document's problem: the builtin serves.
@@ -5144,6 +5157,51 @@ def _note_read(file):
     _READS[p] = (st.st_mtime_ns // 1_000_000, st.st_size)
 
 
+def _home_path(file, mode):
+    """A relative path opened for reading that is not in the working folder:
+    where it is in the folder of the code that asks for it, or None.
+
+    A linked notebook's `cargar()` reads "Datos.csv" from the notebook's own
+    folder — in Jupyter that IS the working folder. Called later from a cell
+    of the document (or a \\py{}), it ran in the document's folder and failed
+    with FileNotFoundError; only \\py{} was helped, by evaluating the whole
+    expression AGAIN in every linked folder (twice its side effects). So the
+    callers are walked: the first one whose code came from another folder — a
+    cell that ran there (_CODE_HOME), a linked file's own namespace (_NB_NS) —
+    and has the file, gives the path. Only ever after the normal open failed:
+    a file in the working folder always wins."""
+    if not isinstance(mode, str) or any(c in mode for c in "wax+"):
+        return None
+    try:
+        rel = os.fspath(file)
+    except TypeError:
+        return None
+    if not isinstance(rel, str) or not rel or os.path.splitdrive(rel)[0] or rel[0] in "/\\":
+        return None
+    try:
+        here = os.path.normcase(os.getcwd())
+    except OSError:
+        here = None
+    spaces = {id(g): os.path.dirname(k) for k, g in list(_NB_NS.items())}
+    tried = set()
+    frame = sys._getframe(2)
+    try:
+        for _ in range(200):
+            if frame is None:
+                break
+            home = _CODE_HOME.get(frame.f_code.co_filename) or spaces.get(id(frame.f_globals))
+            if home and home not in tried:
+                tried.add(home)
+                if os.path.normcase(home) != here:
+                    found = os.path.join(home, rel)
+                    if os.path.isfile(found):
+                        return found
+            frame = frame.f_back
+    finally:
+        del frame
+    return None
+
+
 def _install_read_tracking():
     global _ORIG_OPEN
     import builtins
@@ -5152,7 +5210,14 @@ def _install_read_tracking():
     _ORIG_OPEN = builtins.open
 
     def open(file, mode="r", *args, **kwargs):  # noqa: A001 - the builtin's name
-        f = _ORIG_OPEN(file, mode, *args, **kwargs)
+        try:
+            f = _ORIG_OPEN(file, mode, *args, **kwargs)
+        except FileNotFoundError:
+            found = _home_path(file, mode)
+            if found is None:
+                raise
+            f = _ORIG_OPEN(found, mode, *args, **kwargs)
+            file = found
         if _READS_ON[0] and isinstance(mode, str) and not any(c in mode for c in "wax+"):
             try:
                 _note_read(file)

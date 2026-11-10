@@ -41,7 +41,7 @@ import {
 } from './cell-parse.js';
 import {
   runCellCode, withKernelLock, interruptKernel, recordRender, takeRestartReason,
-  nsRecord, nsFail, nsMarkStale, nsIsStale, nsPlan, nsImmutable, execKey, programOf, forgetNames,
+  nsRecord, nsFail, nsMarkStale, nsDrop, nsIsStale, nsPlan, nsImmutable, execKey, programOf, forgetNames,
   ensureStarNames, resolveNotebook, runLinkEntry, saveNotebookValues, nsHasRun,
 } from './cell-runner.js';
 import { analyzePython } from './py-deps.js';
@@ -397,6 +397,7 @@ async function runOne(view, cell) {
     let nbFail = null;
     const out = await executePlan(plan, {
       forget: forgetNames,
+      dropped: nsDrop,
       run: async (i, watch) => {
         const res = await runEntry(docId, entries[i], cwd, meta(i, watch), prog);
         if (res && res.ok && res.render && !entries[i].notebook) render = true;
@@ -672,6 +673,7 @@ async function runAllCellsHeld(view, { force = false, cwd } = {}) {
   let nbFail = null;
   const out = await executePlan(plan, {
     forget: forgetNames,
+    dropped: nsDrop,
     run: async (i, watch) => {
       const res = await runEntry(docId, entries[i], dir, { key: entries[i].key, D: plan.effects[i].D, watch }, prog);
       if (res && res.ok === false && entries[i].notebook) nbFail = { entry: entries[i], res, at: i };

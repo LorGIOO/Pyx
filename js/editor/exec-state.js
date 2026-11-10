@@ -72,6 +72,12 @@ export function createExecState() {
 
     isStale(key) { const r = ran.get(key); return !!(r && r.stale); },
 
+    /** Cells that are gone from the program and whose names were deleted (or
+     *  re-created by what defines them now): nothing of them is left in the
+     *  namespace, so nothing of them stays here. The history keeps them — the
+     *  exact rule must still see that they ran. */
+    drop(keys) { for (const k of keys) ran.delete(k); },
+
     /** The kernel's latest list of names bound to immutable values. */
     setImmutable(names) { if (Array.isArray(names)) immutable = new Set(names); },
 

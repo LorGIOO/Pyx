@@ -12,7 +12,7 @@ import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
 import { docIdOf } from '../editor/doc-id.js';
 import {
-  runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, interruptKernel, releaseKernelLock,
+  runCellCode, evalExpressions, withKernelLock, nsReads, nsPlan, nsMarkStale, nsDrop, interruptKernel, releaseKernelLock,
   HANDCALCS_MAGIC, cachedRender, renderKnown, prewarmModules, takeRestartReason,
   execKey, programOf, forgetNames, ensureStarNames, resolveNotebook, runLinkEntry,
   saveNotebookValues, notebookNote, nsHasRun, captureScope, scopeCurrent, takeLinkProblems,
@@ -1213,6 +1213,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         const out = await executePlan(plan, {
           stop: () => cancelRequested, // "Detener": not one more cell
           forget: forgetNames,
+          dropped: nsDrop,
           run: async (i, watch) => {
             beat(); // a cell starting is progress
             const { path, cell, nth, notebook, link } = runOrder[i];
@@ -1355,6 +1356,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       // or saved from another editor, they reach the PDF without typing here.
       watched = [...nbPlans].map(([path, p]) => ({
         path, needed: docNeeds, cwd, codeHash: p.codeHash, linked: p.mode === 'link',
+        // Cells that ran here: the data files they opened are watched too
+        // (linked values bring theirs in the kernel's answer).
+        reads: p.mode === 'run' ? [...new Set(nsReads(p.entries.map((e) => e.key)).map((r) => r.path))] : [],
       }));
     }
     setLinkWatch(watched);

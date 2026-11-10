@@ -284,6 +284,43 @@ describe.skipIf(!python)('\\pynotebook: resolveNotebook con el kernel real', { t
     runner.nsReset(base);
   });
 
+  it('vigilancia: los datos que leyó un archivo EJECUTADO en esta sesión también se vigilan', async () => {
+    const watch = await import('../js/editor/link-watch.js');
+    const { loadNotebook } = await import('../js/editor/notebooks.js');
+    const pyPath = join(nbDir, 'nivel.py');
+    const data = join(nbDir, 'nivel.txt');
+    writeFileSync(data, '3');
+    writeFileSync(pyPath, 'nivel = float(open("nivel.txt").read())\ncota = nivel + 100\n');
+    const reads = new Set(['cota']);
+    await runner.runCellCode('', { cwd: base, reset: true });
+    runner.nsReset(base);
+    const pyCells = await loadNotebook(pyPath);
+    let plan = await runner.resolveNotebook(pyPath, pyCells, reads, base);
+    expect(plan.mode).toBe('run');
+    await runPlan(plan);
+    await runner.saveNotebookValues(pyPath, plan, base);
+    // The next compile of the same session: already here, nothing runs.
+    plan = await runner.resolveNotebook(pyPath, pyCells, reads, base);
+    expect(plan.ranHere).toBe(true);
+    const opened = [...new Set(runner.nsReads(plan.entries.map((e) => e.key)).map((r) => r.path))];
+    expect(opened.map((p) => p.replace(/\\/g, '/').split('/').pop())).toEqual(['nivel.txt']);
+
+    let calls = 0;
+    watch.startLinkWatch(() => { calls++; });
+    watch.stopLinkWatch();
+    // What compiler.js hands over for a file whose cells ran here.
+    watch.setLinkWatch([{ path: pyPath, needed: reads, cwd: base, codeHash: plan.codeHash, linked: false, reads: opened }]);
+    expect(await watch.checkLinks()).toBe(false);
+    expect(await watch.checkLinks()).toBe(false);
+    writeFileSync(data, '40');
+    expect(await watch.checkLinks()).toBe(true);
+    expect(calls).toBe(1);
+    expect(await watch.checkLinks()).toBe(false); // said once
+    expect(calls).toBe(1);
+    watch.setLinkWatch([]);
+    runner.nsReset(base);
+  });
+
   it.skipIf(!hasIpykernel)('con el cuaderno abierto en Jupyter: sus valores, en vivo', async () => {
     const cf = join(runtime, 'kernel-v3prueba.json');
     const jp = spawn(python, [

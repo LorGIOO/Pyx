@@ -29,8 +29,16 @@ const TICK_MS = 1500;
 const LIVE_EVERY_MS = 3000;      // a live Jupyter kernel: asked this often
 const UNSETTLED_EVERY_MS = 5000; // busy / still starting / not answered yet
 
-let links = [];          // what the last compile linked: [{path, needed, cwd, codeHash, linked}]
+let links = [];          // what the last compile linked: [{path, needed, cwd, codeHash, linked, reads}]
 const seen = new Map();  // path -> what the last compile (or the last check) saw
+// The stamps of the data files read by the linked files whose cells RAN HERE
+// (`reads`), as first seen after the compile. Their values are in no answer
+// of the kernel — the first one is taken silently, see `check` — so a
+// spreadsheet saved from Excel never reached the PDF while the session that
+// ran the script was open. Compared with what was FIRST SEEN, not with what
+// the cell read: a cell that reads a file and then writes it would otherwise
+// ask for a compile after every compile.
+let dataSeen = null;
 let timer = null;
 let ticking = false;
 let onChange = null;
@@ -39,10 +47,12 @@ const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** The linked files of the compile that just ended, and what it used of each:
  *  `codeHash` — the code it read; `linked` — it took the values the last
- *  answer described (not its own run of the cells). */
+ *  answer described (not its own run of the cells); `reads` — the data files
+ *  its cells opened when they ran here. */
 export function setLinkWatch(list) {
   links = Array.isArray(list) ? list : [];
   seen.clear();
+  dataSeen = null;
 }
 
 async function stamps(paths) {
@@ -125,13 +135,18 @@ export async function checkLinks() {
   try {
     const list = links;
     const now = Date.now();
-    let changed = false;
+    const dataPaths = [...new Set(list.flatMap((l) => l.reads || []))];
+    const data = dataPaths.length ? await stamps(dataPaths) : null;
+    let changed = !!(data && dataSeen && !same(data, dataSeen));
     for (const link of list) {
       if (links !== list || state.compiling) return false; // a compile took over
       // eslint-disable-next-line no-await-in-loop
       if (await check(link, now)) changed = true;
     }
-    if (changed && links === list && onChange) onChange();
+    if (links !== list) return false;
+    // Noted only now: a look cut short by a compile says it again next time.
+    if (data) dataSeen = data;
+    if (changed && onChange) onChange();
     return changed;
   } catch (_) {
     return false; // a watcher never breaks anything

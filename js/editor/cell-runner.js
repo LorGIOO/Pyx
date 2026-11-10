@@ -71,6 +71,8 @@ export const nsFail = (key, D) => ns.fail(key, D);
 /** These cells' results were computed from inputs that have since changed. */
 export const nsMarkStale = (keys) => ns.markStale(keys);
 export const nsIsStale = (key) => ns.isStale(key);
+/** Removed cells whose names a plan just dealt with (executePlan `dropped`). */
+export const nsDrop = (keys) => ns.drop(keys);
 /** The data files the given cells read, to check against the disk. */
 export const nsReads = (keys) => ns.reads(keys);
 /** Names bound to immutable values, as the kernel last reported them. */

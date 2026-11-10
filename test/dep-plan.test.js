@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { analyzePython } from '../js/editor/py-deps.js';
 import {
-  planRun, downstreamOf, setStarNames, clearStarNames, unknownStarModules,
+  planRun, executePlan, downstreamOf, setStarNames, clearStarNames, unknownStarModules,
 } from '../js/editor/dep-plan.js';
 import { createExecState } from '../js/editor/exec-state.js';
 
@@ -274,6 +274,59 @@ describe('exec-state', () => {
     st.record('c0', p[0].hash, '/p', [], new Set(['a']));
     st.fail('c1', new Set(['b']));
     expect(st.plan(p, { dir: '/p' }).run).toEqual([1]);
+  });
+
+  // A linked script is saved from another editor: its cells are named after
+  // their content, so the old one is "a removed cell" and the new one defines
+  // the same names. The old record used to stay for the whole session, and
+  // EVERY later compile deleted the names and ran the script again.
+  it('a removed cell is dealt with once: the next plan runs nothing', async () => {
+    const st = createExecState();
+    st.reset('/p');
+    const cellOf = (key, code) => ({ key, hash: code, info: analyzePython(code) });
+    const run = async (program) => {
+      const pl = st.plan(program, { dir: '/p' });
+      const forgotten = [];
+      const out = await executePlan(pl, {
+        forget: async (names) => { forgotten.push(...names); },
+        dropped: (keys) => st.drop(keys),
+        run: async (i) => {
+          st.record(program[i].key, program[i].hash, '/p', [], pl.effects[i].D);
+          return { ok: true };
+        },
+      });
+      return { ran: out.ran, forgotten, gone: pl.gone || [] };
+    };
+    const doc = cellOf('doc', 'total = doble + 1');
+    const v1 = [cellOf('py-aaa', 'caudal = 12\ndoble = caudal * 2'), doc];
+    const v2 = [cellOf('py-bbb', 'caudal = 12\ndoble = caudal * 3'), doc];
+    expect((await run(v1)).ran).toEqual([0, 1]);
+    expect((await run(v1)).ran).toEqual([]);
+    const edited = await run(v2);
+    expect(edited.gone).toEqual(['py-aaa']);
+    expect(edited.forgotten.sort()).toEqual(['caudal', 'doble']);
+    expect(edited.ran).toEqual([0, 1]);
+    expect(st.state().ran.has('py-aaa')).toBe(false);
+    const again = await run(v2);
+    expect(again).toEqual({ ran: [], forgotten: [], gone: [] });
+  });
+
+  it('a removed cell whose replacement fails is still let go, and the failed cell runs again', async () => {
+    const st = createExecState();
+    st.reset('/p');
+    st.record('old', 'x = 1', '/p', [], new Set(['x']));
+    const program = [{ key: 'new', hash: 'x = 1 / 0', info: analyzePython('x = 1 / 0') }];
+    const pl = st.plan(program, { dir: '/p' });
+    const out = await executePlan(pl, {
+      forget: async () => {},
+      dropped: (keys) => st.drop(keys),
+      run: async () => { st.fail('new', pl.effects[0].D); return { ok: false }; },
+    });
+    expect(out.ok).toBe(false);
+    const next = st.plan(program, { dir: '/p' });
+    expect(next.gone).toEqual([]);
+    expect(next.forget).toEqual([]);
+    expect(next.run).toEqual([0]);
   });
 });
 

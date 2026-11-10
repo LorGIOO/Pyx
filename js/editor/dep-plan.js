@@ -330,8 +330,16 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
 
   const present = new Set(program.map((c) => c.key));
   // A cell that was run and is gone: its names go, and what read them re-runs.
+  // ONCE: executePlan hands these keys back (`io.dropped`) so the ledger lets
+  // go of them. They used to stay in it for the whole session, and every later
+  // compile deleted their names again and re-ran whatever defines them now — a
+  // script saved from another editor (its cells are named after their content)
+  // or a notebook that Jupyter stopped serving then ran on every compile.
+  const gone = [];
   for (const [key, r] of ran) {
-    if (!present.has(key) && (!owned || owned(key)) && r.D) for (const d of r.D) dropName(d);
+    if (present.has(key) || (owned && !owned(key))) continue;
+    gone.push(key);
+    if (r.D) for (const d of r.D) dropName(d);
   }
   program.forEach((c, i) => {
     const r = ran.get(c.key);
@@ -374,7 +382,7 @@ export function planRun({ program, ran, history, forced = [], immutable = [], in
     }
   }
   forget.delete(RNG);
-  return { mode: 'graph', run: [...S].sort((a, b) => a - b), seeds, forget: [...forget], effects, stable };
+  return { mode: 'graph', run: [...S].sort((a, b) => a - b), seeds, forget: [...forget], effects, stable, gone };
 }
 
 const anyIn = (names, set) => { for (const n of names) if (set.has(n)) return true; return false; };
@@ -387,12 +395,16 @@ const anyIn = (names, set) => { for (const n of names) if (set.has(n)) return tr
  *
  * @param {{run:number[], seeds?:Set<number>, forget:string[], effects:{D:Set<string>,U:Set<string>}[]}} plan
  * @param {{run:(i:number, watch:string[]) => Promise<{ok:boolean, unchanged?:string[]}>,
- *          forget:(names:string[]) => Promise<void>, stop?:() => boolean}} io
+ *          forget:(names:string[]) => Promise<void>, stop?:() => boolean,
+ *          dropped?:(keys:string[]) => void}} io
+ *   dropped — the removed cells whose names were just dealt with: the ledger
+ *   forgets them (a cell this run then leaves undone is marked by the caller).
  * @returns {Promise<{ok:boolean, ran:number[], skipped:number[], failedAt?:number, notRun:number[]}>}
  */
 export async function executePlan(plan, io) {
   const changed = new Set(plan.forget || []);
   if (plan.forget && plan.forget.length) await io.forget(plan.forget);
+  if (io.dropped && plan.gone && plan.gone.length) io.dropped(plan.gone);
   // "Unchanged" compares the namespace before and after the cell ran. That
   // is what the cells reading the name last saw only when this cell is the
   // name's ONLY definer: with several, the value in the namespace may come

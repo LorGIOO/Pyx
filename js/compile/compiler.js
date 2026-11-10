@@ -34,7 +34,7 @@ import {
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
 import { auxOpen, lastArea } from '../solid/stores/previewStore.js';
-import { saveActiveAs, saveWithEncoding } from '../solid/stores/docStore.js';
+import { saveActiveAs, saveWithEncoding, markSavedIfUnchanged } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
 
 /* ---- live compile (TeXstudio-style) ----
@@ -691,7 +691,9 @@ async function gatherTree(rootPath, rootContent, rootDir, { save = true } = {}) 
         // .pltx children are ZIP containers (packed on Save) — never overwrite
         // with raw text; the child's .build.tex is what actually compiles.
         await saveWithEncoding(child, c);
-        open.modified = false;
+        // Not a bare `modified = false`: what was typed while the write was
+        // in flight is not on disk (docStore.js).
+        markSavedIfUnchanged(open, c);
         diskCache.delete(child); // we just changed it
       }
     }
@@ -958,7 +960,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // pure disk churn (and bumped its mtime for every sync tool watching it).
     if (!isPltx(doc.path) && doc.modified) {
       await saveWithEncoding(doc.path, content);
-      doc.modified = false;
+      markSavedIfUnchanged(doc, content);
     }
 
     // 0) Master document: compiling a child compiles its ROOT (and the whole
@@ -977,7 +979,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         rootContent = getDocContent(open.id);
         if (!isPltx(rootPath) && open.modified) {
           await saveWithEncoding(rootPath, rootContent);
-          open.modified = false;
+          markSavedIfUnchanged(open, rootContent);
         }
       } else {
         rootDoc = { id: -1, path: rootPath, fileName: baseName(rootPath), engine: doc.engine };

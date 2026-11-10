@@ -77,6 +77,7 @@ vi.mock('../js/solid/stores/previewStore.js', () => ({ auxOpen: () => false, las
 vi.mock('../js/solid/stores/docStore.js', () => ({
   saveActiveAs: async () => false,
   saveWithEncoding: async (p, c) => { put(p, c); },
+  markSavedIfUnchanged: (doc, text) => { doc.modified = text !== docText; return !doc.modified; },
 }));
 vi.mock('../js/solid/stores/settingsStore.js', () => ({
   general: { liveDelay: 300, warmEngine: true, pdfFollowCursor: false, cellTimeout: 0 },

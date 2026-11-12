@@ -211,6 +211,9 @@ export function findPyIfExprs(text) {
       cond: g1.inner,
       thenText: g2.inner,
       elseText: g3 ? g3.inner : '',
+      // Where each branch's text begins (for the build↔source line map).
+      thenAt: g1.end + 1,
+      elseAt: g3 ? g2.end + 1 : null,
     });
     i = g3 ? g3.end : g2.end;
   }
@@ -306,6 +309,92 @@ export function resolvePyText(text, valueMap) {
     out += text.slice(cursor);
   }
   return escapePyStar(out);
+}
+
+/* ---- substitution that knows which source line each output line is ------
+ *
+ * A \py{} whose value has several lines — a table from tabletex(), a whole
+ * figure from figtex(), any multi-line string — and a \pyif{} written over
+ * several lines both change HOW MANY LINES the build copy has. The build↔source
+ * map used to stop at the cells (neutralizeCells): everything below such a
+ * \py{} was off by the lines it added, so a Ctrl+click in the PDF opened the
+ * source a few lines away from the word clicked — further off with every table
+ * above it — and the errors of the log pointed at the wrong lines too. */
+const newlines = (str) => {
+  let n = 0;
+  for (let k = str.indexOf('\n'); k !== -1; k = str.indexOf('\n', k + 1)) n++;
+  return n;
+};
+
+/** Replace `pieces` ([{ start, end, value, skip }], in order) in `text`.
+ *  `origin[i]` is the source line of `text`'s line i (null: line i + 1).
+ *  Returns { text, lines, shifted }: `lines[i]` is the source line of output
+ *  line i; `shifted` says whether any piece changed the number of lines.
+ *  A piece's own lines map into the lines it replaced (`skip` = how many
+ *  lines into the piece its kept text begins), never past its last one, so
+ *  the map stays monotonic. */
+function spliceMapped(text, origin, pieces) {
+  const at = (i) => (origin ? origin[Math.min(i, origin.length - 1)] : i + 1);
+  const lines = [at(0)];
+  let out = '';
+  let cursor = 0;
+  let line = 0; // 0-based line of `text` being read
+  let shifted = false;
+  const plain = (seg) => {
+    out += seg;
+    for (let k = seg.indexOf('\n'); k !== -1; k = seg.indexOf('\n', k + 1)) lines.push(at(++line));
+  };
+  for (const p of pieces) {
+    plain(text.slice(cursor, p.start));
+    const nIn = newlines(text.slice(p.start, p.end));
+    const nOut = newlines(p.value);
+    out += p.value;
+    for (let j = 1; j <= nOut; j++) lines.push(at(line + Math.min((p.skip || 0) + j, nIn)));
+    line += nIn;
+    // The line left open carries what follows the piece on its last line.
+    if (nOut > 0) lines[lines.length - 1] = at(line);
+    if (nIn !== nOut) shifted = true;
+    cursor = p.end;
+  }
+  plain(text.slice(cursor));
+  return { text: out, lines, shifted };
+}
+
+/**
+ * `resolvePyText(resolvePyIf(text))` — the same text, exactly — plus the line
+ * map of the result: `lines[i]` = source line (1-based) of build line i, or
+ * null when the build is still line-for-line the source. `origin` is the map
+ * the text already carries (neutralizeCells' srcLines), or null.
+ */
+export function resolvePyMapped(text, valueMap, origin = null) {
+  let cur = text;
+  let map = origin;
+  const ifs = findPyIfExprs(cur);
+  if (ifs.length) {
+    const r = spliceMapped(cur, map, ifs.map((e) => {
+      const v = valueMap[pyifKey(e.cond)];
+      const yes = !!(v && v.ok && v.value === 'True');
+      const from = yes ? e.thenAt : e.elseAt;
+      return {
+        start: e.start,
+        end: e.end,
+        value: resolvePyIf(yes ? e.thenText : e.elseText, valueMap, 1),
+        skip: from != null ? newlines(cur.slice(e.start, from)) : 0,
+      };
+    }));
+    cur = r.text;
+    if (r.shifted || map) map = r.lines;
+  }
+  const exprs = findPyExprs(cur);
+  if (exprs.length) {
+    const r = spliceMapped(cur, map, exprs.map((e) => {
+      const v = valueMap[e.expr];
+      return { start: e.start, end: e.end, value: v && v.ok ? v.value : '' };
+    }));
+    cur = r.text;
+    if (r.shifted || map) map = r.lines;
+  }
+  return { text: escapePyStar(cur), lines: map };
 }
 
 /**

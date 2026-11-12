@@ -46,7 +46,7 @@ import { setAnnotDoc, buildAnnotLayer, markupFromSelection } from './annotate.js
 import { general } from '../solid/stores/settingsStore.js';
 import {
   getScale, setScale, getFitMode, setFitMode,
-  setNumPages, setCurrentPage, setPreviewFile, setHasPdf, tool, setLastArea,
+  setNumPages, setCurrentPage, setPreviewFile, setHasPdf, tool, setLastArea, pdfVersion, setPdfVersion,
   setLoadError, setSearchProgress,
 } from '../solid/stores/previewStore.js';
 
@@ -517,6 +517,7 @@ async function layoutDoc(doc) {
   const n = doc.numPages;
   setNumPages(n);
   setHasPdf(true);
+  setPdfVersion(pdfVersion() + 1);
 
   // Size every page from page 1 — parsing all N pages up front would itself
   // take minutes on a huge document. Each page corrects its own size when it
@@ -1185,34 +1186,71 @@ export function rerender() { recomputeGeometry(); renderVisible(); }
 /* ---------- bookmarks (the PDF's outline) ---------- */
 /** The PDF's bookmarks as a tree: [{title, dest, items}] ([] if it has none —
  *  a LaTeX PDF has them when the document loads hyperref). */
+/* Where a destination lands: { idx, y } — the 0-based page and the distance
+ * from its top in PDF points (null: the top of the page). null when it cannot
+ * be resolved in THIS document. Named destinations (hyperref's
+ * "section.2.1"), page references and plain page numbers (xdvipdfmx, the
+ * xelatex backend) are all handled. */
+async function resolveDest(doc, dest) {
+  let d = dest;
+  if (typeof d === 'string') d = await alive(doc, doc.getDestination(d));
+  if (!Array.isArray(d) || d[0] == null) return null;
+  let idx;
+  if (typeof d[0] === 'number') idx = d[0];
+  else idx = await alive(doc, doc.getPageIndex(d[0]));
+  if (!(idx >= 0 && idx < doc.numPages)) return null;
+  const name = d[1] && d[1].name;
+  // XYZ / FitH / FitBH / FitR give the top in PDF units, from the BOTTOM.
+  const top = name === 'XYZ' ? d[3] : (name === 'FitH' || name === 'FitBH') ? d[2] : name === 'FitR' ? d[5] : null;
+  return { idx, top: typeof top === 'number' ? top : null };
+}
+
+/** The PDF's own outline (hyperref's bookmarks), as a tree of
+ *  { title, page, dest, at, items }: `at` is the resolved destination, so a
+ *  click is arithmetic and cannot fail; `page` is 1-based (0: unresolved).
+ *  Empty when the PDF has none.
+ *
+ *  Resolved against the document that is loaded NOW. The panel used to keep
+ *  the outline of the first version it saw: after a recompile its
+ *  destinations still pointed at objects of the PDF that had been replaced,
+ *  and a click went to another page — or nowhere, silently. */
 export async function pdfOutline() {
   const doc = pdfDoc;
   if (!doc) return [];
   let raw;
   try { raw = await alive(doc, doc.getOutline()); } catch (_) { return []; }
-  const conv = (items) => (items || []).map((it) => ({ title: it.title, dest: it.dest, items: conv(it.items) }));
-  return conv(raw);
+  const conv = async (items) => Promise.all((items || []).map(async (it) => {
+    let at = null;
+    try { at = it.dest ? await resolveDest(doc, it.dest) : null; } catch (_) { at = null; }
+    return {
+      title: String(it.title || '').trim(), dest: it.dest, at,
+      page: at ? at.idx + 1 : 0, items: await conv(it.items),
+    };
+  }));
+  try { return await conv(raw); } catch (_) { return []; }
 }
 
-/** Scroll to a bookmark's destination, its top near the top of the viewer. */
-export async function goToOutline(dest) {
+/** Scroll to a bookmark: its destination a little below the top of the
+ *  viewer. Takes an outline item (resolved) or a raw destination. */
+export async function goToOutline(item) {
   const doc = pdfDoc;
-  if (!doc || !container) return;
-  let d = dest;
-  try {
-    if (typeof d === 'string') d = await alive(doc, doc.getDestination(d));
-    if (!Array.isArray(d)) return;
-    const idx = typeof d[0] === 'number' ? d[0] : await alive(doc, doc.getPageIndex(d[0]));
-    const pageH = baseH[idx] || 1;
-    // XYZ / FitH / FitBH give the top in PDF units, measured from the BOTTOM.
-    const name = d[1] && d[1].name;
-    const top = name === 'XYZ' ? d[3] : (name === 'FitH' || name === 'FitBH') ? d[2] : null;
-    const y = typeof top === 'number' ? Math.max(0, pageH - top) : 0;
-    const yDoc = padTop + tops[idx] + Math.min(1, y / pageH) * pageHpx(idx);
-    container.scrollTop = Math.max(0, yDoc - 24);
-    setCurrentPage(idx + 1);
-    scheduleVisible();
-  } catch (_) { /* a broken destination: stay where we are */ }
+  if (!doc || !container) return false;
+  // `at` is plain numbers (page index, height), so one resolved a moment
+  // before a recompile is still a page of the document; only an item that
+  // never resolved is tried again, against the PDF on screen.
+  let at = item && item.at;
+  if (!at) {
+    try { at = await resolveDest(doc, item && item.dest !== undefined ? item.dest : item); } catch (_) { at = null; }
+  }
+  if (!at || at.idx >= pageCount()) return false;
+  const idx = at.idx;
+  const pageH = baseH[idx] || 1;
+  const y = at.top == null ? 0 : Math.max(0, Math.min(pageH, pageH - at.top));
+  const yDoc = padTop + tops[idx] + (y / pageH) * pageHpx(idx);
+  container.scrollTop = Math.max(0, yDoc - 24);
+  setCurrentPage(idx + 1);
+  scheduleVisible();
+  return true;
 }
 export function hasPdf() { return !!pdfDoc; }
 
@@ -1391,7 +1429,10 @@ function attachEvents(el) {
         return;
       }
     }
-    const wantPan = e.button === 1 || (tool() === 'pan' && e.button === 0);
+    // Which button drags the page is the user's choice (Configuración → Visor
+    // PDF → Ratón): the middle one always does, the right one when asked to.
+    const wantPan = e.button === 1 || (e.button === 2 && general.pdfPanButton === 'right')
+      || (tool() === 'pan' && e.button === 0);
     if (wantPan) {
       e.preventDefault();
       panning = true;

@@ -14,7 +14,7 @@ import {
 } from './solid/stores/docStore.js';
 import { compileActive, cancelCompile, scheduleLiveCompile, reloadLastPdf } from './compile/compiler.js';
 import { loadPdf, pdfSearch } from './pdf/preview.js';
-import { openFind, runAll, gotoLineCol, forwardSearch, buildLineToSource } from './editor/commands.js';
+import { openFind, openReplace, runAll, gotoLineCol, forwardSearch, buildLineToSource } from './editor/commands.js';
 import { openPath } from './solid/stores/docStore.js';
 import { openNewDoc } from './solid/components/NewDocDialog.jsx';
 import { closeDialogs } from './solid/stores/dialogStore.js';
@@ -161,6 +161,7 @@ if (viewerBoot) {
     'file.open': () => { openDocument(); },
     'file.save': () => { saveActive(); },
     'file.close': () => { closeActive(); },
+    'edit.replace': () => { openReplace(); },
     'edit.findProject': () => {
       // Already open: re-open it, so it takes the new selection and the focus.
       if (state.sidePanelTab === 'search') { state.sidePanelTab = null; setTimeout(() => { state.sidePanelTab = 'search'; }, 0); }

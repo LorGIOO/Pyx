@@ -664,13 +664,94 @@
 .preview-scroll.annot-active.annot-text .pdf-textlayer > span { cursor: text; }
 .preview-scroll.annot-tool-select .pdf-annotlayer { cursor: default; }
 .preview-scroll.annot-tool-note .pdf-annotlayer { cursor: copy; }
-.preview-scroll.annot-tool-eraser .pdf-annotlayer { cursor: cell; }
+.preview-scroll.annot-tool-tbox .pdf-annotlayer { cursor: text; }
+/* Pen, marker, eraser and laser: no cross-hair. Their pointer is a circle the
+   exact size of the tip (annotate.js showBrush), so what you see is what the
+   stroke will cover. */
+.preview-scroll.annot-tool-pen .pdf-annotlayer,
+.preview-scroll.annot-tool-highlight .pdf-annotlayer,
+.preview-scroll.annot-tool-eraser .pdf-annotlayer,
+.preview-scroll.annot-tool-laser .pdf-annotlayer { cursor: none; }
+.annot-brush {
+  position: fixed;
+  top: 0; left: 0;
+  z-index: 9000;
+  display: none;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: 50%;
+  /* Only the outline — never filled — in two tones, so it shows on white
+     paper and on a dark figure alike. */
+  border: 1px solid rgba(0, 0, 0, 0.85);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  background: transparent;
+}
+.annot-brush.laser {
+  border-color: rgba(255, 45, 45, 0.95);
+  box-shadow: 0 0 6px 1px rgba(255, 45, 45, 0.7);
+}
+/* The laser's trail: drawn, held a moment, then gone. Never stored. */
+.pdf-annotlaser { pointer-events: none !important; z-index: 5; }
+.annot-laser {
+  fill: none;
+  stroke: #ff2d2d;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 2px rgba(255, 45, 45, 0.9));
+  opacity: 0.95;
+  transition: opacity 0.85s ease-out;
+}
+.annot-laser.out { opacity: 0; }
 .annot-selection {
   fill: none;
   stroke: var(--theme-accent, #2f7fe0);
-  stroke-width: 1.2;
+  stroke-width: 1;
   stroke-dasharray: 4 3;
+  pointer-events: none;
 }
+/* Handles of the selected mark: squares at the box's corners and sides, a
+   round one in the middle of a line (drag it to bend the line). */
+.annot-handle {
+  fill: #fff;
+  stroke: var(--theme-accent, #2f7fe0);
+  stroke-width: 1.4;
+}
+.annot-handle-mid { fill: var(--theme-accent, #2f7fe0); stroke: #fff; }
+.preview-scroll.annot-tool-select .annot-handle { cursor: move; }
+.preview-scroll.annot-tool-select .annot-h-nw, .preview-scroll.annot-tool-select .annot-h-se { cursor: nwse-resize; }
+.preview-scroll.annot-tool-select .annot-h-ne, .preview-scroll.annot-tool-select .annot-h-sw { cursor: nesw-resize; }
+.preview-scroll.annot-tool-select .annot-h-n, .preview-scroll.annot-tool-select .annot-h-s { cursor: ns-resize; }
+.preview-scroll.annot-tool-select .annot-h-e, .preview-scroll.annot-tool-select .annot-h-w { cursor: ew-resize; }
+.preview-scroll.annot-tool-select .annot-h-p0, .preview-scroll.annot-tool-select .annot-h-p1 { cursor: crosshair; }
+/* A text box: plain text on the page, in the mark's colour. */
+.annot-tbox {
+  box-sizing: border-box;
+  padding: 2px;
+  font-family: 'Segoe UI', system-ui, Helvetica, Arial, sans-serif;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.annot-tbox-editor {
+  position: absolute;
+  z-index: 6;
+  box-sizing: border-box;
+  min-height: 1.4em;
+  margin: 0;
+  padding: 2px;
+  font-family: 'Segoe UI', system-ui, Helvetica, Arial, sans-serif;
+  line-height: 1.25;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed var(--theme-accent, #2f7fe0);
+  border-radius: 2px;
+  outline: none;
+  overflow: hidden;
+  resize: none;
+}
+/* A comment's icon is a button at all times: a click folds the comment down
+   to it or shows its text again (annotate.js toggleNote). */
+.annot-note-icon { pointer-events: auto; cursor: pointer; stroke: rgba(0, 0, 0, 0.25); stroke-width: 0.5; }
+.annot-note-icon.closed { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.8; }
 .annot-note-box {
   box-sizing: border-box;
   display: inline-block;
@@ -729,6 +810,19 @@
   border: 1px solid var(--theme-border);
   background: var(--theme-ribbon-input-bg); color: var(--theme-text);
 }
+/* A number the user types (stroke width, eraser size, font size). */
+.annot-num {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 4px;
+  font-size: 11px; color: var(--theme-text-secondary);
+}
+.annot-num input {
+  width: 52px; height: 24px; padding: 0 4px;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-ribbon-input-bg); color: var(--theme-text);
+}
+.annot-toggle { font-size: 15px; line-height: 1; }
 
 /* Circular magnifier loupe (hold to show). */
 .pdf-loupe {
@@ -1058,8 +1152,15 @@
   font-size: 12px; color: var(--theme-text);
 }
 .pdfo-title { padding: 8px 10px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--theme-text-secondary); }
-.pdfo-row { padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.pdfo-row { display: flex; align-items: center; gap: 2px; padding: 3px 8px 3px 4px; white-space: nowrap; cursor: default; }
 .pdfo-row:hover { background: var(--theme-hover); }
+/* The section being read (the last bookmark at or before the page in view). */
+.pdfo-row.current { background: var(--theme-hover); font-weight: 600; box-shadow: inset 2px 0 0 var(--theme-tab-active-accent); }
+.pdfo-row.dead { opacity: .55; }
+.pdfo-twisty { flex: 0 0 14px; text-align: center; font-size: 10px; color: var(--theme-text-secondary); }
+.pdfo-twisty:not(.leaf):hover { color: var(--theme-text); }
+.pdfo-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pdfo-page { flex: 0 0 auto; padding-left: 6px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--theme-text-secondary); }
 .pdfo-empty { padding: 8px 10px; color: var(--theme-text-secondary); }
 
 /* Macros (MacrosDialog.jsx) */

@@ -259,7 +259,25 @@ impl Index {
                         .filter(|(_, r)| r.v + r.dp <= y)
                         .min_by(|a, b| ((y - a.1.v - a.1.dp) * 1000.0 + hdist(a.1)).total_cmp(&((y - b.1.v - b.1.dp) * 1000.0 + hdist(b.1))))
                 })
-            })?;
+            });
+        // A page with no row of text at all — a full-page figure, a plan
+        // brought in with \includepdf, a page that is one big table box: there
+        // is no row to pick, and the click used to do nothing. Answer with
+        // whatever TeX recorded nearest the point, which carries the line of
+        // the command that put the page there.
+        let Some(hit) = hit else {
+            let dist = |r: &Rec| {
+                let dx = if x < r.h { r.h - x } else if x > r.h + r.w { x - r.h - r.w } else { 0.0 };
+                let dy = if y < r.v - r.ht { r.v - r.ht - y } else if y > r.v + r.dp { y - r.v - r.dp } else { 0.0 };
+                dx.hypot(dy)
+            };
+            let rec = self
+                .recs
+                .iter()
+                .filter(|r| r.page == page && r.line > 0 && self.inputs.contains_key(&r.tag))
+                .min_by(|a, c| dist(a).total_cmp(&dist(c)))?;
+            return Some((self.inputs.get(&rec.tag)?.clone(), rec.line));
+        };
         let (bi, b) = *hit;
         let vis = |r: &Rec| if r.kind == b'k' { r.h - r.w } else { r.h };
         let runs: Vec<&Rec> = self

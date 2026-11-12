@@ -174,6 +174,11 @@ export const GENERAL_SECTIONS = {
     trimOnSave: false,
     wheelZoom: true,
     cursorMargin: 0,         // lines kept visible above/below the cursor
+    // A table pasted from a spreadsheet (paste-table.js): its rules —
+    // 'auto' (booktabs when the project loads it), 'booktabs', 'hline',
+    // 'none' — and whether it comes wrapped in a table environment.
+    pasteTableRules: 'auto',
+    pasteTableFloat: false,
   },
   complete: {
     completion: true,
@@ -218,6 +223,9 @@ export const GENERAL_SECTIONS = {
     pdfFollowCursor: true,
     loupeZoom: 3,
     selSyncPdfToCode: false,
+    // Button that drags the page: 'middle' (the wheel button) or 'right'
+    // (the middle one keeps working). preview.js attachEvents.
+    pdfPanButton: 'middle',
   },
   lang: {
     spellCheck: true,

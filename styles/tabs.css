@@ -2,7 +2,7 @@
 .document-tabs {
   display: flex;
   align-items: stretch;
-  height: 30px;
+  height: 26px;
   background: var(--theme-tab-bg);
   border-bottom: 1px solid var(--theme-tab-border);
   flex-shrink: 0;
@@ -27,19 +27,19 @@
 .doc-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 14px;
-  /* 220px when there is room; with many documents open the tabs narrow to
-     72px (a few letters and the close box) before the strip starts to
-     scroll. They used to stop at 120px, so six documents filled half a
-     screen. */
-  flex: 0 1 220px;
-  min-width: 72px;
+  gap: 5px;
+  padding: 0 5px 0 10px;
+  /* 132px when there is room — 60 % of the 220px they used to take, which
+     made three open chapters fill half the strip. With many documents open
+     they narrow to 60px (a few letters and the close box) before the strip
+     starts to scroll. */
+  flex: 0 1 132px;
+  min-width: 60px;
   height: 100%;
   background: var(--theme-tab-bg);
   border-right: 1px solid var(--theme-tab-border);
   color: var(--theme-tab-text);
-  font-size: 12px;
+  font-size: 11.5px;
   cursor: default;
   position: relative;
   white-space: nowrap;
@@ -66,8 +66,8 @@
   color: var(--theme-tab-modified);
 }
 .doc-tab-close {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -81,12 +81,12 @@
 }
 /* 14px, not the 16px default: the close box is 18px, and a 16px glyph in it
    leaves no air and reads as a filled square on hover. */
-.doc-tab-close svg { width: 14px; height: 14px; }
+.doc-tab-close svg { width: 12px; height: 12px; }
 .doc-tab-close:hover { background: #e81123; color: #fff; }
 
 .doc-tab-add {
-  width: 30px;
-  flex: 0 0 30px; /* never squeezed… */
+  width: 26px;
+  flex: 0 0 26px; /* never squeezed… */
   /* …and never scrolled away: pinned to the right edge of the strip once the
      tabs overflow it. Opaque, because tabs pass underneath it then. */
   position: sticky;

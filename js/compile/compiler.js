@@ -26,9 +26,10 @@ import {
 } from '../editor/notebooks.js';
 import { importsOf } from './py-imports.js';
 import { hashString } from '../core/hash.js';
+import { setPreambleHint } from '../editor/paste-table.js';
 import { setBuildMaps, persistBuildMaps, ensureBuildMaps } from './build-maps.js';
 import {
-  findPyExprs, resolvePyText, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
+  findPyExprs, resolvePyText, resolvePyMapped, neutralizeCells, dirOf, joinPath, stemOf, baseName, BUILD_SUFFIX,
   findPyIfExprs, resolvePyIf, collectPyIfConds, pyifKey, createVerbatimTracker,
   safetyPreamble, injectPreamble, findPyxLeaks, defusePyxLeaks, buildToSrcLine,
   scanVerbatimUse, stripTexComment,
@@ -1020,6 +1021,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
 
     const cwd = dirOf(rootPath);
     const stem = stemOf(rootPath);
+    // What a table pasted into a chapter reads to choose its rules (booktabs?).
+    setPreambleHint(rootContent.slice(0, 20000));
     let problems = '';
     let pythonNote = ''; // why the Python process was replaced, if it was
     const cellProblem = (label, stderr, docLine) => {
@@ -1507,8 +1510,12 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // compiles standalone in TeXstudio. Removing lines shifts everything
         // below a cell, so keep the build↔source map for SyncTeX and the log.
         const neut = neutralizeCells(f.tagged || f.content, f.renders);
-        processed = resolvePyText(resolvePyIf(neut.text, valueMap), valueMap);
-        if (neut.srcLines) lineMaps[mapKey] = neut.srcLines;
+        // …and so does a \py{} whose value has several lines (a table, a
+        // whole figure) or a \pyif{} written over several: the map follows
+        // them too, or every Ctrl+click below one lands lines away.
+        const res = resolvePyMapped(neut.text, valueMap, neut.srcLines);
+        processed = res.text;
+        if (res.lines) lineMaps[mapKey] = res.lines;
       }
       /* A \py{} the build still carries.
        *

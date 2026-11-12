@@ -4,8 +4,31 @@
 
 import {
   SearchQuery, setSearchQuery, getSearchQuery,
-  findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel,
+  findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel, openSearchPanel,
 } from '@codemirror/search';
+
+/* Opening the panel FOR something: "Buscar" (Ctrl+F) or "Reemplazar" (Ctrl+R).
+ *
+ * The panel is created once per editor and then only focused, so what the
+ * caller wants — the replace row open, the selected word as the search — has
+ * to reach a panel that may already exist. `panels` keeps each live panel's
+ * `apply`; `pending` carries the request across the creation of a new one. */
+const panels = new WeakMap(); // EditorView -> { apply }
+let pending = null;
+
+/** Open (or re-focus) the search panel. With `replace`, the replace row is
+ *  shown; a word or phrase selected in the editor (one line) becomes the
+ *  search, every match of it is highlighted, and the caret lands in
+ *  "Reemplazar" ready for the new text. */
+export function openSearch(view, { replace = false } = {}) {
+  const sel = view.state.selection.main;
+  const text = sel.empty || sel.to - sel.from > 300 ? '' : view.state.sliceDoc(sel.from, sel.to);
+  pending = { replace, seed: text.includes('\n') ? '' : text };
+  openSearchPanel(view); // mounts a new panel (which takes `pending`) or focuses the open one
+  const api = panels.get(view);
+  if (api && pending) api.apply(pending);
+  pending = null;
+}
 
 export function pyxSearchPanel(view) {
   let caseSensitive = false, regexp = false, whole = false, showReplace = false;
@@ -20,11 +43,7 @@ export function pyxSearchPanel(view) {
   const row1 = document.createElement('div');
   row1.className = 'ps-row';
 
-  const expand = btn('▸', 'Reemplazar', () => {
-    showReplace = !showReplace;
-    expand.textContent = showReplace ? '▾' : '▸';
-    row2.style.display = showReplace ? 'flex' : 'none';
-  });
+  const expand = btn('▸', 'Reemplazar (Ctrl+R)', () => setReplaceRow(!showReplace));
   expand.classList.add('ps-expand');
 
   const input = document.createElement('input');
@@ -108,14 +127,34 @@ export function pyxSearchPanel(view) {
     count.textContent = n >= 1000 ? '999+' : `${n} resultados`;
   }
 
+  function setReplaceRow(on) {
+    showReplace = on;
+    expand.textContent = on ? '▾' : '▸';
+    row2.style.display = on ? 'flex' : 'none';
+  }
+  function apply(req) {
+    if (req.seed) { input.value = req.seed; push(); }
+    if (req.replace) {
+      setReplaceRow(true);
+      // With the word to replace already chosen, the next thing typed is
+      // its replacement; with nothing selected, the search comes first.
+      const target = input.value ? rinput : input;
+      target.focus();
+      target.select();
+    } else {
+      input.focus();
+      input.select();
+    }
+  }
+
   return {
     dom,
     top: true,
     mount() {
       const q = getSearchQuery(view.state);
       if (q && q.search) input.value = q.search;
-      input.focus();
-      input.select();
+      panels.set(view, { apply });
+      if (pending) { apply(pending); pending = null; } else { input.focus(); input.select(); }
       updateCount();
     },
     update(u) {
@@ -126,6 +165,6 @@ export function pyxSearchPanel(view) {
       clearTimeout(countTimer);
       countTimer = setTimeout(updateCount, 200);
     },
-    destroy() { clearTimeout(countTimer); },
+    destroy() { clearTimeout(countTimer); panels.delete(view); },
   };
 }

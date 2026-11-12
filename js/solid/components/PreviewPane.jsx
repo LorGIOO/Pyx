@@ -8,11 +8,17 @@ import {
   scale, numPages, currentPage, fitMode, tool, setTool, invert, setInvert, previewFile, hasPdf,
   pdfSearchOpen, setPdfSearchOpen, loadError, setAuxOpen, searchProgress,
   annotBarOpen, setAnnotBarOpen, annotTool, setAnnotTool, annotColor, setAnnotColor,
-  annotWidth, setAnnotWidth,
+  annotWidth, setAnnotWidth, annotLineKind, setAnnotLineKind, annotHeads, setAnnotHeads,
+  annotDash, setAnnotDash, annotRound, setAnnotRound, annotEraser, setAnnotEraser,
+  annotFont, setAnnotFont, annotSel,
 } from '../stores/previewStore.js';
-import { undo, redo, clearPage, correctionsText, TEXT_TOOLS } from '../../pdf/annotate.js';
+import {
+  undo, redo, clearPage, clearAll, correctionsText, TEXT_TOOLS, applyStyle, hasAnnotations,
+  annotationData, annotatedPages, toggleAllNotes,
+} from '../../pdf/annotate.js';
 import {
   openExternal, openPdfExternal, openViewerWindow, messageDialog, savePdfDialog, copyFile,
+  choiceDialog, askDialog, readBinaryFile, writeBinaryFile,
 } from '../../core/platform.js';
 import { icons as ICO } from './ribbon/icons.js';
 import PdfOutline from './PdfOutline.jsx';
@@ -59,25 +65,32 @@ const ic = {
   copyList: `<svg ${S}><rect x="5" y="4.5" width="8.5" height="9.5" rx="1"/><path d="M3 11.5V3a1 1 0 0 1 1-1h7M7 8h4.5M7 10.5h4.5"/></svg>`, // codicon: copy
   undo: `<svg ${S}><path d="M2.5 6.4h7a3.8 3.8 0 0 1 0 7.6H6"/><path d="M5.6 3.3 2.5 6.4l3.1 3.1"/></svg>`, // codicon: discard
   trashAll: `<svg ${S}><path d="M3 4h10M6 4V2.7h4V4M5 4l.7 9h4.6L11 4z"/></svg>`,         // codicon: trash
-  outline: `<svg ${S}><path d="M4.5 2.5h7v11l-3.5-2.6-3.5 2.6z"/></svg>`,                // codicon: bookmark
+  outline: `<svg ${S}><path d="M4.5 2.5h7v11l-3.5-2.6-3.5 2.6z"/></svg>`,
+  noteFold: `<svg ${S}><path d="M3 3h10a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H8.2L5 13.6v-2.4H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M5.2 7.1h5.6"/></svg>`,
+  tbox: `<svg ${S}><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1" stroke-dasharray="2 1.6"/><path d="M5.2 5.6h5.6M8 5.6v5.2"/></svg>`,
+  laser: `<svg ${S}><circle cx="8" cy="8" r="2" fill="currentColor" stroke="none"/><path d="M8 1.8v2.2M8 12v2.2M1.8 8H4M12 8h2.2M3.6 3.6l1.5 1.5M10.9 10.9l1.5 1.5M12.4 3.6l-1.5 1.5M5.1 10.9l-1.5 1.5"/></svg>`,
+  trashPage: `<svg ${S}><path d="M4 1.8h5.6L12 4.2v3.2M4 1.8v12.4h3.6M9.4 1.8v2.6H12"/><path d="m9.4 10.2 4 4M13.4 10.2l-4 4"/></svg>`,
+  saveMarks: `<svg ${S}><path d="M8 2.2v6.2M5.4 6 8 8.6 10.6 6"/><path d="M2.6 10.6v2.8h10.8v-2.8"/></svg>`,                // codicon: bookmark
 };
 const [outlineOpen, setOutlineOpen] = createSignal(false);
 
 // Review tools, in the order a corrector reaches for them: pick/move, the
-// three that act on SELECTED TEXT, free drawing, shapes, comments, eraser.
+// three that act on SELECTED TEXT, free drawing, shapes, text, eraser, laser.
 const ANNOT_TOOLS = [
-  { id: 'select', icon: 'select', title: 'Seleccionar: mueve una marca arrastrándola; Supr la borra; doble clic edita un comentario' },
+  { id: 'select', icon: 'select', title: 'Seleccionar y editar: arrastra una marca para moverla o sus tiradores para cambiarle el tamaño y la forma (el del centro de una línea la curva); las flechas del teclado la desplazan; Supr la borra; doble clic edita un texto o un comentario' },
   { id: 'texthl', icon: 'texthl', title: 'Resaltar texto (selecciónalo)' },
   { id: 'underline', icon: 'underline', title: 'Subrayar texto (selecciónalo)' },
   { id: 'strike', icon: 'strike', title: 'Tachar texto (selecciónalo)' },
   { id: 'pen', icon: 'pen', title: 'Lápiz (trazo libre suavizado)' },
   { id: 'highlight', icon: 'marker', title: 'Rotulador (resaltado a mano alzada)' },
-  { id: 'line', icon: 'line', title: 'Línea (Mayús: 0°/45°/90°)' },
-  { id: 'arrow', icon: 'arrow', title: 'Flecha (Mayús: 0°/45°/90°)' },
+  { id: 'line', icon: 'line', title: 'Línea: recta, curva o en codo (Mayús: 0°/45°/90°)' },
+  { id: 'arrow', icon: 'arrow', title: 'Flecha: recta, curva o en codo, con una o dos puntas (Mayús: 0°/45°/90°)' },
   { id: 'rect', icon: 'rect', title: 'Recuadro (Mayús: cuadrado)' },
   { id: 'ellipse', icon: 'ellipse', title: 'Elipse (Mayús: círculo)' },
-  { id: 'note', icon: 'note', title: 'Comentario: clic donde va; se escribe en la página (Ctrl+Intro termina)' },
-  { id: 'eraser', icon: 'eraser', title: 'Borrador (borra las marcas por las que pasa)' },
+  { id: 'tbox', icon: 'tbox', title: 'Cuadro de texto: clic donde va y escribe; doble clic con «Seleccionar» lo vuelve a editar' },
+  { id: 'note', icon: 'note', title: 'Comentario: clic donde va; se escribe en la página (Ctrl+Intro termina). Un clic en su icono lo pliega y deja solo el icono; otro lo abre' },
+  { id: 'eraser', icon: 'eraser', title: 'Borrador: la marca entera o solo la parte que toca' },
+  { id: 'laser', icon: 'laser', title: 'Láser: señala con un trazo que se desvanece solo (no se guarda)' },
 ];
 const ANNOT_COLORS = ['#ffd400', '#e23b3b', '#f5a623', '#2ca24c', '#2f7fe0', '#9b51e0', '#1a1a1a'];
 
@@ -93,9 +106,74 @@ async function copyCorrections() {
   }
 }
 
-// Annotation toolbar: pick a tool, color and stroke width to mark up the PDF.
-// The marks are saved per document and scale with zoom.
+/** Save a copy of the PDF. With marks on it, the copy can carry them drawn
+ *  into its pages (`marks`: true = with them, false = without, null = ask). */
+async function exportPdfCopy(marks = null) {
+  const p = getPdfPath();
+  if (!p) return;
+  let withMarks = marks;
+  if (withMarks === null && hasAnnotations()) {
+    const ans = await choiceDialog('Este PDF tiene anotaciones. ¿Guardar la copia con ellas dibujadas en las páginas?',
+      { title: 'Guardar una copia del PDF', kind: 'info', yes: 'Con anotaciones', no: 'Sin anotaciones' });
+    if (ans === 'cancel') return;
+    withMarks = ans === 'yes';
+  }
+  if (withMarks && !hasAnnotations()) { messageDialog('No hay anotaciones en este PDF.'); return; }
+  const stem = (previewFile() || 'documento.pdf').replace(/\.[^.]*$/, '');
+  const dest = await savePdfDialog(`${stem}${withMarks ? ' (anotado)' : ''}.pdf`);
+  if (!dest) return;
+  try {
+    if (withMarks) {
+      const { annotatedPdf } = await import('../../pdf/annot-export.js');
+      await writeBinaryFile(dest, await annotatedPdf(await readBinaryFile(p), annotationData()));
+    } else {
+      await copyFile(p, dest);
+    }
+  } catch (e) {
+    messageDialog(`No se pudo guardar el PDF: ${String((e && e.message) || e)}`,
+      { title: 'Exportar PDF', kind: 'error' });
+  }
+}
+
+/** "Borrar las anotaciones de esta página" — and say so when the page in
+ *  view has none (the button used to do nothing, with no word of why: the
+ *  page counted as "this one" is the one in the middle of the viewer). */
+function clearThisPage() {
+  const n = currentPage();
+  if (clearPage(n)) return;
+  const others = annotatedPages();
+  messageDialog(others.length
+    ? `La página ${n} no tiene anotaciones. Las hay en ${others.length === 1 ? 'la página' : 'las páginas'} ${others.join(', ')}.`
+    : 'Este PDF no tiene anotaciones.');
+}
+async function clearEverything() {
+  if (!hasAnnotations()) { messageDialog('Este PDF no tiene anotaciones.'); return; }
+  const n = annotatedPages().length;
+  const ok = await askDialog(`¿Borrar todas las anotaciones del documento (${n} página${n === 1 ? '' : 's'})?\n\nCtrl+Z las recupera mientras el visor siga abierto.`,
+    { title: 'Borrar anotaciones' });
+  if (ok) clearAll();
+}
+
+// Annotation toolbar: the tools, and — for the active tool, or for the mark
+// picked with «Seleccionar» — exactly the options that apply to it. The
+// marks are saved per document and scale with zoom.
 function AnnotBar() {
+  // What the options refer to: the selected mark's type while selecting,
+  // otherwise the tool in hand.
+  const ctx = () => (annotTool() === 'select' ? annotSel() : annotTool());
+  const isLine = () => ctx() === 'line' || ctx() === 'arrow';
+  const hasWidth = () => ['pen', 'highlight', 'line', 'arrow', 'rect', 'ellipse', 'eraser'].includes(ctx());
+  const canDash = () => ['pen', 'line', 'arrow', 'rect', 'ellipse'].includes(ctx());
+  const num = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round((+v || lo) * 100) / 100));
+  const setColor = (c) => { setAnnotColor(c); applyStyle({ c }); };
+  const setWidth = (v) => { const w = num(v, 0.25, 60); setAnnotWidth(w); applyStyle({ w }); };
+  const setFont = (v) => { const s = num(v, 4, 96); setAnnotFont(s); applyStyle({ s }); };
+  // The wheel over a number changes it (Shift: bigger steps), like any
+  // drawing program's size box.
+  const wheel = (get, set, step) => (e) => {
+    e.preventDefault();
+    set(get() + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? step * 4 : step));
+  };
   return (
     <div class="pdf-annotbar">
       <For each={ANNOT_TOOLS}>
@@ -109,25 +187,74 @@ function AnnotBar() {
       <For each={ANNOT_COLORS}>
         {(c) => (
           <button class={`annot-swatch${annotColor() === c ? ' active' : ''}`} title={c}
-            style={{ background: c }} onClick={() => setAnnotColor(c)}></button>
+            style={{ background: c }} onClick={() => setColor(c)}></button>
         )}
       </For>
       <input type="color" class="annot-color" title="Color personalizado"
-        value={annotColor()} onInput={(e) => setAnnotColor(e.target.value)} />
-      <select class="annot-width" title="Grosor del trazo"
-        value={String(annotWidth())} onChange={(e) => setAnnotWidth(+e.target.value)}>
-        <option value="1">Fino</option>
-        <option value="2">Medio</option>
-        <option value="4">Grueso</option>
-        <option value="7">Muy grueso</option>
-      </select>
+        value={annotColor()} onInput={(e) => setColor(e.target.value)} />
+      <Show when={hasWidth()}>
+        <label class="annot-num" title={ctx() === 'eraser'
+          ? 'Tamaño del borrador (el círculo del puntero). La rueda lo cambia.'
+          : 'Grosor del trazo, en puntos. La rueda lo cambia; el círculo del puntero muestra el tamaño real.'}>
+          <span>{ctx() === 'eraser' ? 'Tamaño' : 'Grosor'}</span>
+          <input type="number" min="0.25" max="60" step="0.25" value={annotWidth()}
+            onChange={(e) => setWidth(e.target.value)}
+            onWheel={wheel(annotWidth, setWidth, 0.5)} />
+        </label>
+      </Show>
+      <Show when={ctx() === 'tbox'}>
+        <label class="annot-num" title="Tamaño de la letra, en puntos. La rueda lo cambia.">
+          <span>Letra</span>
+          <input type="number" min="4" max="96" step="1" value={annotFont()}
+            onChange={(e) => setFont(e.target.value)} onWheel={wheel(annotFont, setFont, 1)} />
+        </label>
+      </Show>
+      <Show when={isLine()}>
+        <select class="annot-width" title="Forma de la línea: recta, curva (se ajusta arrastrando su centro con «Seleccionar») o en codo"
+          value={annotLineKind()}
+          onChange={(e) => { setAnnotLineKind(e.target.value); applyStyle({ kind: e.target.value }); }}>
+          <option value="straight">Recta</option>
+          <option value="curve">Curva</option>
+          <option value="elbow">En codo</option>
+        </select>
+      </Show>
+      <Show when={ctx() === 'arrow'}>
+        <select class="annot-width" title="Puntas de la flecha" value={annotHeads()}
+          onChange={(e) => { setAnnotHeads(e.target.value); applyStyle({ heads: e.target.value }); }}>
+          <option value="end">→ Al final</option>
+          <option value="both">↔ En los dos extremos</option>
+          <option value="start">← Al inicio</option>
+          <option value="none">— Sin punta</option>
+        </select>
+      </Show>
+      <Show when={canDash()}>
+        <button class={`pv-btn annot-toggle${annotDash() ? ' active' : ''}`} title="Trazo discontinuo"
+          onClick={() => { const v = !annotDash(); setAnnotDash(v); applyStyle({ dash: v }); }}>┄</button>
+      </Show>
+      <Show when={ctx() === 'rect'}>
+        <button class={`pv-btn annot-toggle${annotRound() ? ' active' : ''}`} title="Esquinas redondeadas"
+          onClick={() => { const v = !annotRound(); setAnnotRound(v); applyStyle({ round: v }); }}>▢</button>
+      </Show>
+      <Show when={annotTool() === 'eraser'}>
+        <select class="annot-width" title="Qué borra el borrador" value={annotEraser()}
+          onChange={(e) => setAnnotEraser(e.target.value)}>
+          <option value="whole">La marca entera</option>
+          <option value="part">Solo lo que toca</option>
+        </select>
+      </Show>
       <div class="pv-sep"></div>
       <button class="pv-btn" title="Deshacer (Ctrl+Z)" innerHTML={ic.undo} onClick={undo}></button>
       <button class="pv-btn" title="Rehacer (Ctrl+Y)" innerHTML={ic.redo} onClick={redo}></button>
       <button class="pv-btn" title="Copiar la lista de correcciones (página, tipo y texto de cada marca)" innerHTML={ic.copyList}
         onClick={copyCorrections}></button>
-      <button class="pv-btn" title="Borrar las anotaciones de esta página" innerHTML={ic.trashAll}
-        onClick={() => clearPage(currentPage())}></button>
+      <button class="pv-btn" title="Plegar o desplegar todos los comentarios (plegado, solo se ve su icono; un clic en el icono de uno lo pliega o lo abre)" innerHTML={ic.noteFold}
+        onClick={() => { if (toggleAllNotes() === null) messageDialog('Este PDF no tiene comentarios.'); }}></button>
+      <button class="pv-btn" title="Guardar una copia del PDF con las anotaciones dibujadas en sus páginas" innerHTML={ic.saveMarks}
+        onClick={() => exportPdfCopy(true)}></button>
+      <button class="pv-btn" title="Borrar las anotaciones de la página a la vista" innerHTML={ic.trashPage}
+        onClick={clearThisPage}></button>
+      <button class="pv-btn" title="Borrar todas las anotaciones del documento" innerHTML={ic.trashAll}
+        onClick={clearEverything}></button>
       <button class="pv-btn" title="Cerrar la barra de anotación" innerHTML={ic.close}
         onClick={() => { setAnnotTool(''); setAnnotBarOpen(false); }}></button>
     </div>
@@ -203,19 +330,7 @@ export default function PreviewPane() {
   };
   // The compiled PDF lives in the project's working directory, out of sight
   // with the rest of the build. Exporting is how a copy leaves it.
-  const exportPdf = async () => {
-    const p = getPdfPath();
-    if (!p) return;
-    const name = (previewFile() || 'documento.pdf').replace(/\.[^.]*$/, '') + '.pdf';
-    const dest = await savePdfDialog(name);
-    if (!dest) return;
-    try {
-      await copyFile(p, dest);
-    } catch (e) {
-      messageDialog(`No se pudo guardar el PDF: ${String((e && e.message) || e)}`,
-        { title: 'Exportar PDF', kind: 'error' });
-    }
-  };
+  const exportPdf = () => exportPdfCopy(null);
   const detachViewer = () => {
     const p = getPdfPath();
     if (!p) return;

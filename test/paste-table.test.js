@@ -25,8 +25,8 @@ describe('paste a table as a tabular', () => {
 
   it('reads HTML tables, merged cells as \\multicolumn', () => {
     const rows = parseHtmlTable('<table><tr><th colspan="2">Cargas</th></tr><tr><td>G</td><td>3</td></tr></table>');
-    expect(rows[0]).toEqual([{ text: 'Cargas', span: 2 }]);
-    expect(rowsToTabular(rows)).toContain('\\multicolumn{2}{c}{Cargas} \\\\');
+    expect(rows[0]).toEqual([{ text: 'Cargas', span: 2, bold: true }]);
+    expect(rowsToTabular(rows)).toContain('\\multicolumn{2}{c}{\\textbf{Cargas}} \\\\');
   });
 
   it('escapes every LaTeX special character', () => {

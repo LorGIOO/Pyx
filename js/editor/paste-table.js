@@ -27,6 +27,14 @@
 import { EditorView } from '@codemirror/view';
 import { parseCells, cellAtLine } from './cell-parse.js';
 import { randomId } from '../core/hash.js';
+import { general } from '../solid/stores/settingsStore.js';
+
+/* The project's preamble, as the last compile saw it (compiler.js): a chapter
+   has no \usepackage of its own, so whether the project loads booktabs can
+   only be read from its root document. */
+let preambleHint = '';
+export const setPreambleHint = (text) => { preambleHint = String(text || ''); };
+const USES_BOOKTABS = /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bbooktabs\b[^}]*\}/;
 
 const SPECIAL = { '\\': '\\textbackslash{}', '&': '\\&', '%': '\\%', $: '\\$', '#': '\\#', _: '\\_', '{': '\\{', '}': '\\}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
 export const escapeCell = (s) => String(s).trim().replace(/[\\&%$#_{}~^]/g, (c) => SPECIAL[c]);
@@ -68,9 +76,16 @@ export function parseTsv(text) {
   return rows.map((r) => [...r, ...Array(cols - r.length).fill('')]);
 }
 
-/** Rows of cells from an HTML table (web page, Word), or null. A table that
- *  lays out CODE (line numbers beside the lines: GitHub, Pygments, highlight.js)
- *  is not one. */
+/** Did this HTML come from a spreadsheet (Excel, LibreOffice Calc, Google
+ *  Sheets)? Their copy of ONE column has no tab in it, so only the HTML says
+ *  that those lines are the rows of a table. */
+export const isSpreadsheetHtml = (html) => /urn:schemas-microsoft-com:office:excel|ProgId\s+content=["']?Excel|content=["']?LibreOffice|google-sheets-html-origin|data-sheets-/i.test(html || '');
+
+/** Rows of cells from an HTML table (spreadsheet, web page, Word), or null:
+ *  [{ text, span, bold }]. A cell merged DOWNWARDS (rowspan) keeps its text in
+ *  its first row and leaves an empty cell in each row below, so every row
+ *  still has all its columns. A table that lays out CODE (line numbers beside
+ *  the lines: GitHub, Pygments, highlight.js) is not one. */
 export function parseHtmlTable(html) {
   if (!/<table/i.test(html)) return null;
   let doc;
@@ -79,21 +94,55 @@ export function parseHtmlTable(html) {
   if (!table) return null;
   if (table.querySelector('pre, code, .blob-code, .highlight, .hljs, .linenos, .lineno, [data-line-number]')
     || /\b(highlight|blob|code|linenos|diff)\b/i.test(`${table.className} ${table.id}`)) return null;
+  // Excel styles its cells through classes (.xl65 {font-weight:700}): the
+  // parsed document computes no styles, so the bold classes are read here.
+  const boldClasses = new Set();
+  for (const st of doc.querySelectorAll('style')) {
+    const re = /\.([\w-]+)\s*\{[^}]*font-weight\s*:\s*(?:bold|[6-9]00)/gi;
+    let m;
+    while ((m = re.exec(st.textContent || ''))) boldClasses.add(m[1]);
+  }
+  const isBold = (td) => td.tagName === 'TH' || !!td.querySelector('b, strong')
+    || /font-weight\s*:\s*(?:bold|[6-9]00)/i.test(td.getAttribute('style') || '')
+    || [...td.classList].some((c) => boldClasses.has(c));
   const rows = [];
+  const carry = []; // column -> rows still covered by a cell merged from above
   for (const tr of table.querySelectorAll('tr')) {
     const row = [];
+    let col = 0;
+    const put = (cell) => { row.push(cell); col += cell.span; };
+    const filler = () => { while (carry[col] > 0) { carry[col]--; put({ text: '', span: 1 }); } };
     for (const td of tr.querySelectorAll('th, td')) {
+      filler();
       const span = Math.max(1, Math.min(50, +td.getAttribute('colspan') || 1));
-      row.push({ text: td.textContent.replace(/\s+/g, ' ').trim(), span });
+      const down = Math.max(1, Math.min(500, +td.getAttribute('rowspan') || 1));
+      const text = td.textContent.replace(/\s+/g, ' ').trim();
+      const at = col;
+      // `bold` only where it is: the rest of the cells keep their plain shape.
+      put(text && isBold(td) ? { text, span, bold: true } : { text, span });
+      if (down > 1) for (let k = 0; k < span; k++) carry[at + k] = down - 1;
     }
+    filler();
     if (row.length) rows.push(row);
   }
   if (!rows.length) return null;
   return rows;
 }
 
-/** The tabular for rows of strings (or {text, span} for merged cells). */
-export function rowsToTabular(rows, { booktabs = false, indent = '' } = {}) {
+/** Which rules a pasted table gets: what Configuración says, or — on
+ *  "automático" — booktabs when the document (or its project) loads it. */
+export function tableRules(docText) {
+  const pref = general.pasteTableRules;
+  if (pref === 'booktabs' || pref === 'hline' || pref === 'none') return pref;
+  return USES_BOOKTABS.test(docText || '') || USES_BOOKTABS.test(preambleHint) ? 'booktabs' : 'hline';
+}
+
+/** The tabular for rows of strings (or {text, span, bold} for merged cells).
+ *  `rules`: 'booktabs' | 'hline' | 'none' (`booktabs: true` is the old way of
+ *  asking for the first). `float`: wrap it in a table environment with
+ *  \caption and \label. */
+export function rowsToTabular(rows, { booktabs = false, rules = null, indent = '', float = false } = {}) {
+  const kind = rules || (booktabs ? 'booktabs' : 'hline');
   const cells = rows.map((r) => r.map((c) => (typeof c === 'string' ? { text: c, span: 1 } : c)));
   const cols = Math.max(...cells.map((r) => r.reduce((n, c) => n + c.span, 0)));
   // A column is numeric when every non-empty cell below the header is a number.
@@ -106,14 +155,25 @@ export function rowsToTabular(rows, { booktabs = false, indent = '' } = {}) {
     }).filter((v) => v.trim());
     align.push(vals.length && vals.every((v) => NUMERIC.test(v.trim())) ? 'r' : 'l');
   }
-  const line = (r) => r.map((c) => (c.span > 1 ? `\\multicolumn{${c.span}}{c}{${escapeCell(c.text)}}` : escapeCell(c.text))).join(' & ') + ' \\\\';
-  const top = booktabs ? '\\toprule' : '\\hline';
-  const mid = booktabs ? '\\midrule' : '\\hline';
-  const bot = booktabs ? '\\bottomrule' : '\\hline';
-  const body = [top, line(cells[0])];
-  if (cells.length > 1) body.push(mid, ...cells.slice(1).map(line));
-  body.push(bot);
-  return `\\begin{tabular}{${align.join('')}}\n${body.map((l) => `${indent}  ${l}`).join('\n')}\n${indent}\\end{tabular}`;
+  const cell = (c) => {
+    const t = escapeCell(c.text);
+    const body = c.bold && t ? `\\textbf{${t}}` : t;
+    return c.span > 1 ? `\\multicolumn{${c.span}}{c}{${body}}` : body;
+  };
+  const line = (r) => {
+    // A short row (a ragged selection) is completed, so LaTeX never meets a
+    // row with fewer cells than columns.
+    const width = r.reduce((n, c) => n + c.span, 0);
+    return [...r.map(cell), ...Array(Math.max(0, cols - width)).fill('')].join(' & ') + ' \\\\';
+  };
+  const rule = { booktabs: ['\\toprule', '\\midrule', '\\bottomrule'], hline: ['\\hline', '\\hline', '\\hline'], none: [null, null, null] }[kind];
+  const body = [rule[0], line(cells[0])];
+  if (cells.length > 1) body.push(rule[1], ...cells.slice(1).map(line));
+  body.push(rule[2]);
+  const pad = float ? `${indent}  ` : indent;
+  const tabular = `\\begin{tabular}{${align.join('')}}\n${body.filter((l) => l != null).map((l) => `${pad}  ${l}`).join('\n')}\n${pad}\\end{tabular}`;
+  if (!float) return tabular;
+  return `\\begin{table}[htbp]\n${pad}\\centering\n${pad}\\caption{}\n${pad}\\label{tab:}\n${pad}${tabular}\n${indent}\\end{table}`;
 }
 
 // Invisible characters that only break things: zero-width space/joiners,
@@ -168,11 +228,17 @@ export const pasteTables = EditorView.domEventHandlers({
     }
     const text = freshCellIds(cleanPaste(raw), cells.map((c) => c.id).filter(Boolean));
     let rows = parseTsv(text);
+    const html = data.getData('text/html') || '';
+    const hrows = html ? parseHtmlTable(html) : null;
     if (rows) {
-      // The HTML beside it (if it is the same table) knows the merged cells.
-      const html = data.getData('text/html') || '';
-      const hrows = html ? parseHtmlTable(html) : null;
+      // The HTML beside it (if it is the same table) knows the merged cells
+      // and which ones are bold.
       if (hrows && hrows.length === rows.length) rows = hrows;
+    } else if (hrows && hrows.length >= 2 && isSpreadsheetHtml(html) && !LOOKS_LIKE_CODE.test(text)) {
+      // ONE column copied from a spreadsheet: no tab anywhere in the text, so
+      // it used to paste as loose lines. Two cells or more are a table; a
+      // single cell stays the text it is.
+      rows = hrows;
     }
     if (!rows) {
       if (text === raw.replace(/\r\n?/g, '\n')) return false; // nothing to clean: the editor pastes
@@ -186,17 +252,20 @@ export const pasteTables = EditorView.domEventHandlers({
       return true;
     }
     e.preventDefault();
-    const doc = view.state.doc.toString();
-    const booktabs = /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bbooktabs\b[^}]*\}/.test(doc);
+    const rules = tableRules(view.state.doc.toString());
     const indent = (view.state.doc.lineAt(sel.from).text.match(/^[ \t]*/) || [''])[0];
     const plain = text;
     // Step 1: the text as copied (one undo step on its own)…
     view.dispatch({ changes: { from: sel.from, to: sel.to, insert: plain }, userEvent: 'input.paste' });
     // …step 2: the table in its place.
-    const table = rowsToTabular(rows, { booktabs, indent });
+    const float = general.pasteTableFloat === true;
+    const table = rowsToTabular(rows, { rules, indent, float });
+    // In a table environment the caret waits inside \caption{}: the title is
+    // the one thing the spreadsheet could not give.
+    const cap = float ? table.indexOf('\\caption{') : -1;
     view.dispatch({
       changes: { from: sel.from, to: sel.from + plain.length, insert: table },
-      selection: { anchor: sel.from + table.length },
+      selection: { anchor: sel.from + (cap >= 0 ? cap + '\\caption{'.length : table.length) },
       userEvent: 'input.paste',
     });
     return true;

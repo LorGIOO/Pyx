@@ -19,6 +19,11 @@ export const [tool, setTool] = createSignal('select'); // select | pan | magnify
 export const [invert, setInvert] = createSignal(saved('pdfInvert', false) === true); // night-mode folio
 export const [previewFile, setPreviewFile] = createSignal('');
 export const [hasPdf, setHasPdf] = createSignal(false);
+// Bumped every time a PDF is (re)loaded into the viewer — a recompile keeps
+// the file name, so nothing else tells "this is a new document object" (the
+// bookmarks panel must re-read the outline: its destinations point into the
+// PDF they came from).
+export const [pdfVersion, setPdfVersion] = createSignal(0);
 // Last PDF load failure, shown in the viewer instead of a silent blank pane.
 export const [loadError, setLoadError] = createSignal('');
 // Whether the detached viewer window is open: compiles then update THAT window
@@ -36,10 +41,45 @@ export const [searchProgress, setSearchProgress] = createSignal(0);
 // PDF annotation layer (drawing tools): which tool is active, the stroke color
 // and width, and whether the annotation toolbar is shown. Empty tool = off
 // (the page behaves normally: text selection, links, pan…).
+// Tool preferences are remembered between sessions (not the open/closed
+// state of the bar, nor the active tool: a viewer that opens ready to draw
+// is a viewer where a click meant to select text leaves a mark).
+const prefs = (() => {
+  try { return JSON.parse(localStorage.getItem('pyx-annot-prefs') || '{}') || {}; } catch (_) { return {}; }
+})();
+function pref(key, fallback, ok) {
+  const [get, set] = createSignal(ok(prefs[key]) ? prefs[key] : fallback);
+  return [get, (v) => {
+    set(v);
+    prefs[key] = v;
+    try { localStorage.setItem('pyx-annot-prefs', JSON.stringify(prefs)); } catch (_) { /* private mode */ }
+  }];
+}
+const isNum = (lo, hi) => (v) => typeof v === 'number' && v >= lo && v <= hi;
+const oneOf = (...list) => (v) => list.includes(v);
+
 export const [annotBarOpen, setAnnotBarOpen] = createSignal(false);
-export const [annotTool, setAnnotTool] = createSignal(''); // '' | pen | highlight | rect | arrow | line | text | eraser
-export const [annotColor, setAnnotColor] = createSignal('#e23b3b');
-export const [annotWidth, setAnnotWidth] = createSignal(2);
+// '' | select | texthl | underline | strike | pen | highlight | line | arrow |
+// rect | ellipse | tbox | note | eraser | laser
+export const [annotTool, setAnnotTool] = createSignal('');
+export const [annotColor, setAnnotColor] = pref('color', '#e23b3b', (v) => /^#[0-9a-f]{6}$/i.test(v || ''));
+// Stroke width in PDF points — any number, not three presets.
+export const [annotWidth, setAnnotWidth] = pref('width', 2, isNum(0.25, 60));
+// Lines and arrows: straight, curved (bend it by its middle) or elbowed.
+export const [annotLineKind, setAnnotLineKind] = pref('lineKind', 'straight', oneOf('straight', 'curve', 'elbow'));
+// Arrow heads: 'end' | 'both' | 'start' | 'none'.
+export const [annotHeads, setAnnotHeads] = pref('heads', 'end', oneOf('end', 'both', 'start', 'none'));
+export const [annotDash, setAnnotDash] = pref('dash', false, (v) => typeof v === 'boolean');
+// Rectangles with rounded corners.
+export const [annotRound, setAnnotRound] = pref('round', false, (v) => typeof v === 'boolean');
+// The eraser removes the whole mark it touches ('whole') or only the part
+// under it ('part').
+export const [annotEraser, setAnnotEraser] = pref('eraser', 'whole', oneOf('whole', 'part'));
+// Font size of text boxes, in points.
+export const [annotFont, setAnnotFont] = pref('font', 11, isNum(4, 96));
+// Type of the mark picked with the select tool ('' = none): the bar shows
+// that mark's own options, and changing them changes the mark.
+export const [annotSel, setAnnotSel] = createSignal('');
 
 export const getScale = () => scale();
 export const getFitMode = () => fitMode();

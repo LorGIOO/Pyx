@@ -2,7 +2,7 @@
 // CodeMirror view so tab components stay declarative.
 
 import { undo, redo, moveLineUp, moveLineDown } from '@codemirror/commands';
-import { openSearchPanel } from '@codemirror/search';
+import { openSearch } from './search-panel.js';
 import { EditorView } from '@codemirror/view';
 import { state } from '../core/state.js';
 import { getView as paneView, getViewOfDoc } from './setup.js';
@@ -46,7 +46,13 @@ export const doUndo = withView((v) => undo(v));
 export const doRedo = withView((v) => redo(v));
 export const openFind = () => {
   const v = getView();
-  if (v) openSearchPanel(v);
+  if (v) openSearch(v);
+};
+/** "Reemplazar" (Ctrl+R): the search panel with its replace row; the selected
+ *  word, if any, is what gets searched (search-panel.js). */
+export const openReplace = () => {
+  const v = getView();
+  if (v) openSearch(v, { replace: true });
 };
 export const clip = (action) => {
   const v = getView();

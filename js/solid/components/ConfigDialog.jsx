@@ -204,6 +204,24 @@ const FIELDS = () => [
     label: 'Eliminar los espacios finales al guardar', en: 'Remove trailing whitespace on save',
   },
   {
+    cat: 'editor', sec: ['Pegar tablas (Excel, Calc, web)', 'Pasting tables (Excel, Calc, web)'], key: 'pasteTableRules', type: 'select',
+    label: 'Líneas de la tabla pegada', en: 'Rules of the pasted table',
+    opts: () => [
+      ['auto', tr('Automático (booktabs si el proyecto lo carga)', 'Automatic (booktabs if the project loads it)')],
+      ['booktabs', 'booktabs (\\toprule, \\midrule, \\bottomrule)'],
+      ['hline', '\\hline'],
+      ['none', tr('Sin líneas', 'No rules')],
+    ],
+    hint: ['Copia celdas en Excel, LibreOffice Calc o Google Sheets (o una tabla de una web o de Word) y pégalas en el documento: Pyx reconoce filas y columnas y escribe el tabular, con los números alineados a la derecha, las celdas combinadas como \\multicolumn, las negritas como \\textbf y los caracteres especiales escapados. Ctrl+Z devuelve el texto tal como se copió. «Automático» mira el preámbulo del documento raíz; si booktabs se carga desde un .sty propio, elígelo aquí.',
+      'Copy cells in Excel, LibreOffice Calc or Google Sheets (or a table from a web page or Word) and paste them into the document: Pyx recognises rows and columns and writes the tabular, with numbers right-aligned, merged cells as \\multicolumn, bold as \\textbf and special characters escaped. Ctrl+Z gives back the text as copied. "Automatic" looks at the root document\'s preamble; if booktabs is loaded from your own .sty, choose it here.'],
+  },
+  {
+    cat: 'editor', sec: ['Pegar tablas (Excel, Calc, web)', 'Pasting tables (Excel, Calc, web)'], key: 'pasteTableFloat', type: 'check',
+    label: 'Envolverla en un entorno table con \\caption y \\label', en: 'Wrap it in a table environment with \\caption and \\label',
+    hint: ['El cursor queda dentro de \\caption{} para escribir el título. Desactivado, se pega solo el tabular.',
+      'The caret is left inside \\caption{} for the title. Off, only the tabular is pasted.'],
+  },
+  {
     cat: 'editor', sec: ['Desplazamiento', 'Scrolling'], key: 'cursorMargin', type: 'range',
     label: 'Líneas visibles por encima y por debajo del cursor', en: 'Cursor surrounding lines',
     min: 0, max: 20, step: 1, unit: (v) => (+v ? tr(`${v} líneas`, `${v} lines`) : '0'), after: EDIT,
@@ -364,6 +382,16 @@ const FIELDS = () => [
     cat: 'pdf', sec: ['Vista', 'View'], key: 'pdfInvert', type: 'check',
     label: 'Invertir los colores (modo noche)', en: 'Invert colors (night mode)',
     after: (v) => setInvert(v),
+  },
+  {
+    cat: 'pdf', sec: ['Ratón', 'Mouse'], key: 'pdfPanButton', type: 'select',
+    label: 'Mover la página arrastrando con', en: 'Drag the page with',
+    opts: () => [
+      ['middle', tr('El botón central (la rueda)', 'The middle button (the wheel)')],
+      ['right', tr('El botón derecho (y el central)', 'The right button (and the middle one)')],
+    ],
+    hint: ['Mantén pulsado ese botón sobre el PDF y arrastra para desplazarte en cualquier dirección. La herramienta «Mover» (la mano) lo hace con el botón izquierdo. Con el botón derecho pulsado, la rueda sigue haciendo zoom.',
+      'Hold that button over the PDF and drag to move in any direction. The "Pan" tool (the hand) does it with the left button. With the right button held, the wheel still zooms.'],
   },
   {
     cat: 'pdf', sec: ['Lupa', 'Magnifier'], key: 'loupeZoom', type: 'range',

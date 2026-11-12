@@ -3,7 +3,7 @@ import RibbonButton from '../RibbonButton.jsx';
 import RibbonDropdown from '../RibbonDropdown.jsx';
 import { icons } from '../icons.js';
 import { t } from '../../../../core/i18n.js';
-import { wrap, insertSnippet } from '../../../../editor/commands.js';
+import { wrap, insertSnippet, formulaFromImage } from '../../../../editor/commands.js';
 import {
   runSnippet, LEFT_DELIMS, RIGHT_DELIMS,
   MATH_ENVIRONMENTS, MATH_FUNCTIONS, MATH_THEOREMS, MATH_FONTS, MATH_STACK, MATH_ACCENTS,
@@ -25,6 +25,7 @@ export const MATH_LAYOUT = {
     ['delims', 'collapsed'],
     ['basic', 'collapsed'],
     ['mode', 'collapsed'],
+    ['ocr', 'collapsed'],
   ],
 };
 
@@ -37,6 +38,13 @@ export default function MathTab() {
           <RibbonButton size="small" icon={icons.mInline} label={t('En línea', 'Inline') + '  \\(…\\)'} onClick={() => wrap('\\(', '\\)')} />
           <RibbonButton size="small" icon={icons.mDisplay} label={t('Independiente', 'Display') + '  \\[…\\]'} onClick={() => wrap('\\[\n  ', '\n\\]')} />
         </div>
+      </RibbonGroup>
+
+      <RibbonGroup id="ocr" icon={icons.mOcr} label={t('Reconocer', 'Recognize')}>
+        <RibbonButton icon={icons.mOcr} label={t('Imagen a LaTeX', 'Image to LaTeX')}
+          title={t('Convierte en LaTeX la fórmula de una imagen y la escribe donde está el cursor. Usa la imagen del portapapeles (una captura de pantalla: Win+Mayús+S) o, si no hay ninguna, deja elegir un archivo. También puedes pegar la captura directamente en el editor con Ctrl+V.',
+            'Turns the formula in a picture into LaTeX and writes it at the caret. Uses the picture on the clipboard (a screenshot: Win+Shift+S) or, with none there, lets you pick a file. You can also paste the screenshot straight into the editor with Ctrl+V.')}
+          onClick={formulaFromImage} />
       </RibbonGroup>
 
       <RibbonGroup id="basic" icon={icons.mFrac} label={t('Básico', 'Basic')}>

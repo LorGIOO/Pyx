@@ -33,6 +33,25 @@ export function relativeTo(base, p) {
   return f.toLowerCase().startsWith(prefix) ? f.slice(prefix.length) : null;
 }
 
+/**
+ * `target` as LaTeX should name it from the folder `baseDir`: relative, with
+ * forward slashes, climbing with `..` when it is not underneath
+ * (`../999. Recursos/2. Imagenes/plano.pdf`). A file on another drive — which
+ * no relative path reaches — comes back absolute, with forward slashes.
+ */
+export function relativePath(baseDir, target) {
+  if (!target) return '';
+  const split = (s) => String(s).replace(/\\/g, '/').replace(/\/+$/, '').split('/');
+  const t = split(target);
+  if (!baseDir) return t.join('/');
+  const b = split(baseDir);
+  // Different roots (C: against E:, or a network share): no relative route.
+  if ((b[0] || '').toLowerCase() !== (t[0] || '').toLowerCase()) return t.join('/');
+  let i = 0;
+  while (i < b.length && i < t.length - 1 && b[i].toLowerCase() === t[i].toLowerCase()) i++;
+  return [...Array(b.length - i).fill('..'), ...t.slice(i)].join('/');
+}
+
 /** Join a directory and a name using the directory's own separator style. */
 export function joinPath(dir, name) {
   const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';

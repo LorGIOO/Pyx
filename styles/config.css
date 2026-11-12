@@ -220,6 +220,67 @@
 .wz-hint { font-size: 11px; color: var(--theme-text-secondary); }
 .wz-browse { padding: 4px 10px; }
 
+/* The assistants with a grid or a preview need the room. */
+.wz-modal.wz-wide { width: 820px; max-height: 90vh; }
+.wz-val { width: auto; min-width: 44px; }
+.wz-short { flex: 0 0 96px !important; }
+.wz-grow { flex: 1; }
+.wz-toolbar { display: flex; align-items: center; gap: 14px; }
+.wz-toolbar .wz-row { flex: 0 0 auto; }
+.wz-toolbar .wz-label { width: auto; }
+/* The table being written: a spreadsheet-like grid. It scrolls inside its own
+   box, so a long table never pushes the options out of the dialog. */
+.wz-grid-wrap {
+  max-height: 232px;
+  overflow: auto;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-ribbon-input-bg);
+}
+.wz-grid { border-collapse: collapse; width: 100%; }
+.wz-grid th, .wz-grid td { padding: 0; border: 1px solid var(--theme-border); min-width: 86px; }
+.wz-grid th { position: sticky; top: 0; z-index: 1; background: var(--theme-surface); }
+.wz-grid th select {
+  width: 100%; height: 22px; border: none; background: transparent;
+  font-size: 11px; color: var(--theme-text-secondary);
+}
+.wz-grid td input {
+  width: 100%; height: 24px; box-sizing: border-box;
+  padding: 0 6px; border: none; outline: none;
+  font-size: 12px; color: var(--theme-text); background: transparent;
+}
+.wz-grid td input:focus { box-shadow: inset 0 0 0 2px var(--theme-accent); }
+.wz-grid tr.wz-head td input { font-weight: 600; background: color-mix(in srgb, var(--theme-accent) 9%, transparent); }
+.wz-cols { display: flex; gap: 18px; }
+.wz-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.wz-row input[type="checkbox"] { flex: 0 0 auto; }
+/* What "Insertar" will write, as it will be written. */
+.wz-code {
+  margin: 2px 0 0;
+  max-height: 170px;
+  overflow: auto;
+  padding: 8px 10px;
+  font: 11.5px/1.45 'Cascadia Code', Consolas, monospace;
+  white-space: pre;
+  color: var(--theme-text);
+  background: var(--theme-ribbon-input-bg);
+  border: 1px solid var(--theme-border);
+  user-select: text;
+}
+.wz-needs { font: 11px/1.4 'Cascadia Code', Consolas, monospace; color: var(--theme-text-secondary); }
+.wz-images { display: flex; flex-direction: column; gap: 6px; }
+.wz-image { display: flex; align-items: center; gap: 10px; }
+.wz-image-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wz-thumb {
+  flex: 0 0 64px; height: 48px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--theme-text-secondary);
+  background: var(--theme-ribbon-input-bg);
+  border: 1px solid var(--theme-border);
+  overflow: hidden;
+}
+.wz-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.wz-add { align-self: flex-start; }
+
 /* ---- keyboard shortcuts tab (TeXstudio-like table) ---- */
 .cfg-keys-head, .cfg-keys-row {
   display: grid;

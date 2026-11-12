@@ -64,6 +64,13 @@ export const clip = (action) => {
 
 export const insertCell = withView((v) => insertCellTemplate(v));
 
+/** "Imagen a LaTeX": the formula in the clipboard's picture (or in a file),
+ *  written at the caret (img-latex.js). */
+export const formulaFromImage = () => {
+  const v = getView();
+  if (v) import('./img-latex.js').then((m) => m.formulaFromClipboard(v)).catch(() => {});
+};
+
 // Paste via the async clipboard API (execCommand('paste') is blocked in
 // Chromium); falls back to execCommand for older environments.
 export async function pasteClipboard() {

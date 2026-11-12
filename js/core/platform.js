@@ -267,6 +267,13 @@ export const runtimeInfo = () => invoke('runtime_info');
 export const installTectonic = () => invoke('install_tectonic');
 export const setupPython = (packages = []) => invoke('setup_python', { packages });
 export const installPackages = (python, packages) => invoke('install_packages', { python, packages });
+// Formula recognition (image -> LaTeX): its own environment and process.
+export const ocrReady = () => invoke('ocr_ready');
+export const setupOcr = () => invoke('setup_ocr');
+export async function imageToLatex(bytes) {
+  if (!isTauri()) return notDesktop('Imagen → LaTeX');
+  return tauriInvoke('image_to_latex', bytes); // raw body: the image itself
+}
 export const revealInExplorer = (path) => invoke('reveal_in_explorer', { path });
 export const openExternal = (path) => invoke('open_external', { path });
 // A compiled PDF, in the system's PDF application: a copy of it, kept up to

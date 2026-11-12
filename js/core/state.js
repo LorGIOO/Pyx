@@ -32,6 +32,9 @@ export const state = createMutable({
   // Libraries the open document imports that its Python lacks (status bar).
   missingModules: [],
   kernelStatus: 'idle', // idle | starting | ready | busy | error
+  // What the formula recognizer (image -> LaTeX) is doing, for the status
+  // bar; '' when idle.
+  ocrBusy: '',
   // True when a soft interrupt has not taken hold: the stop button then offers
   // the forced kill instead of repeating a word that plainly did nothing.
   kernelForceHint: false,

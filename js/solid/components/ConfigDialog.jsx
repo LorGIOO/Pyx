@@ -222,6 +222,34 @@ const FIELDS = () => [
       'The caret is left inside \\caption{} for the title. Off, only the tabular is pasted.'],
   },
   {
+    cat: 'editor', sec: ['Pegar imágenes y fórmulas', 'Pasting pictures and formulas'], key: 'pasteImageAs', type: 'select',
+    label: 'Al pegar una imagen en el documento', en: 'When a picture is pasted into the document',
+    opts: () => [
+      ['ask', tr('Preguntar', 'Ask')],
+      ['formula', tr('Convertirla en la fórmula LaTeX que muestra', 'Turn it into the LaTeX formula it shows')],
+      ['figure', tr('Guardarla e insertarla como figura', 'Save it and insert it as a figure')],
+    ],
+    hint: ['Haz una captura de una fórmula (Win+Mayús+S) y pégala con Ctrl+V: Pyx la reconoce y escribe su LaTeX donde está el cursor. La primera vez ofrece descargar el reconocedor (unos 200 MB, en la carpeta de Pyx; no toca tu Python); después funciona sin conexión. También está en la cinta: Matemáticas → Imagen a LaTeX.',
+      'Take a screenshot of a formula (Win+Shift+S) and paste it with Ctrl+V: Pyx recognizes it and writes its LaTeX at the caret. The first time it offers to download the recognizer (about 200 MB, in Pyx\'s folder; your Python is not touched); afterwards it works offline. It is also on the ribbon: Math → Image to LaTeX.'],
+  },
+  {
+    cat: 'editor', sec: ['Pegar imágenes y fórmulas', 'Pasting pictures and formulas'], key: 'ocrMode', type: 'select',
+    label: 'La fórmula reconocida se escribe', en: 'The recognized formula is written',
+    opts: () => [
+      ['display', tr('Como fórmula independiente  \\[ … \\]', 'As a display formula  \\[ … \\]')],
+      ['inline', tr('En línea  $…$', 'Inline  $…$')],
+      ['raw', tr('Tal cual, sin delimitadores', 'As it is, without delimiters')],
+    ],
+    hint: ['Si el cursor ya está dentro de una fórmula ($…$, \\[…\\], equation, align…), se escribe siempre tal cual.',
+      'If the caret is already inside mathematics ($…$, \\[…\\], equation, align…), it is always written as it is.'],
+  },
+  {
+    cat: 'editor', sec: ['Pegar imágenes y fórmulas', 'Pasting pictures and formulas'], key: 'pasteImageDir', type: 'text',
+    label: 'Carpeta de las imágenes pegadas', en: 'Folder for pasted pictures', placeholder: 'imagenes',
+    hint: ['Relativa a la carpeta del documento raíz (por ejemplo «imagenes» o «../999. Recursos/2. Imagenes»). La imagen se guarda ahí como captura-fecha-hora.png y se inserta su figura con la ruta relativa.',
+      'Relative to the root document\'s folder (for example "imagenes" or "../999. Recursos/2. Imagenes"). The picture is saved there as captura-date-time.png and its figure is inserted with the relative path.'],
+  },
+  {
     cat: 'editor', sec: ['Desplazamiento', 'Scrolling'], key: 'cursorMargin', type: 'range',
     label: 'Líneas visibles por encima y por debajo del cursor', en: 'Cursor surrounding lines',
     min: 0, max: 20, step: 1, unit: (v) => (+v ? tr(`${v} líneas`, `${v} lines`) : '0'), after: EDIT,

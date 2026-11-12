@@ -266,6 +266,46 @@ pub fn setup_python(app: Say, packages: &[String]) -> Result<String, String> {
     Ok(py.to_string_lossy().to_string())
 }
 
+/* ---- formula recognition (image -> LaTeX) --------------------------------
+   Its own small environment, apart from the one the documents compute in:
+   the recognizer (rapid_latex_ocr: an ONNX port of LaTeX-OCR, no PyTorch)
+   does not install on every Python — it has no build for 3.13 — and nothing
+   it needs belongs in the user's interpreter. */
+fn ocr_dir() -> PathBuf {
+    tools_dir().join("ocr")
+}
+/// The interpreter of the recognizer's environment, once it is set up.
+pub fn ocr_python() -> Option<PathBuf> {
+    let p = if cfg!(windows) {
+        ocr_dir().join("Scripts").join("python.exe")
+    } else {
+        ocr_dir().join("bin").join("python")
+    };
+    // The marker is written only after the package installed: an environment
+    // left half-made by an interrupted download does not count as ready.
+    (p.exists() && ocr_dir().join("pyx-ocr-ready").exists()).then_some(p)
+}
+
+/// Create the recognizer's environment (standalone CPython 3.12 + the
+/// package). Its models are fetched by the package itself on first use.
+pub fn setup_ocr(app: Say) -> Result<String, String> {
+    if let Some(py) = ocr_python() {
+        return Ok(py.to_string_lossy().to_string());
+    }
+    let uv = ensure_uv(app)?;
+    let env = ocr_dir();
+    let py = if cfg!(windows) { env.join("Scripts").join("python.exe") } else { env.join("bin").join("python") };
+    if !py.exists() {
+        say(app, "Preparando el reconocedor de fórmulas (se descarga una sola vez)…");
+        run(app, uv_command(&uv).args(["venv", "--python", "3.12", "--managed-python"]).arg(&env))?;
+    }
+    say(app, "Instalando rapid_latex_ocr…");
+    run(app, uv_command(&uv).args(["pip", "install", "--python"]).arg(&py).arg("rapid_latex_ocr"))?;
+    std::fs::write(env.join("pyx-ocr-ready"), b"ok").map_err(|e| e.to_string())?;
+    say(app, "Reconocedor de fórmulas listo.");
+    Ok(py.to_string_lossy().to_string())
+}
+
 /// Install `packages` into the interpreter `python` (the one the kernel runs).
 /// uv first (fast, and it works on Pyx's environment and on most others);
 /// `python -m pip install --user` when uv cannot (a distro-managed Python).

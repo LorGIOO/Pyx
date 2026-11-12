@@ -53,6 +53,15 @@ export default function StatusBar() {
         <span class="label">{kernelLabel()[state.kernelStatus] || state.kernelStatus}</span>
       </div>
 
+      {/* The formula recognizer at work (image -> LaTeX): it can take a few
+          seconds — the first time, as long as its download — and the editor
+          stays free meanwhile, so something has to say it is running. */}
+      <Show when={state.ocrBusy}>
+        <div class="status-item status-ocr" title={state.ocrBusy}>
+          <span class="status-dot busy"></span>
+          <span class="value">{state.ocrBusy}</span>
+        </div>
+      </Show>
       <div class="status-item status-path status-python" title={state.env.python || ''}>
         <span class="label">Python:</span>
         <span class="value">{shortExe(state.env.python)}</span>

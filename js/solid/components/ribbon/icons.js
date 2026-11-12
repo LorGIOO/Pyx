@@ -48,6 +48,8 @@ export const icons = {
   mSup: `<svg ${A}><text x="5.4" y="12.4" text-anchor="middle" font-size="10" font-style="italic" font-family="Georgia,serif" fill="currentColor" stroke="none">x</text><text x="11.6" y="6.4" text-anchor="middle" font-size="7" font-family="Georgia,serif" fill="currentColor" stroke="none">2</text></svg>`,
   mSub: `<svg ${A}><text x="5.4" y="10.8" text-anchor="middle" font-size="10" font-style="italic" font-family="Georgia,serif" fill="currentColor" stroke="none">x</text><text x="11.6" y="14.4" text-anchor="middle" font-size="7" font-family="Georgia,serif" fill="currentColor" stroke="none">2</text></svg>`,
   mInline: `<svg ${A}><text x="8" y="11" text-anchor="middle" font-size="7.4" font-family="Georgia,serif" fill="currentColor" stroke="none">$x$</text></svg>`,
+  // A picture frame with a formula coming out of it (image -> LaTeX).
+  mOcr: `<svg ${A}><rect x="1.5" y="2.5" width="8" height="7" rx="1"/><path d="m3 8 1.8-1.8L6.4 7.8"/><path d="M11.5 6h2.2M12.6 4.9v2.2"/><text x="9.4" y="14" text-anchor="middle" font-size="6.4" font-style="italic" font-family="Georgia,serif" fill="currentColor" stroke="none">x²</text></svg>`,
   mDisplay: `<svg ${A}><path d="M3.2 3v10M2 3h2.4M2 13h2.4M12.8 3v10M11.6 3H14M11.6 13H14"/><text x="8" y="10.6" text-anchor="middle" font-size="7" font-style="italic" font-family="Georgia,serif" fill="currentColor" stroke="none">x</text></svg>`,
   mArray: `<svg ${A}><path d="M3.6 2.6v10.8M12.4 2.6v10.8"/>${dot(6.4, 5.8)}${dot(9.6, 5.8)}${dot(6.4, 10.2)}${dot(9.6, 10.2)}</svg>`,
   table: svg('<rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M1.5 6h13M1.5 9.8h13M6 6v7.5M10.2 6v7.5"/>'),

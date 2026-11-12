@@ -802,6 +802,97 @@ async fn setup_python(app: tauri::AppHandle, packages: Option<Vec<String>>) -> R
         .map_err(|e| e.to_string())?
 }
 
+/// Is the formula recognizer (image -> LaTeX) installed?
+#[tauri::command]
+fn ocr_ready() -> bool {
+    runtime::ocr_python().is_some()
+}
+
+/// Install the formula recognizer in its own environment (runtime.rs). Its
+/// progress goes out as `setup:line` events, like the other installs.
+#[tauri::command]
+async fn setup_ocr(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || runtime::setup_ocr(&setup_say(&app)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The recognizer's script travels inside the binary, like the kernel.
+const IMG2LATEX_PY: &str = include_str!("../python/img2latex.py");
+
+/// The LaTeX of the formula in an image. The image arrives as the request
+/// BODY (PNG/JPEG bytes: a screenshot pasted into the editor), is written to
+/// a temporary file and read by the recognizer in its own process — so a
+/// slow first run (it downloads its models once) or a crash never touches
+/// the kernel the document computes in. Bounded in time: the process is
+/// killed after four minutes.
+#[tauri::command]
+async fn image_to_latex(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("image_to_latex espera la imagen en el cuerpo de la petición".into());
+    };
+    if bytes.is_empty() || bytes.len() > 40 * 1024 * 1024 {
+        return Err("La imagen está vacía o es demasiado grande.".into());
+    }
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        let py = runtime::ocr_python().ok_or("El reconocedor de fórmulas no está instalado.")?;
+        let dir = std::env::temp_dir().join(format!("pyx-ocr-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let img = dir.join(format!("{stamp}.png"));
+        let script = dir.join("img2latex.py");
+        std::fs::write(&img, &bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&script, IMG2LATEX_PY).map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(&py);
+        // -I: isolated — no PYTHON* variables, no user site, nothing from the
+        // folder it runs in. UTF-8 so the JSON line is read as written.
+        cmd.args(["-I", "-X", "utf8"]).arg(&script).arg(&img)
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        quiet(&mut cmd);
+        let mut child = cmd.spawn().map_err(|e| format!("No se pudo iniciar el reconocedor: {e}"))?;
+        // Drain both pipes on their own threads: a child that fills one while
+        // we wait on the other would never finish.
+        let mut so = child.stdout.take();
+        let mut se = child.stderr.take();
+        let t_out = std::thread::spawn(move || { let mut s = String::new(); if let Some(o) = so.as_mut() { let _ = o.read_to_string(&mut s); } s });
+        let t_err = std::thread::spawn(move || { let mut s = String::new(); if let Some(e) = se.as_mut() { let _ = e.read_to_string(&mut s); } s });
+        let started = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break Some(st),
+                Ok(None) if started.elapsed() > std::time::Duration::from_secs(240) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(40)),
+                Err(e) => { let _ = std::fs::remove_file(&img); return Err(e.to_string()); }
+            }
+        };
+        let out = t_out.join().unwrap_or_default();
+        let err = t_err.join().unwrap_or_default();
+        let _ = std::fs::remove_file(&img);
+        if status.is_none() {
+            return Err("El reconocedor tardó demasiado y se ha detenido (¿sin conexión para descargar sus modelos la primera vez?).".into());
+        }
+        let line = out.lines().rev().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
+        let v: serde_json::Value = serde_json::from_str(line).map_err(|_| {
+            let tail: Vec<&str> = err.lines().rev().take(3).collect();
+            format!("El reconocedor no respondió. {}", tail.into_iter().rev().collect::<Vec<_>>().join(" "))
+        })?;
+        if v["ok"].as_bool() == Some(true) {
+            Ok(v["latex"].as_str().unwrap_or("").to_string())
+        } else {
+            Err(v["error"].as_str().unwrap_or("no se pudo reconocer la imagen").to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Install packages into the interpreter the kernel runs.
 #[tauri::command]
 async fn install_packages(app: tauri::AppHandle, python: String, packages: Vec<String>) -> Result<(), String> {
@@ -1448,6 +1539,9 @@ pub fn run() {
             install_tectonic,
             setup_python,
             install_packages,
+            ocr_ready,
+            setup_ocr,
+            image_to_latex,
             file_stamps,
             read_sources,
             read_notebook,

@@ -461,8 +461,8 @@ const FIELDS = () => [
     cat: 'pdf', sec: ['Ratón', 'Mouse'], key: 'pdfPanButton', type: 'select',
     label: 'Mover la página arrastrando con', en: 'Drag the page with',
     opts: () => [
-      ['middle', tr('El botón central (la rueda)', 'The middle button (the wheel)')],
       ['right', tr('El botón derecho (y el central)', 'The right button (and the middle one)')],
+      ['middle', tr('Solo el botón central (la rueda)', 'Only the middle button (the wheel)')],
     ],
     hint: ['Mantén pulsado ese botón sobre el PDF y arrastra para desplazarte en cualquier dirección. La herramienta «Mover» (la mano) lo hace con el botón izquierdo. Con el botón derecho pulsado, la rueda sigue haciendo zoom.',
       'Hold that button over the PDF and drag to move in any direction. The "Pan" tool (the hand) does it with the left button. With the right button held, the wheel still zooms.'],
@@ -828,6 +828,21 @@ export default function ConfigDialog() {
                 <p class="cfg-hint">
                   {tr('Crea, con uv, un Python propio de Pyx con numpy, scipy, sympy, pandas, matplotlib, handcalcs y pint, sin tocar el sistema. Pasa a ser el intérprete que usa Pyx.',
                     'Creates, with uv, Pyx\'s own Python with numpy, scipy, sympy, pandas, matplotlib, handcalcs and pint, without touching the system. It becomes the interpreter Pyx uses.')}
+                </p>
+              </Show>
+
+              <Show when={!searching() && cat() === 'general'}>
+                <div class="cfg-section">{tr('Actualizaciones', 'Updates')}</div>
+                <div class="cfg-row">
+                  <span class="cfg-label">{tr('Versión instalada', 'Installed version')}: <b>Pyx {__APP_VERSION__}</b></span>
+                  <button class="ctl-btn primary" disabled={state.updateBusy}
+                    onClick={() => import('../../core/updates.js').then((m) => m.updateNow())}>
+                    {state.updateBusy ? tr('Actualizando…', 'Updating…') : tr('Buscar actualizaciones', 'Check for updates')}
+                  </button>
+                </div>
+                <p class="cfg-hint">
+                  {state.updateStatus || tr('Si hay una versión nueva, Pyx la descarga, comprueba que es la publicada (SHA-256), la instala y se vuelve a abrir solo. Solo pregunta si hay documentos sin guardar.',
+                    'If there is a new version, Pyx downloads it, checks it is the published one (SHA-256), installs it and reopens by itself. It only asks if there are unsaved documents.')}
                 </p>
               </Show>
 

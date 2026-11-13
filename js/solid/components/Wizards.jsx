@@ -10,6 +10,35 @@ import {
 import { getDocContent } from '../../editor/setup.js';
 import { activeDoc } from '../../core/state.js';
 import { registerDialog, closeDialogs } from '../stores/dialogStore.js';
+import { general, setGeneral } from '../stores/settingsStore.js';
+
+/* «Mi estilo»: the options of each assistant the user saved as their own.
+   A new table or figure starts from them instead of the built-in defaults;
+   content (cells, images, titles, labels) is never part of a style. */
+const savedStyle = (key) => {
+  const v = general[key];
+  return v && typeof v === 'object' ? v : {};
+};
+const pick = (o, k, fallback, ok = () => true) => (o[k] !== undefined && ok(o[k]) ? o[k] : fallback);
+const isOneOf = (...list) => (v) => list.includes(v);
+const isBool = (v) => typeof v === 'boolean';
+const isNum = (lo, hi) => (v) => typeof v === 'number' && v >= lo && v <= hi;
+
+/** The two buttons every assistant shows: save the current look as «my
+ *  style», or go back to Pyx's defaults. */
+function StyleButtons(props) {
+  const [msg, setMsg] = createSignal('');
+  const flash = (t) => { setMsg(t); setTimeout(() => setMsg(''), 2200); };
+  return (
+    <div class="wz-style">
+      <button class="wz-browse" title="Las próximas tablas o figuras empezarán con estas opciones (no se guarda el contenido)"
+        onClick={() => { setGeneral({ [props.key]: props.get() }); flash('Guardado como tu estilo'); }}>Guardar como mi estilo</button>
+      <button class="wz-browse" title="Volver a las opciones de Pyx" disabled={!Object.keys(savedStyle(props.key)).length}
+        onClick={() => { setGeneral({ [props.key]: null }); props.reset(); flash('Estilo de Pyx restablecido'); }}>Estilo de Pyx</button>
+      <span class="wz-hint">{msg()}</span>
+    </div>
+  );
+}
 
 // Table & figure assistants: movable dialogs (the Configuración chrome) where
 // the table is FILLED IN — typed, or pasted from a spreadsheet — and the
@@ -77,19 +106,31 @@ function TableWizard() {
     ['', '', ''],
     ['', '', ''],
   ]);
-  const [align, setAlign] = createSignal(['l', 'l', 'l']);
-  const [rules, setRules] = createSignal(tableRules(activeDoc() ? getDocContent(activeDoc().id) : ''));
-  const [vlines, setVlines] = createSignal(false);
-  const [header, setHeader] = createSignal(true);
-  const [headerBold, setHeaderBold] = createSignal(true);
-  const [escape, setEscape] = createSignal(true);
-  const [float, setFloat] = createSignal('htbp');
+  const st = savedStyle('tableStyle');
+  const autoRules = () => tableRules(activeDoc() ? getDocContent(activeDoc().id) : '');
+  const ALIGNS = isOneOf('l', 'c', 'r', 'p');
+  const defAlign = pick(st, 'align', 'l', ALIGNS);
+  const [align, setAlign] = createSignal([defAlign, defAlign, defAlign]);
+  const [rules, setRules] = createSignal(pick(st, 'rules', null, isOneOf('booktabs', 'hline', 'grid', 'none')) || autoRules());
+  const [vlines, setVlines] = createSignal(pick(st, 'vlines', false, isBool));
+  const [header, setHeader] = createSignal(pick(st, 'header', true, isBool));
+  const [headerBold, setHeaderBold] = createSignal(pick(st, 'headerBold', true, isBool));
+  const [escape, setEscape] = createSignal(pick(st, 'escape', true, isBool));
+  const [float, setFloat] = createSignal(pick(st, 'float', 'htbp', isOneOf('htbp', 'H', 't', 'b', 'p', 'none')));
   const [caption, setCaption] = createSignal('');
-  const [captionPos, setCaptionPos] = createSignal('top');
+  const [captionPos, setCaptionPos] = createSignal(pick(st, 'captionPos', 'top', isOneOf('top', 'bottom')));
   const [label, setLabel] = createSignal('');
-  const [size, setSize] = createSignal('');
-  const [fit, setFit] = createSignal(false);
-  const [pWidth, setPWidth] = createSignal('3cm');
+  const [size, setSize] = createSignal(pick(st, 'size', '', isOneOf('', 'small', 'footnotesize', 'scriptsize')));
+  const [fit, setFit] = createSignal(pick(st, 'fit', false, isBool));
+  const [pWidth, setPWidth] = createSignal(pick(st, 'pWidth', '3cm', (v) => typeof v === 'string' && v.length < 20));
+  const styleNow = () => ({
+    align: align()[0], rules: rules(), vlines: vlines(), header: header(), headerBold: headerBold(), escape: escape(),
+    float: float(), captionPos: captionPos(), size: size(), fit: fit(), pWidth: pWidth(),
+  });
+  const resetStyle = () => {
+    setAlign(align().map(() => 'l')); setRules(autoRules()); setVlines(false); setHeader(true); setHeaderBold(true);
+    setEscape(true); setFloat('htbp'); setCaptionPos('top'); setSize(''); setFit(false); setPWidth('3cm');
+  };
   let gridEl;
 
   const nRows = () => cells().length;
@@ -98,7 +139,7 @@ function TableWizard() {
     r = Math.max(1, Math.min(MAX_ROWS, r | 0));
     c = Math.max(1, Math.min(MAX_COLS, c | 0));
     setCells(Array.from({ length: r }, (_, i) => Array.from({ length: c }, (_, j) => (cells()[i] && cells()[i][j]) || '')));
-    setAlign(Array.from({ length: c }, (_, j) => align()[j] || 'l'));
+    setAlign(Array.from({ length: c }, (_, j) => align()[j] || defAlign));
   };
   const setCell = (i, j, v) => setCells(cells().map((r, ri) => (ri === i ? r.map((c, ci) => (ci === j ? v : c)) : r)));
   const setColAlign = (j, v) => setAlign(align().map((a, k) => (k === j ? v : a)));
@@ -263,6 +304,7 @@ function TableWizard() {
           </div>
           <pre class="wz-code">{code()}</pre>
           <Needs list={tablePackages(options())} />
+          <StyleButtons key="tableStyle" get={styleNow} reset={resetStyle} />
         </div>
         <div class="cfg-footer">
           <button onClick={() => setTableOpen(false)}>Cancelar</button>
@@ -309,16 +351,25 @@ function Thumb(props) {
 function FigureWizard() {
   const [pos, startDrag] = useDrag();
   const [images, setImages] = createSignal([{ path: '', caption: '' }]);
-  const [unit, setUnit] = createSignal('textwidth');
-  const [width, setWidth] = createSignal(0.8);
-  const [widthCm, setWidthCm] = createSignal(10);
-  const [height, setHeight] = createSignal(0);
+  const st = savedStyle('figureStyle');
+  const [unit, setUnit] = createSignal(pick(st, 'unit', 'textwidth', isOneOf('textwidth', 'cm', 'natural')));
+  const [width, setWidth] = createSignal(pick(st, 'width', 0.8, isNum(0.05, 1)));
+  const [widthCm, setWidthCm] = createSignal(pick(st, 'widthCm', 10, isNum(0.5, 40)));
+  const [height, setHeight] = createSignal(pick(st, 'height', 0, isNum(0, 40)));
   const [angle, setAngle] = createSignal(0);
-  const [perRow, setPerRow] = createSignal(2);
-  const [float, setFloat] = createSignal('htbp');
-  const [centered, setCentered] = createSignal(true);
+  const [perRow, setPerRow] = createSignal(pick(st, 'perRow', 2, isNum(1, 4)));
+  const [float, setFloat] = createSignal(pick(st, 'float', 'htbp', isOneOf('htbp', 'H', 't', 'b', 'p', 'none')));
+  const [centered, setCentered] = createSignal(pick(st, 'centered', true, isBool));
   const [caption, setCaption] = createSignal('');
-  const [captionPos, setCaptionPos] = createSignal('bottom');
+  const [captionPos, setCaptionPos] = createSignal(pick(st, 'captionPos', 'bottom', isOneOf('top', 'bottom')));
+  const styleNow = () => ({
+    unit: unit(), width: width(), widthCm: widthCm(), height: height(), perRow: perRow(), float: float(),
+    centered: centered(), captionPos: captionPos(),
+  });
+  const resetStyle = () => {
+    setUnit('textwidth'); setWidth(0.8); setWidthCm(10); setHeight(0); setPerRow(2); setFloat('htbp');
+    setCentered(true); setCaptionPos('bottom');
+  };
   const [label, setLabel] = createSignal('');
   // LaTeX resolves an image from the folder of the ROOT document, also when
   // the figure is written in a chapter: that is the folder paths are made
@@ -432,6 +483,7 @@ function FigureWizard() {
           </div>
           <pre class="wz-code">{code()}</pre>
           <Needs list={figurePackages(options())} />
+          <StyleButtons key="figureStyle" get={styleNow} reset={resetStyle} />
         </div>
         <div class="cfg-footer">
           <button onClick={() => setFigureOpen(false)}>Cancelar</button>

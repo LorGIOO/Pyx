@@ -181,9 +181,12 @@ export const GENERAL_SECTIONS = {
     // 'none' — and whether it comes wrapped in a table environment.
     pasteTableRules: 'auto',
     pasteTableFloat: false,
+    // «Guardar como mi estilo» in the table and figure assistants (null: Pyx's).
+    tableStyle: null,
+    figureStyle: null,
     // A picture pasted into the editor (img-latex.js): 'ask', 'formula'
     // (recognize it as LaTeX) or 'figure' (save it and insert the figure).
-    pasteImageAs: 'ask',
+    pasteImageAs: 'formula',
     // Folder, next to the root document, where pasted pictures are saved.
     pasteImageDir: 'imagenes',
     // A recognized formula outside mathematics: 'display' (\[ … \]),
@@ -246,7 +249,7 @@ export const GENERAL_SECTIONS = {
     selSyncPdfToCode: false,
     // Button that drags the page: 'middle' (the wheel button) or 'right'
     // (the middle one keeps working). preview.js attachEvents.
-    pdfPanButton: 'middle',
+    pdfPanButton: 'right',
   },
   lang: {
     spellCheck: true,

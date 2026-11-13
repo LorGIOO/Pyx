@@ -12,7 +12,7 @@
 import { state } from '../core/state.js';
 import {
   ocrReady, setupOcr, imageToLatex, onAppEvent, askDialog, choiceDialog, messageDialog,
-  writeBinaryFile, createDir, openImageDialog, readBinaryFile, isTauri,
+  writeBinaryFile, createDir, openImageDialog, readBinaryFile, isTauri, ocrWarm, clipboardImage,
 } from '../core/platform.js';
 import { joinPath, relativePath } from '../core/paths.js';
 import { general } from '../solid/stores/settingsStore.js';
@@ -139,11 +139,19 @@ export async function insertImageAsFigure(view, bytes, ext = 'png') {
 
 /** A picture was pasted into the editor (no text with it): a formula to
  *  recognize, or a figure to insert? Configuración can fix the answer. */
+/** Start the recognizer now, if it is installed, so that the formula is
+ *  ready sooner (it loads its models once per session). */
+async function warmIfReady() {
+  try { if (isTauri() && (await ocrReady())) ocrWarm().catch(() => {}); } catch (_) { /* not installed */ }
+}
+
 export async function pastedImage(view, blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const ext = /jpe?g/i.test(blob.type) ? 'jpg' : 'png';
   let what = general.pasteImageAs || 'ask';
   if (what === 'ask') {
+    // While the question is on screen, the recognizer is already loading.
+    warmIfReady();
     const ans = await choiceDialog('Has pegado una imagen. ¿Qué quieres hacer con ella?',
       { title: 'Pegar imagen', kind: 'info', yes: 'Convertir en fórmula LaTeX', no: 'Insertar como figura' });
     if (ans === 'cancel') return false;
@@ -152,17 +160,21 @@ export async function pastedImage(view, blob) {
   return what === 'formula' ? insertFormulaFromImage(view, bytes) : insertImageAsFigure(view, bytes, ext);
 }
 
-/** "Imagen → LaTeX" (cinta Matemáticas): the picture on the clipboard, or —
- *  with none there — one chosen from disk. */
+/** "Imagen a LaTeX" (cinta Matemáticas): the picture on the clipboard — read
+ *  straight from the system, so a screenshot just taken (Win+Mayús+S) works
+ *  without any dialog — or, with none there, one chosen from disk. */
 export async function formulaFromClipboard(view) {
   if (!view) return false;
   let bytes = null;
-  try {
-    for (const item of await navigator.clipboard.read()) {
-      const type = item.types.find((t) => /^image\//.test(t));
-      if (type) { bytes = new Uint8Array(await (await item.getType(type)).arrayBuffer()); break; }
-    }
-  } catch (_) { /* no permission, or nothing readable: fall through to a file */ }
+  try { bytes = await clipboardImage(); } catch (_) { bytes = null; }
+  if (!bytes) {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((t) => /^image\//.test(t));
+        if (type) { bytes = new Uint8Array(await (await item.getType(type)).arrayBuffer()); break; }
+      }
+    } catch (_) { /* nothing readable there either */ }
+  }
   if (!bytes) {
     const p = await openImageDialog().catch(() => null);
     if (!p) return false;

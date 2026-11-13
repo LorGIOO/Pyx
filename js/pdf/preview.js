@@ -1543,7 +1543,7 @@ function attachEvents(el) {
     }
     // Which button drags the page is the user's choice (Configuración → Visor
     // PDF → Ratón): the middle one always does, the right one when asked to.
-    const wantPan = e.button === 1 || (e.button === 2 && general.pdfPanButton === 'right')
+    const wantPan = e.button === 1 || (e.button === 2 && general.pdfPanButton !== 'middle')
       || (tool() === 'pan' && e.button === 0);
     if (wantPan) {
       e.preventDefault();

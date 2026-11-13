@@ -216,6 +216,13 @@
   text-decoration-skip-ink: none;
   text-underline-offset: 2px;
 }
+/* Wording (a repeated word, a redundancy, «en base a»): green, as Word's
+   style suggestions. */
+.editor-host .cm-style-bad {
+  text-decoration: underline wavy #16a34a;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
+}
 /* Spelling suggestions in the context menu render in italic to stand out. */
 .ctx-menu .ctx-item .ctx-label { }
 

@@ -3847,7 +3847,8 @@ _NB_EXTRA_BUDGET = 16_000_000   # bytes for all of them
 def _pyx_data_dir():
     """Pyx's own data folder (runtime.rs tools_dir)."""
     if os.name == "nt":
-        return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Pyx")
+        # Not the program folder (%LOCALAPPDATA%\\Pyx): the app's data folder.
+        return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "com.pyx.studio")
     if sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Pyx")
     base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")

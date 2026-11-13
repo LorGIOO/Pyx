@@ -379,7 +379,9 @@ function editText(n, a, content, isNew) {
   });
   ta.addEventListener('pointerdown', (e) => e.stopPropagation());
   ta.addEventListener('blur', () => finish(true));
-  requestAnimationFrame(() => { ta.focus(); grow(); });
+  // preventScroll: the browser would otherwise scroll the viewer to bring
+  // the editor fully into view — the page jumping under the click.
+  requestAnimationFrame(() => { ta.focus({ preventScroll: true }); grow(); });
 }
 
 /* ---------- text markup from the selection ---------- */

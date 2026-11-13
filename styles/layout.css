@@ -788,12 +788,22 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  min-height: 32px;
-  padding: 2px 6px;
+  /* ONE line, one height, always. It used to wrap: picking a tool whose
+     options did not fit added a second row, the viewer below lost that
+     height, and the pages moved (or re-fitted) under a pointer that had not
+     touched them. What does not fit scrolls sideways instead. */
+  height: 32px;
+  flex: 0 0 32px;
+  padding: 0 6px;
   background: var(--theme-panel-bg);
   border-bottom: 1px solid var(--theme-panel-border);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.pdf-annotbar::-webkit-scrollbar { height: 0; }
+.pdf-annotbar > * { flex-shrink: 0; }
 .annot-swatch {
   width: 16px; height: 16px;
   border: 1px solid rgba(127, 127, 127, 0.5);

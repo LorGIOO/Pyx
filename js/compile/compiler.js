@@ -35,7 +35,7 @@ import {
   scanVerbatimUse, stripTexComment,
 } from './latex-bridge.js';
 import { loadPdf, getPdfPath } from '../pdf/preview.js';
-import { auxOpen, lastArea } from '../solid/stores/previewStore.js';
+import { auxOpen, lastArea, annotTool } from '../solid/stores/previewStore.js';
 import { saveActiveAs, saveWithEncoding, markSavedIfUnchanged } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
 
@@ -157,7 +157,8 @@ function showCompiledPdf(pdfPath, { gen, follow }) {
   loadPdf(pdfPath).then(async (info) => {
     if (!info) return; // superseded by a newer PDF, or no pane to show it in
     // A compile that typing fired: let the PDF show what was typed.
-    if (follow && general.pdfFollowCursor !== false && lastArea() !== 'pdf') {
+    // Never while a drawing tool is in hand: the page must stay under the pen.
+    if (follow && general.pdfFollowCursor !== false && lastArea() !== 'pdf' && !annotTool()) {
       import('../editor/commands.js').then((m) => m.followCursorInPdf()).catch(() => {});
     }
     const paintMs = await Promise.race([info.painted, new Promise((r) => setTimeout(() => r(null), 15000))]);

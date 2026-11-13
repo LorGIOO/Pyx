@@ -35,6 +35,8 @@ export const state = createMutable({
   // What the formula recognizer (image -> LaTeX) is doing, for the status
   // bar; '' when idle.
   ocrBusy: '',
+  // What «Buscar actualizaciones» is doing / found ('' before it is used).
+  updateStatus: '',
   // True when a soft interrupt has not taken hold: the stop button then offers
   // the forced kill instead of repeating a word that plainly did nothing.
   kernelForceHint: false,

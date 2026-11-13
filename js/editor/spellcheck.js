@@ -16,6 +16,7 @@ import { lang } from '../core/i18n.js';
 import Nspell from 'nspell';
 import { grammarHits } from './grammar.js';
 import { WORD, isAcronym, maskLine } from './spell-mask.js';
+import { esFormation } from './spell-es.js';
 
 // Dispatched to force a re-scan (dictionary finished loading, or a setting
 // changed). Carries no data.
@@ -125,6 +126,11 @@ function isCorrect(word) {
   if (cache.has(word)) return cache.get(word);
   let ok = true;
   try { ok = speller ? speller.correct(word) : true; } catch (_) { ok = true; }
+  // Spanish builds correct words the dictionary does not list one by one:
+  // «definirlo», «pégalas», «recalcular», «gráficamente» (spell-es.js).
+  if (!ok && speller && spellLang() === 'es') {
+    try { ok = esFormation(word, (w) => speller.correct(w)); } catch (_) { ok = false; }
+  }
   if (cache.size >= WORD_CACHE_MAX) cache.clear();
   cache.set(word, ok);
   return ok;
@@ -296,7 +302,8 @@ function buildDecos(view) {
         for (const h of grammarHits(masked, spellLang())) {
           const from = line.from + h.from;
           if (inSkip(skips, from)) continue;
-          marks.push({ from, to: line.from + h.to, deco: Decoration.mark({ class: 'cm-grammar-bad', attributes: { title: h.message } }) });
+          // Blue for punctuation and spacing, green for wording (grammar.js `kind`).
+          marks.push({ from, to: line.from + h.to, deco: Decoration.mark({ class: h.kind === 'style' ? 'cm-style-bad' : 'cm-grammar-bad', attributes: { title: h.message } }) });
         }
       }
     }

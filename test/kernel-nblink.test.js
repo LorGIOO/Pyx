@@ -190,7 +190,7 @@ describe.skipIf(!python)('\\pynotebook: los valores del cuaderno, sin ejecutarlo
   });
 
   it('todo queda en la carpeta privada de la prueba', () => {
-    const dir = process.platform === 'win32' ? join(base, 'local', 'Pyx', 'jupyter')
+    const dir = process.platform === 'win32' ? join(base, 'local', 'com.pyx.studio', 'jupyter')
       : process.platform === 'darwin' ? join(base, 'Library', 'Application Support', 'Pyx', 'jupyter')
         : join(base, 'local', 'pyx', 'jupyter');
     expect(readdirSync(dir).length).toBeGreaterThan(0);

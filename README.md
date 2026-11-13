@@ -1,182 +1,135 @@
 <div align="center">
 
-<img src="src-tauri/icons/icon.png" alt="Pyx" width="112" height="112">
+<img src="src-tauri/icons/icon.png" alt="Pyx" width="104" height="104">
 
 # Pyx
 
 **El cálculo y el documento, en un mismo archivo.**
 
-Editor LaTeX con **celdas Python tipo Jupyter** integradas: escribe la memoria y calcula sin salir del documento. Cambias un dato de entrada y **todo el informe se actualiza solo**.
+Un editor de LaTeX con celdas de Python dentro. Escribes el informe, calculas en él<br>
+y el PDF sale con los números ya puestos. Cambias un dato y todo se actualiza.
 
-![versión](https://img.shields.io/badge/versión-1.8.2-007ACC?style=flat-square)
-![licencia](https://img.shields.io/badge/licencia-MIT-3fb950?style=flat-square)
-![Windows](https://img.shields.io/badge/Windows-x64-0078D7?style=flat-square)
-![macOS](https://img.shields.io/badge/macOS-universal-000000?style=flat-square)
-![Linux](https://img.shields.io/badge/Linux-deb%20·%20rpm%20·%20AppImage-FCC624?style=flat-square)
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square)
-![SolidJS](https://img.shields.io/badge/SolidJS-2C4F7C?style=flat-square)
+[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.0.0-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
+&nbsp;
+[![Manual de usuario](https://img.shields.io/badge/Manual_de_usuario-PDF-1F2937?style=for-the-badge)](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf)
 
 <br>
 
-<a href="https://github.com/LorGIOO/Pyx/releases/latest"><img src="https://img.shields.io/badge/⬇%20Descargar%20para%20Windows-007ACC?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar para Windows"></a>
-
-<br><br>
-
-<img src="Manual de usuario/capturas/interfaz.png" alt="Pyx: editor LaTeX con celdas Python y visor PDF en paralelo" width="92%">
-
-📘 **[Manual de usuario (PDF)](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf)** — todas las funciones, paso a paso, con capturas. Escrito y compilado con Pyx.
+<img src="Manual de usuario/capturas/interfaz.png" alt="Pyx: el código con sus celdas a la izquierda y el PDF a la derecha" width="92%">
 
 </div>
 
----
+<br>
 
-## ✨ ¿Por qué Pyx?
+## Cómo funciona
 
-En ingeniería el **cálculo** vive en un sitio (Excel, Mathcad…) y el **informe** en otro (Word, LaTeX), y copiar valores a mano es lento y da errores. Pyx los une: el cálculo y la memoria son **el mismo objeto vivo**. Escribes Python donde lo necesitas, insertas el resultado en el texto con `\py{…}`, y al compilar obtienes un PDF con tipografía LaTeX y los números ya calculados. Cambia una carga, recompila, y **toda la memoria se recalcula sola**.
+Un documento de Pyx es LaTeX normal con bloques de Python. Los bloques calculan; el texto usa sus resultados.
 
 ```latex
 %#python
-import math
-D = 0.50               # diámetro (m)
-A = math.pi * (D/2)**2 # área
+P, L = 15.0, 3.0                       # carga (kN) y vuelo (m)
+flecha = P*1e3*(L*1e3)**3 / (3*210e3*8356e4)
 %#end
 
-El área de la sección es \py{round(A, 4)} m².
-\pyif{A > 0.15}{\textcolor{red}{Sección sobredimensionada.}}{Dentro de lo previsto.}
+La flecha en el extremo es de \py{round(flecha, 2)} mm,
+\pyif{flecha <= L*1e3/300}{dentro}{fuera} del límite L/300.
 ```
 
-La celda es Python normal y corriente: **importas lo que uses**, igual que en Jupyter. Los ayudantes propios de Pyx (guardar una figura, convertir un objeto a LaTeX) viven en un módulo que también se importa:
+Al compilar, Pyx ejecuta solo las celdas que han cambiado, pone cada valor en su sitio y genera el PDF. El documento sigue siendo LaTeX válido: las celdas son comentarios.
 
-```python
-from pyx import figure, figtex, tabletex, tex, texesc
-```
+<br>
 
-## 🚀 Características
+## Qué puedes hacer
 
-- **Simbiosis LaTeX ↔ Python** — celdas `%#python … %#end` (el archivo sigue siendo un `.tex` válido) y el puente **`\py{expresión}`** que mete valores calculados en el documento.
-- **Cuadernos de Jupyter y archivos `.py` vinculados** — `\pynotebook{calculos/oleaje.ipynb}` o `\pyfile{calculos/datos.py}` ponen las variables del archivo en ese punto del documento, y `\py{}`, `\pyif{}` y tus celdas las usan igual que siempre: números, tablas de pandas, diccionarios y **funciones**, que se llevan con ellas lo que usan por dentro (`\py{filas_ln(rumbo, n)}` dentro de un `tabular`). **El archivo no se vuelve a ejecutar:** si lo tienes abierto en VS Code o Jupyter, Pyx copia los valores de ese kernel en unas décimas de segundo; si está cerrado, usa los últimos valores guardados mientras su código no cambie. Solo cuando no hay ninguna de las dos cosas lo ejecuta Pyx una vez y guarda sus valores. Con varios archivos que dan valor a la misma variable, cada `\py{}` muestra la del **más próximo por encima**.
-- **Texto que reacciona al cálculo** — `\pyif{condición}{…}{…}`: el informe se redacta solo según el resultado (p. ej. «CUMPLE / NO CUMPLE»).
-- **Valores en vivo** — el resultado de cada `\py{}` aparece en gris junto a él mientras escribes, sin compilar (estilo Mathcad / MATLAB Live).
-- **Kernel Python plano, como Jupyter** — el espacio de nombres arranca **vacío**: ninguna librería viene precargada ni tiene trato de favor, así que las actualizas, las cambias o las parcheas como en cualquier IDE. Lo que sí trae el kernel es el protocolo del cuaderno: `display()`, `get_ipython()`, las figuras de matplotlib capturadas solas y **errores estilo VSCode** (traza limpia y coloreada, línea exacta y clic para saltar).
-- **handcalcs igual que en Jupyter** — `import handcalcs.render` y las magias `%%render` / `%%tex` quedan disponibles; sin ese import no existen. Se usa la librería **real** (antes se sustituía por un sucedáneo interno, y no se podía ni actualizar).
-- **Los resultados viajan con el documento** — al abrir un informe ves sus números, tablas y figuras **sin ejecutar nada** (ni hace falta Python instalado). Si una celda cambió desde que se calculó, su resultado se marca **«desactualizado»** en vez de pasar por vigente: en una memoria de cálculo, un número que ya no corresponde a su fórmula es el error más caro que existe.
-- **Ejecución reactiva (grafo de dependencias)** — Pyx sabe qué variables define y usa cada celda, como marimo: al cambiar una, solo se ejecutan esa y las que dependen de ella, y si una celda vuelve a dar el mismo valor, la cadena se corta ahí. Editar la gráfica final no repite la simulación de arriba. Las celdas afectadas por un cambio se marcan **desactualizadas en cascada**. Para empezar de cero sin dudas, **Recompilar desde cero** (`Ctrl+Alt+Mayús+B`).
-- **Autocompletado de Python real (jedi)** — sobre las variables vivas del kernel, con la firma de cada función al escribir y su ayuda al pasar el ratón. Dentro de `\py{` se listan todas las variables que hay: las de las celdas y las de los cuadernos y archivos vinculados.
-- **Nada que instalar antes** — si el equipo no tiene Python o LaTeX, Pyx los prepara con un clic dentro de su propia carpeta: Python con **uv** (numpy, scipy, sympy, pandas, matplotlib, handcalcs, pint…) y LaTeX con **Tectonic**. Un `ModuleNotFoundError` trae el botón **Instalar**.
-- **Compilación casi instantánea (motor precalentado)** — tras cada compilación Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes) ya cargado, esperando. La siguiente solo compone el cuerpo: en un informe con fontspec, TikZ y hyperref, **0,7 s → 0,1 s**. Funciona con xelatex, lualatex y pdflatex.
-- **Bibliografías e índices sin pensar en ellos** — BibTeX, Biber y makeindex se ejecutan solos entre pasadas, y solo cuando cambia lo que leen (las reglas de latexmk).
-- **Errores de LaTeX subrayados mientras escribes** — llaves sin cerrar, `\begin`/`\end` que no cuadran, etiquetas repetidas, `\ref` a etiquetas inexistentes y `$` sin cerrar, antes de compilar. Opcional: avisos de estilo de ChkTeX.
-- **El PDF sigue lo que escribes** — tras cada compilación en vivo, el visor muestra la parte que estás editando si no estaba a la vista.
-- **Celdas como en JupyterLab** — pulsa la barra lateral de una celda para plegar su código, o la de su salida para plegar la salida. Las tablas de pandas se ven como en JupyterLab y VS Code.
-- **Interrupción sin perder la sesión** — parar una celda lanza `KeyboardInterrupt` como en Jupyter: **las variables ya calculadas siguen en memoria**.
-- **Visor PDF rápido con documentos enormes** — dibuja las páginas en un hilo aparte (PDF.js 6 + OffscreenCanvas), varias a la vez, y guarda las ya vistas: una página con una gráfica de cientos de miles de puntos no congela la aplicación. Nítido a cualquier zoom, búsqueda, enlaces clicables y **SyncTeX** (Ctrl+clic ↔ código).
-- **Revisión y corrección del PDF** — resaltar, subrayar y tachar el texto seleccionado, comentarios escritos en la página, lápiz suavizado, flechas, recuadros y elipses, mover/borrar marcas, deshacer/rehacer y la **lista de correcciones** copiada en un clic.
-- **Se actualiza sola** — avisa cuando hay una versión nueva en GitHub y, en Windows, la descarga, verifica (SHA-256) e instala desde la propia aplicación.
-- **Proyectos multi-archivo** — documento raíz con `\input`; compilar un capítulo compila todo el proyecto.
-- **Tu carpeta solo tiene lo tuyo** — el motor LaTeX no escribe nada junto al documento: los `.build.tex`, el `.aux`, `.log`, `.toc`, `.out`, `.mtc*`, el índice SyncTeX y el PDF viven en un directorio de trabajo fuera del proyecto, y al guardar se empaquetan **dentro del `.pltx`** como hace un `.docx`. Lo único que se queda fuera, a propósito, son tus fuentes: `.tex`, imágenes y `.sty`.
-- **Lo mejor de TeXstudio** — autocompletado de 337 comandos y 51 entornos (añade el `\usepackage` que falte), vista previa de fórmulas al pasar el ratón, Ctrl+clic de `\ref` a `\label`, renombrar `\begin`/`\end` a la vez, historial del cursor (`Alt+←`), **buscar en todo el proyecto** (`Ctrl+Mayús+F`), **pegar tablas de Excel** como `tabular`, glosarios, marcadores del PDF, gramática (local y **LanguageTool**) y **macros en Python**.
-- **Comodidades de IDE** — snippets, corrector ortográfico (español e inglés), plegado de código, paneles divisibles, terminal integrada (`pip install …`), atajos configurables y temas claro/oscuro/azul.
-- **Funciona sin conexión** — las fórmulas de handcalcs se componen con KaTeX empaquetado en la app; nada depende de una CDN.
+<table>
+<tr><td width="33%" valign="top">
 
-## 📸 Capturas
+**Escribir**
 
-**Celdas, tablas y figuras.** Una celda calcula; su salida (un DataFrame, una gráfica) aparece debajo, y con `\py{}` o `pyx.tabletex()` llega al PDF.
+Editor de LaTeX con autocompletado de más de 300 comandos, errores marcados antes de compilar, corrector de español e inglés (rojo ortografía, azul puntuación, verde redacción), buscar y reemplazar en todo el proyecto y proyectos de varios archivos.
 
-<div align="center">
-<img src="Manual de usuario/capturas/celda-tabla.png" alt="Tabla de pandas en la salida de una celda" width="45%">
-<img src="Manual de usuario/capturas/celda-figura.png" alt="Gráfica de matplotlib en la salida de una celda" width="45%">
-</div>
+</td><td width="33%" valign="top">
 
-**Ejecución reactiva.** Al editar una celda, su resultado y las celdas que dependen de ella se marcan desactualizados.
+**Calcular**
 
-<div align="center">
-<img src="Manual de usuario/capturas/desactualizadas.png" alt="Celdas desactualizadas en cascada" width="45%">
-<img src="Manual de usuario/capturas/autocompletado-py.png" alt="Autocompletado dentro de \py{}: variables del documento, del cuaderno y del .py" width="45%">
-</div>
+Celdas de Python como en Jupyter, con su salida debajo: tablas de pandas, gráficas, fórmulas. Autocompletado con jedi. Solo se repite lo que depende de un cambio. Tus cuadernos `.ipynb` y scripts `.py` se vinculan con `\pynotebook{}` y `\pyfile{}`.
 
-**Archivos vinculados.** El registro de cada compilación dice de dónde salieron los valores de cada cuaderno o `.py` (de Jupyter en vivo, de los valores guardados o de una ejecución en Pyx) y cuánto tardó. Si cambias el código de un cuaderno con Jupyter cerrado, Pyx recupera lo que dejó su última ejecución y **solo ejecuta las celdas modificadas** y las que dependen de ellas: un cuaderno de minutos no vuelve a tardar minutos por un cambio pequeño.
+</td><td width="33%" valign="top">
 
-<div align="center">
-<img src="Manual de usuario/capturas/registro.png" alt="Registro de compilación con los archivos vinculados" width="80%">
-</div>
+**Llevar al PDF**
 
-Más capturas, con la explicación de cada función, en el [manual de usuario](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf).
+`\py{}` escribe un valor, `\pyif{}` elige un texto. `tabletex()` y `figtex()` convierten una tabla o una gráfica en LaTeX. Las celdas `%%render` de handcalcs muestran el desarrollo del cálculo.
 
-## 📦 Instalación
+</td></tr>
+<tr><td valign="top">
 
-Descarga el instalador de tu sistema desde la [**última release**](https://github.com/LorGIOO/Pyx/releases/latest) (1.8.2):
+**Tablas e imágenes**
+
+Pega celdas de Excel y salen como tabla. Asistentes con vista previa del código y tu propio estilo guardado. Pega una captura de una fórmula y Pyx escribe su LaTeX.
+
+</td><td valign="top">
+
+**Ver y revisar**
+
+Visor de PDF integrado y rápido con documentos largos, Ctrl+clic exacto entre código y PDF en los dos sentidos, marcadores, búsqueda y anotaciones editables que se exportan con el PDF.
+
+</td><td valign="top">
+
+**Sin preparar nada**
+
+Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin tocar el sistema. Se actualiza solo desde Configuración.
+
+</td></tr>
+</table>
+
+<br>
+
+## Instalación
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** (x64) | [`Pyx_1.8.2_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/download/v1.8.2/Pyx_1.8.2_x64-setup.exe) · [`Pyx_1.8.2_x64_en-US.msi`](https://github.com/LorGIOO/Pyx/releases/download/v1.8.2/Pyx_1.8.2_x64_en-US.msi) |
-| **macOS** (Intel y Apple Silicon) | [`Pyx_1.8.2_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/download/v1.8.2/Pyx_1.8.2_universal.dmg) |
-| **Linux** | [`.deb`](https://github.com/LorGIOO/Pyx/releases/download/v1.8.2/Pyx_1.8.2_amd64.deb) (Debian/Ubuntu) · [`.rpm`](https://github.com/LorGIOO/Pyx/releases/download/v1.8.2/Pyx-1.8.2-1.x86_64.rpm) (Fedora) · [`.AppImage`](https://github.com/LorGIOO/Pyx/releases/download/v1.8.2/Pyx_1.8.2_amd64.AppImage) (cualquier distro) |
+| **Windows** 10/11 (64 bits) | [`Pyx_2.0.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
+| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.0.0_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
+| **Linux** | [`.deb`, `.rpm` o `.AppImage`](https://github.com/LorGIOO/Pyx/releases/latest) |
 
-Cada release incluye también el **manual de usuario en PDF** de esa versión (`Pyx_1.8.2_manual_de_usuario.pdf`). La carpeta [Instaladores](Instaladores/) del repositorio conserva los de la versión 1.6.0.
+Si ya tienes Python (Anaconda, python.org…) o LaTeX (MiKTeX, TeX Live, MacTeX), Pyx los usa. Si no, al arrancar ofrece prepararlos. Las versiones nuevas se instalan desde **Configuración → General → Buscar actualizaciones**.
 
-Como la app aún **no está firmada**: en Windows, SmartScreen mostrará un aviso — pulsa **«Más información» → «Ejecutar de todas formas»**; en macOS, la primera vez ábrela con **clic derecho → Abrir**.
+El [manual de usuario](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf) explica cada función con capturas. Está escrito y compilado con Pyx.
 
-**No hace falta instalar nada más.** Si ya tienes Python (Anaconda, python.org…) o una distribución LaTeX ([MiKTeX](https://miktex.org/), [MacTeX](https://tug.org/mactex/), [TeX Live](https://tug.org/texlive/)), Pyx los encuentra y los usa. Si falta alguno, al arrancar te ofrece prepararlo con un clic: Python con [uv](https://github.com/astral-sh/uv) y las librerías científicas, y LaTeX con [Tectonic](https://tectonic-typesetting.github.io/). Todo queda en la carpeta de datos de Pyx, sin tocar el sistema.
+<br>
 
-## ⚙️ Compilar desde el código
+## Con qué está hecho
+
+| Pieza | Para qué |
+|---|---|
+| [Tauri 2](https://tauri.app) (Rust) | La aplicación de escritorio: ventanas, archivos y los procesos de LaTeX y Python |
+| [SolidJS](https://www.solidjs.com) | La interfaz |
+| [CodeMirror 6](https://codemirror.net) | El editor de código |
+| [PDF.js](https://mozilla.github.io/pdf.js/) · [pdf-lib](https://pdf-lib.js.org) | Mostrar el PDF · guardarlo con las anotaciones |
+| Kernel de Python propio | Ejecutar las celdas y conservar sus variables entre compilaciones |
+| [jedi](https://github.com/davidhalter/jedi) | Autocompletado y ayuda de Python |
+| [XeLaTeX / pdfLaTeX / LuaLaTeX](https://www.latex-project.org) · [Tectonic](https://tectonic-typesetting.github.io) | Componer el PDF |
+| [uv](https://github.com/astral-sh/uv) | Preparar un Python propio cuando no hay ninguno |
+| [Hunspell](https://hunspell.github.io) ([nspell](https://github.com/wooorm/nspell)) · diccionario RLA | El corrector ortográfico |
+| [RapidLaTeXOCR](https://github.com/RapidAI/RapidLaTeXOCR) | Reconocer fórmulas en imágenes |
+| [KaTeX](https://katex.org) | La vista previa de fórmulas en el editor |
+| [handcalcs](https://github.com/connorferster/handcalcs) | El desarrollo de los cálculos en el PDF |
+
+Ideas tomadas de TeXstudio, Jupyter, marimo (ejecución reactiva), latexmk y tex-fast-recompile (el motor de LaTeX con el preámbulo precargado).
+
+<br>
+
+## Desarrollo
 
 ```bash
 npm install
-npm run tauri:dev      # app de escritorio con recarga en caliente
-npm run tauri:build    # genera el instalador
-npm test               # pruebas de la lógica de celdas, \py{} y mapas de línea
+npm run tauri:dev     # la aplicación, con recarga en caliente
+npm test              # pruebas
+npm run tauri:build   # el instalador
 ```
 
-Requiere **Node.js 18+** y **Rust** (Python y LaTeX, los del sistema o los que prepara la propia app). Solo la interfaz en el navegador: `npm run dev`.
+Requiere Node.js 18+ y Rust. Los instaladores de las tres plataformas los genera GitHub Actions al publicar una etiqueta `v*`.
 
-Los instaladores de las tres plataformas los produce GitHub Actions al empujar una etiqueta `v*`: Tauri **no compila de forma cruzada**, así que cada sistema se construye en su propio runner (ver [`.github/workflows/release.yml`](.github/workflows/release.yml)).
+## Licencia
 
-## ⌨️ Atajos
-
-| Atajo | Acción |
-|-------|--------|
-| `Mayús+Enter` | Ejecutar la celda bajo el cursor |
-| `Ctrl+Alt+Enter` | Ejecutar todas las celdas |
-| `Ctrl+Alt+R` | Reiniciar el kernel |
-| `Ctrl+Mayús+B` | Compilar el documento |
-| `Ctrl+Alt+Mayús+B` | Recompilar desde cero (kernel nuevo, sin datos auxiliares) |
-| `Ctrl+S` · `Ctrl+N` · `Ctrl+O` | Guardar · Nuevo · Abrir |
-| `Ctrl+F` | Buscar (editor o PDF, según el foco) |
-| `Ctrl+Mayús+F` | Buscar en todo el proyecto |
-| `Alt+←` · `Alt+→` | Posición anterior / siguiente del cursor |
-| `Alt+Mayús+1…9` | Ejecutar una macro de Python |
-| `Ctrl+T` | Comentar / descomentar |
-| `Ctrl+Alt+Z` | Modo zen |
-
-Todos reconfigurables en **Configuración → Atajos**. La lista completa está en el manual.
-
-## 🛠️ Stack
-
-Tauri 2 · SolidJS · Vite · CodeMirror 6 · PDF.js · DOMPurify · KaTeX · kernel Python embebido gestionado desde Rust.
-
-## 🙏 Código abierto en el que se apoya Pyx
-
-Pyx adapta ideas y código de estos proyectos. Gracias a sus autores.
-
-| Proyecto | Qué usa Pyx | Cómo |
-|---|---|---|
-| [tex-fast-recompile](https://github.com/user202729/tex-fast-recompile) | La idea del **motor precalentado**: un TeX que ya ha procesado el preámbulo y espera el cuerpo del documento. | Reimplementado en Rust (`src-tauri/src/latex.rs`, «Warm engine»), integrado con SyncTeX, el registro y el vigilante de bucles. |
-| [mylatexformat](https://ctan.org/pkg/mylatexformat) + [latexmk](https://ctan.org/pkg/latexmk) | La separación preámbulo/cuerpo de los preámbulos precompilados, y las reglas de latexmk: repetir pasadas solo cuando hace falta y ejecutar BibTeX/Biber/makeindex cuando cambian sus entradas. | Reimplementado en `latex.rs`. El formato precompilado de mylatexformat no sirve con xelatex/fontspec; por eso se usa el motor precalentado, que sí. |
-| [TeXpresso](https://github.com/let-def/texpresso) | La vista en vivo: el PDF acompaña a lo que escribes. | Tras cada compilación en vivo, el visor se desplaza vía SyncTeX a lo que estás editando (`followCursorInPdf`). |
-| [Tectonic](https://github.com/tectonic-typesetting/tectonic) | Motor LaTeX autocontenido. | Opcional: si está instalado aparece como motor, y si no hay LaTeX Pyx ofrece descargarlo; Pyx adapta sus salidas y rutas de búsqueda. |
-| [texlab](https://github.com/latex-lsp/texlab) + [ChkTeX](https://www.nongnu.org/chktex/) | Los diagnósticos de estructura del servidor de lenguaje de LaTeX y su integración con ChkTeX. | Comprobaciones reescritas desde cero en `js/editor/latex-lint.js` (texlab es GPL-3; no se copia su código). ChkTeX se ejecuta tal cual, si está instalado. |
-| [marimo](https://github.com/marimo-team/marimo) | La ejecución reactiva: un grafo de qué variables define y usa cada celda. | Reimplementado (`js/editor/py-deps.js`, `dep-plan.js`) sobre el árbol de lezer-python, con mutaciones, corte temprano y vuelta a la regla exacta ante lo que no se puede analizar; comprobado contra Python real. |
-| [jedi](https://github.com/davidhalter/jedi) | Autocompletado, firmas y ayuda de Python. | Dependencia opcional del kernel (`jedi.Interpreter` sobre el espacio de nombres vivo). |
-| [uv](https://github.com/astral-sh/uv) + [python-build-standalone](https://github.com/astral-sh/python-build-standalone) | El Python que Pyx prepara si no hay ninguno. | Se descarga al pulsar «Preparar» (`src-tauri/src/runtime.rs`). |
-| [LanguageTool](https://github.com/languagetool-org/languagetool) | Revisión gramatical completa. | Opcional: servidor propio o público, configurado por el usuario. |
-| [DOMPurify](https://github.com/cure53/DOMPurify) | Saneado del HTML de las salidas de las celdas. | Dependencia directa, con las reglas propias de Pyx como *hooks*. |
-| [SyncTeX](https://github.com/jlaurens/synctex) | El formato del índice que une el PDF con el código. | Lector propio en Rust (`src-tauri/src/synctex.rs`) que reproduce las reglas de selección del programa oficial; el programa `synctex` queda como respaldo. También funciona con Tectonic. |
-| [TeXstudio](https://github.com/texstudio-org/texstudio) | Funciones de editor: vista previa de fórmulas al pasar el ratón, saltar de `\ref` a `\label` con Ctrl+clic, renombrar `\begin`/`\end` a la vez y marcas del registro en el código (F8). | Reimplementado sobre CodeMirror; en la vista previa, los `\py{}` muestran su valor actual. |
-| [@replit/codemirror-indentation-markers](https://github.com/replit/codemirror-indentation-markers) | Guías de sangría. | Dependencia directa. |
-| [Jupyter](https://github.com/jupyter) / [JupyterLab](https://github.com/jupyterlab/jupyterlab) | El plegado de celdas y salidas con la barra lateral («collapser»), el inspector de variables, el protocolo de visualización (`display`, `_repr_*_`) y el contador de ejecución. | Reimplementado sobre CodeMirror y el kernel propio de Pyx. |
-
-Y la base de todo: [Tauri](https://tauri.app), [SolidJS](https://www.solidjs.com), [CodeMirror](https://codemirror.net), [PDF.js](https://mozilla.github.io/pdf.js/), [KaTeX](https://katex.org), [handcalcs](https://github.com/connorferster/handcalcs) y [nspell](https://github.com/wooorm/nspell).
-
-## 📄 Licencia
-
-[MIT](LICENSE) — libre para usar, modificar y distribuir. Las contribuciones son bienvenidas (ver [CONTRIBUTING.md](CONTRIBUTING.md)); abre un *issue* con ideas o problemas.
+[MIT](LICENSE).

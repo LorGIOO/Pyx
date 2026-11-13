@@ -24,8 +24,14 @@ use std::path::{Path, PathBuf};
 /// `%LOCALAPPDATA%` on Windows, `$XDG_CACHE_HOME` (or `~/.cache`) on Linux,
 /// `~/Library/Caches` on macOS, and the temp folder if none of them resolve.
 fn cache_root() -> PathBuf {
+    // Windows: inside the app's data folder, never next to the program
+    // (runtime.rs tools_dir).
     #[cfg(windows)]
-    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(local).join(crate::runtime::DATA_ID).join("build");
+    }
+    #[cfg(windows)]
+    let base: Option<PathBuf> = None;
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches"));
     #[cfg(all(unix, not(target_os = "macos")))]

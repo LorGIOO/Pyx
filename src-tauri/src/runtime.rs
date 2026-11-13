@@ -16,13 +16,17 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Pyx's own data folder: `%LOCALAPPDATA%\Pyx`, `~/Library/Application
+/// Pyx's own data folder: `%LOCALAPPDATA%\com.pyx.studio`, `~/Library/Application
 /// Support/Pyx`, `$XDG_DATA_HOME/pyx` (or `~/.local/share/pyx`).
 pub fn tools_dir() -> PathBuf {
     #[cfg(windows)]
     {
+        // NOT `%LOCALAPPDATA%\Pyx`: that is where the installer puts Pyx
+        // itself, and the program folder holds the program and nothing else.
+        // `com.pyx.studio` is the app's identifier, the folder Tauri's own
+        // uninstaller offers to remove with the app.
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(local).join("Pyx");
+            return PathBuf::from(local).join(DATA_ID);
         }
     }
     #[cfg(target_os = "macos")]
@@ -44,6 +48,58 @@ pub fn tools_dir() -> PathBuf {
     }
     std::env::temp_dir().join("pyx-tools")
 }
+
+/// The app's identifier (tauri.conf.json), the name of its data folder.
+pub const DATA_ID: &str = "com.pyx.studio";
+
+/// Move what earlier versions kept next to the program (`%LOCALAPPDATA%\Pyx`)
+/// into the data folder: Python environments, Tectonic, the recognizer,
+/// working directories, logs and notebook snapshots. Moved, not copied — the
+/// same drive, so it is a rename and costs nothing — and only what is not
+/// there yet. The program's own files (pyx.exe, the uninstaller, the icon)
+/// are never touched. Best effort: anything that cannot move stays where it
+/// is and is simply made again when needed.
+#[cfg(windows)]
+pub fn migrate_old_data() {
+    let Ok(local) = std::env::var("LOCALAPPDATA") else { return };
+    let old = PathBuf::from(&local).join("Pyx");
+    let new = PathBuf::from(&local).join(DATA_ID);
+    if !old.is_dir() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&new);
+    for name in ["env", "ocr", "uv", "tectonic", "python", "build", "logs", "jupyter", "history"] {
+        let from = old.join(name);
+        let to = new.join(name);
+        if !from.is_dir() {
+            continue;
+        }
+        if !to.exists() {
+            let _ = std::fs::rename(&from, &to);
+            continue;
+        }
+        // Both exist (this version already wrote some): merge one level down
+        // — each project's working directory, each environment — keeping
+        // what the data folder already has, and drop the old folder once
+        // nothing is left in it.
+        if let Ok(entries) = std::fs::read_dir(&from) {
+            for e in entries.flatten() {
+                let dest = to.join(e.file_name());
+                if !dest.exists() {
+                    let _ = std::fs::rename(e.path(), &dest);
+                } else if name == "build" {
+                    // A project's working directory in both places: the one
+                    // in the data folder is the one in use; the old one is a
+                    // stale cache that the next compile would rebuild anyway.
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        }
+        let _ = std::fs::remove_dir(&from); // only succeeds when empty
+    }
+}
+#[cfg(not(windows))]
+pub fn migrate_old_data() {}
 
 const EXE: &str = if cfg!(windows) { ".exe" } else { "" };
 

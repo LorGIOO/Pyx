@@ -18,18 +18,37 @@ export async function checkForUpdate() {
   }
 }
 
+/** «Buscar actualizaciones» (Configuración → General): ask GitHub and, if a
+ *  newer Pyx exists, install it the whole way without further questions —
+ *  download, SHA-256 check, install, reopen — like VS Code's «Restart to
+ *  update». The only question left is the one about unsaved documents.
+ *  Returns what happened, for the button to say it:
+ *  'latest' | 'offline' | 'installing' | 'cancelled' | 'error' | 'page'. */
+export async function updateNow() {
+  if (!isTauri()) return 'offline';
+  state.updateStatus = t('Buscando…', 'Checking…');
+  const info = await checkForUpdate();
+  if (!info) { state.updateStatus = t('Sin conexión con GitHub.', 'No connection to GitHub.'); return 'offline'; }
+  if (!info.newer) {
+    state.updateStatus = t(`Tienes la última versión (${info.current}).`, `You have the latest version (${info.current}).`);
+    return 'latest';
+  }
+  state.updateStatus = t(`Descargando Pyx ${info.latest}…`, `Downloading Pyx ${info.latest}…`);
+  return installUpdate({ ask: false });
+}
+
 /** Install the update checkForUpdate found.
  *
  *  Two steps, with the unsaved-documents question BETWEEN them. The installer
  *  closes Pyx (`app.exit`, which no close handler sees), and the download
  *  takes long enough to keep working meanwhile: checking only before it — as
  *  this used to — let everything typed during the download be lost. */
-export async function installUpdate() {
+export async function installUpdate({ ask = true } = {}) {
   const u = state.update;
-  if (!u || state.updateBusy) return;
+  if (!u || state.updateBusy) return 'error';
   if (!u.asset) {
     openExternal(u.page);
-    return;
+    return 'page';
   }
   // No published SHA-256: Pyx will not run an installer it cannot verify
   // (update.rs refuses it too). The release page is the way.
@@ -39,12 +58,12 @@ export async function installUpdate() {
       `GitHub has not published the SHA-256 digest of the Pyx ${u.latest} installer, so Pyx cannot verify the download and will not install it by itself.\n\nThe release page will open so you can download it yourself.`,
     ), { title: t('Actualización sin verificar', 'Unverifiable update'), kind: 'warning' });
     openExternal(u.page);
-    return;
+    return 'page';
   }
-  if (!(await askDialog(t(
+  if (ask && !(await askDialog(t(
     `Pyx ${u.latest} está disponible (tienes la ${u.current}).\n\nSe descargará y se comprobará mientras sigues trabajando; después Pyx se cerrará para instalarla y volverá a abrirse solo. ¿Actualizar ahora?`,
     `Pyx ${u.latest} is available (you have ${u.current}).\n\nIt is downloaded and verified while you keep working; then Pyx closes to install it and reopens by itself. Update now?`,
-  ), { kind: 'info' }))) return;
+  ), { kind: 'info' }))) return 'cancelled';
   state.updateBusy = true;
   try {
     await invoke('update_download', { asset: u.asset });
@@ -60,11 +79,16 @@ export async function installUpdate() {
     if (!go) {
       // Cancelled: nothing is installed. The status bar keeps offering it.
       state.updateBusy = false;
-      return;
+      state.updateStatus = t('Actualización pospuesta.', 'Update postponed.');
+      return 'cancelled';
     }
+    state.updateStatus = t('Instalando… Pyx se cerrará y volverá a abrirse.', 'Installing… Pyx will close and reopen.');
     await invoke('update_install');
+    return 'installing';
   } catch (e) {
     state.updateBusy = false;
+    state.updateStatus = t('No se pudo actualizar.', 'Could not update.');
     await messageDialog(t('No se pudo actualizar: ', 'Could not update: ') + String((e && e.message) || e));
+    return 'error';
   }
 }

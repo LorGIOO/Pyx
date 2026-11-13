@@ -2453,7 +2453,7 @@ fn not_run(engine: &str, stopped: Option<&str>, outcome: &str, reason: String, l
     }
 }
 
-/// One line per compile in `%LOCALAPPDATA%\Pyx\logs\compile.jsonl`: what was
+/// One line per compile in `%LOCALAPPDATA%\com.pyx.studio\logs\compile.jsonl`: what was
 /// asked, how it ended and where the time went. "It said done and nothing
 /// changed" can then be answered from a file instead of from memory.
 fn log_compile(path: &str, res: &Result<(CompileResult, Option<PrewarmJob>), String>, seq: u64, gen: u64) {

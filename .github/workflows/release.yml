@@ -97,7 +97,7 @@ jobs:
           # Sobre ESTE commit: lo que se lanzó a mano crea aquí la etiqueta.
           releaseCommitish: ${{ github.sha }}
           releaseBody: |
-            Instaladores adjuntos abajo: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`), y el **manual de usuario** de esta versión en PDF.
+            Instaladores: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`), y el **manual de usuario** de esta versión en PDF.
 
             Novedades de esta versión en el [CHANGELOG](https://github.com/LorGIOO/Pyx/blob/main/CHANGELOG.md).
 

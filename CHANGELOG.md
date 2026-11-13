@@ -3,6 +3,18 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.8.1] — 2026-11-13
+
+### Corregido
+
+- **El instalador de Windows de la 1.8.0 no se abría** («Windows no tiene
+  acceso al dispositivo, ruta de acceso o archivo especificado»). No era un
+  fallo del instalador ni del programa: Kaspersky marcó por reputación esos
+  archivos concretos (sin firma digital y recién publicados) y bloqueaba su
+  ejecución; el mismo código compilado de nuevo se analiza limpio y se
+  ejecuta. Esta versión publica los instaladores otra vez, comprobados con
+  Kaspersky antes de anunciarlos. El contenido es el de la 1.8.0.
+
 ## [1.8.0] — 2026-11-13
 
 ### Más rápido

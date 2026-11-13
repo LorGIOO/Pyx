@@ -3,17 +3,19 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [1.8.1] — 2026-11-13
+## [1.8.2] — 2026-11-13
 
 ### Corregido
 
-- **El instalador de Windows de la 1.8.0 no se abría** («Windows no tiene
-  acceso al dispositivo, ruta de acceso o archivo especificado»). No era un
-  fallo del instalador ni del programa: Kaspersky marcó por reputación esos
-  archivos concretos (sin firma digital y recién publicados) y bloqueaba su
-  ejecución; el mismo código compilado de nuevo se analiza limpio y se
-  ejecuta. Esta versión publica los instaladores otra vez, comprobados con
-  Kaspersky antes de anunciarlos. El contenido es el de la 1.8.0.
+- **El instalador de Windows no se abría** («Windows no tiene acceso al
+  dispositivo, ruta de acceso o archivo especificado»). Kaspersky marcaba el
+  `pyx.exe` de la 1.8.0 y la 1.8.1 como *VHO:Trojan.Win32.Convagent.gen*
+  (un falso positivo heurístico) y bloqueaba el instalador. La causa no era
+  el código de Pyx sino la versión de Rust con la que GitHub los compiló:
+  Rust 1.100.0, publicado el 9 de noviembre. El mismo código compilado con
+  Rust 1.99.1 —la de la 1.7.0— se analiza limpio y se instala. La versión de
+  Rust queda fijada para que no vuelva a cambiar sin comprobarlo. El
+  contenido es el de la 1.8.0.
 
 ## [1.8.0] — 2026-11-13
 

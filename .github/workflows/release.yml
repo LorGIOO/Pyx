@@ -59,8 +59,14 @@ jobs:
           node-version: 20
 
       - name: Configurar Rust
-        uses: dtolnay/rust-toolchain@stable
+        # Versión de Rust FIJA. Con «stable», la 1.8.0 salió con Rust 1.100.0
+        # (publicado el 9-11-2026) y Kaspersky marcaba su pyx.exe como
+        # VHO:Trojan.Win32.Convagent.gen y bloqueaba el instalador; el mismo
+        # código con Rust 1.99.1 (el de la 1.7.0) se analiza limpio. Subirla
+        # solo comprobando antes los instaladores con un antivirus.
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.1
           # macOS universal necesita ambas arquitecturas.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 

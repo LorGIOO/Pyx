@@ -23,7 +23,10 @@ jobs:
           node-version: 24
 
       - name: Configurar Rust
-        uses: dtolnay/rust-toolchain@stable
+        # La misma versión fija que la publicación (release.yml).
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
 
       - name: Caché de Rust
         uses: Swatinem/rust-cache@v2

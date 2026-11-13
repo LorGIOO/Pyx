@@ -29,8 +29,8 @@ async function ensureOcr() {
   if (installing) return installing;
   const ok = await askDialog(
     'Para convertir una imagen en LaTeX, Pyx necesita su reconocedor de fórmulas.\n\n'
-    + 'Se descarga una sola vez (unos 200 MB con sus modelos) en la carpeta de Pyx: no instala nada en tu Python. '
-    + 'Después funciona sin conexión.\n\n¿Descargarlo ahora?',
+    + 'Se descarga una sola vez (unos 450 MB con sus modelos; varios minutos según la conexión) en la carpeta de Pyx: '
+    + 'no instala nada en tu Python. Puedes seguir trabajando mientras tanto; después funciona sin conexión.\n\n¿Descargarlo ahora?',
     { title: 'Imagen → LaTeX', kind: 'info' });
   if (!ok) return false;
   installing = (async () => {
@@ -57,7 +57,7 @@ export async function insertFormulaFromImage(view, bytes) {
   if (!view || !bytes || !bytes.length) return false;
   if (!isTauri()) { messageDialog('La conversión de imagen a LaTeX requiere la aplicación de escritorio.'); return false; }
   if (!(await ensureOcr())) return false;
-  state.ocrBusy = 'Reconociendo la fórmula… (la primera vez descarga sus modelos)';
+  state.ocrBusy = 'Reconociendo la fórmula…';
   try {
     const latex = await imageToLatex(bytes);
     // The caret as it is NOW: the user may have gone on typing meanwhile.

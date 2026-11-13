@@ -92,6 +92,21 @@ const FIELDS = () => [
     hint: ['Solo se guardan los documentos que ya tienen archivo en el disco: el autoguardado nunca abre el diálogo «Guardar como».',
       'Only documents that already have a file on disk are saved: autosave never opens a "Save as" dialog.'],
   },
+  {
+    cat: 'general', sec: ['Interfaz', 'Interface'], key: 'tabWidth', type: 'range',
+    label: 'Ancho de las pestañas de los documentos', en: 'Width of the document tabs',
+    min: 70, max: 260, step: 2, unit: (v) => `${v} px`,
+    after: (v) => document.documentElement.style.setProperty('--doc-tab-w', `${+v || 132}px`),
+    hint: ['El ancho de cada pestaña mientras caben todas; con muchos documentos abiertos se estrechan solas antes de que la barra empiece a desplazarse.',
+      'The width of each tab while they all fit; with many documents open they narrow by themselves before the strip starts to scroll.'],
+  },
+  {
+    cat: 'general', sec: ['Interfaz', 'Interface'], key: 'ledAlways', type: 'check',
+    label: 'Mostrar siempre el indicador de compilación junto a las pestañas',
+    en: 'Always show the compile indicator next to the tabs',
+    hint: ['Un punto de color al final de las pestañas: gris sin compilar, azul intermitente compilando, amarillo ejecutando Python, verde correcto, ámbar con avisos, rojo con error. Un clic lleva al primer error (o abre el registro) y el clic derecho permite detener la compilación. En modo zen se muestra siempre, porque allí no hay cinta ni barra de estado.',
+      'A coloured dot at the end of the tabs: grey not compiled, blinking blue compiling, yellow running Python, green fine, amber with warnings, red on error. A click goes to the first error (or opens the log) and a right-click can stop the compile. In zen mode it is always shown, since there is no ribbon or status bar there.'],
+  },
 
   /* ---------------- Editor ---------------- */
   // The font picker is a searchable list, not a plain control: the dialog
@@ -133,6 +148,21 @@ const FIELDS = () => [
     label: 'Guías de indentación', en: 'Indent guides', after: EDIT,
   },
   {
+    cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'activeLine', type: 'check',
+    label: 'Resaltar la línea actual', en: 'Highlight the current line', after: EDIT,
+  },
+  {
+    cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'selectionMatches', type: 'check',
+    label: 'Resaltar las demás apariciones de lo seleccionado', en: 'Highlight other occurrences of the selection',
+    after: EDIT,
+  },
+  {
+    cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'wrapColumn', type: 'range',
+    label: 'Regla de margen en la columna', en: 'Margin ruler at column',
+    min: 0, max: 200, step: 5,
+    unit: (v) => (+v ? String(v) : tr('sin regla', 'off')), after: EDIT,
+  },
+  {
     cat: 'editor', sec: ['Ayudas de LaTeX', 'LaTeX helpers'], key: 'mathHover', type: 'check',
     label: 'Vista previa de la fórmula al pasar el ratón', en: 'Formula preview on hover',
     hint: ['Como en TeXstudio, pero con cada \\py{} ya sustituido por su valor: ves la fórmula tal como saldrá en el PDF.',
@@ -147,21 +177,6 @@ const FIELDS = () => [
     label: 'Subrayar en el editor los errores de la última compilación', en: 'Underline the last compile\'s errors in the editor',
     hint: ['F8 / Mayús+F8 saltan al siguiente / anterior problema; Ctrl+Mayús+M abre la lista. Ctrl+clic en un \\ref{…} lleva a su \\label.',
       'F8 / Shift+F8 jump to the next / previous problem; Ctrl+Shift+M opens the list. Ctrl+click a \\ref{…} to go to its \\label.'],
-  },
-  {
-    cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'activeLine', type: 'check',
-    label: 'Resaltar la línea actual', en: 'Highlight the current line', after: EDIT,
-  },
-  {
-    cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'selectionMatches', type: 'check',
-    label: 'Resaltar las demás apariciones de lo seleccionado', en: 'Highlight other occurrences of the selection',
-    after: EDIT,
-  },
-  {
-    cat: 'editor', sec: ['Presentación', 'Appearance'], key: 'wrapColumn', type: 'range',
-    label: 'Regla de margen en la columna', en: 'Margin ruler at column',
-    min: 0, max: 200, step: 5,
-    unit: (v) => (+v ? String(v) : tr('sin regla', 'off')), after: EDIT,
   },
   {
     cat: 'editor', sec: ['Escritura', 'Typing'], key: 'tabSize', type: 'range',
@@ -229,8 +244,8 @@ const FIELDS = () => [
       ['formula', tr('Convertirla en la fórmula LaTeX que muestra', 'Turn it into the LaTeX formula it shows')],
       ['figure', tr('Guardarla e insertarla como figura', 'Save it and insert it as a figure')],
     ],
-    hint: ['Haz una captura de una fórmula (Win+Mayús+S) y pégala con Ctrl+V: Pyx la reconoce y escribe su LaTeX donde está el cursor. La primera vez ofrece descargar el reconocedor (unos 200 MB, en la carpeta de Pyx; no toca tu Python); después funciona sin conexión. También está en la cinta: Matemáticas → Imagen a LaTeX.',
-      'Take a screenshot of a formula (Win+Shift+S) and paste it with Ctrl+V: Pyx recognizes it and writes its LaTeX at the caret. The first time it offers to download the recognizer (about 200 MB, in Pyx\'s folder; your Python is not touched); afterwards it works offline. It is also on the ribbon: Math → Image to LaTeX.'],
+    hint: ['Haz una captura de una fórmula (Win+Mayús+S) y pégala con Ctrl+V: Pyx la reconoce y escribe su LaTeX donde está el cursor. La primera vez ofrece descargar el reconocedor (unos 450 MB, en la carpeta de Pyx; no toca tu Python); después funciona sin conexión. También está en la cinta: Matemáticas → Imagen a LaTeX.',
+      'Take a screenshot of a formula (Win+Shift+S) and paste it with Ctrl+V: Pyx recognizes it and writes its LaTeX at the caret. The first time it offers to download the recognizer (about 450 MB, in Pyx\'s folder; your Python is not touched); afterwards it works offline. It is also on the ribbon: Math → Image to LaTeX.'],
   },
   {
     cat: 'editor', sec: ['Pegar imágenes y fórmulas', 'Pasting pictures and formulas'], key: 'ocrMode', type: 'select',
@@ -318,10 +333,23 @@ const FIELDS = () => [
       'Like marimo: Pyx knows which variables each cell defines and uses. Running one (Shift+Enter) also runs the cells that use what changed, and only those. Off, only that cell runs (as in Jupyter) and the ones that depend on it are marked out of date. Compiling always runs only what is needed.'],
   },
   {
+    cat: 'cells', sec: ['Ejecución', 'Execution'], key: 'cellTimeout', type: 'range',
+    label: 'Tiempo máximo por celda de Python', en: 'Time limit per Python cell',
+    min: 0, max: 900, step: 15, unit: (v) => (v ? `${v} s` : '—'),
+    hint: ['0 = sin límite (una simulación larga no es un cuelgue: el estado dice que Python está ejecutando y «Detener» la para). Con un límite, la celda que lo supera se interrumpe sola y la compilación sigue con el aviso.',
+      '0 = no limit (a long simulation is not a hang: the status says Python is running and "Stop" stops it). With a limit, a cell that exceeds it is interrupted and the compile goes on with the warning.'],
+  },
+  {
     cat: 'cells', sec: ['Resultados', 'Results'], key: 'saveOutputs', type: 'check',
     label: 'Guardar los resultados dentro del documento', en: 'Store results inside the document',
     hint: ['Los resultados viajan dentro del .pltx: al reabrir el informe se ven los números, las tablas y las figuras sin volver a ejecutar nada (ni hace falta Python). Un resultado cuya celda haya cambiado se descarta y la celda se marca como desactualizada.',
       'Results travel inside the .pltx: reopening the report shows its numbers, tables and figures without re-running anything (Python is not even needed). A result whose cell has changed is discarded and the cell is marked out of date.'],
+  },
+  {
+    cat: 'cells', sec: ['Preparación', 'Setup'], key: 'setupNeverAsk', type: 'check',
+    label: 'No ofrecer preparar Python y LaTeX al arrancar', en: 'Do not offer to set up Python and LaTeX on start',
+    hint: ['Cuando falta Python, LaTeX o una librería que el documento importa, Pyx ofrece instalarlos en su propia carpeta. Marca esto si prefieres ocuparte tú (es lo mismo que «No volver a preguntar» en ese diálogo).',
+      'When Python, LaTeX or a library the document imports is missing, Pyx offers to install them in its own folder. Tick this to take care of it yourself (the same as "Do not ask again" in that dialog).'],
   },
 
   /* ---------------- Compilación ---------------- */
@@ -339,18 +367,26 @@ const FIELDS = () => [
       'How long Pyx waits after the last keystroke before compiling. If the LaTeX engine takes longer than that, it waits as long as the engine took last time (10 s at most): it never stops compiling.'],
   },
   {
-    cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'cellTimeout', type: 'range',
-    label: 'Tiempo máximo por celda de Python', en: 'Time limit per Python cell',
-    min: 0, max: 900, step: 15, unit: (v) => (v ? `${v} s` : '—'),
-    hint: ['0 = sin límite (una simulación larga no es un cuelgue: el estado dice que Python está ejecutando y «Detener» la para). Con un límite, la celda que lo supera se interrumpe sola y la compilación sigue con el aviso.',
-      '0 = no limit (a long simulation is not a hang: the status says Python is running and "Stop" stops it). With a limit, a cell that exceeds it is interrupted and the compile goes on with the warning.'],
+    cat: 'compile', sec: ['Motor', 'Engine'], key: 'defaultEngine', type: 'select',
+    label: 'Motor LaTeX por defecto', en: 'Default LaTeX engine',
+    opts: () => [
+      ['', tr('Automático (el primero que haya instalado)', 'Automatic (the first one installed)')],
+      ['xelatex', 'XeLaTeX'], ['pdflatex', 'pdfLaTeX'], ['lualatex', 'LuaLaTeX'], ['tectonic', 'Tectonic'],
+    ],
+    hint: ['El motor con el que se compila todo documento que no pida otro. Tiene prioridad, por este orden: el motor elegido para el documento abierto (más abajo), una línea «% !TeX program = pdflatex» en el documento raíz y, por último, este.',
+      'The engine every document compiles with unless it asks for another. In order of priority: the engine chosen for the open document (below), a "% !TeX program = pdflatex" line in the root document and, last, this one.'],
   },
   {
-    cat: 'compile', sec: ['Indicador de estado', 'Status indicator'], key: 'ledAlways', type: 'check',
-    label: 'Mostrar siempre el indicador de compilación junto a las pestañas',
-    en: 'Always show the compile indicator next to the tabs',
-    hint: ['Un punto de color al final de las pestañas: gris sin compilar, azul intermitente compilando, amarillo ejecutando Python, verde correcto, ámbar con avisos, rojo con error. Un clic lleva al primer error (o abre el registro) y el clic derecho permite detener la compilación. En modo zen se muestra siempre, porque allí no hay cinta ni barra de estado.',
-      'A coloured dot at the end of the tabs: grey not compiled, blinking blue compiling, yellow running Python, green fine, amber with warnings, red on error. A click goes to the first error (or opens the log) and a right-click can stop the compile. In zen mode it is always shown, since there is no ribbon or status bar there.'],
+    cat: 'compile', sec: ['Al guardar', 'On save'], key: 'compileOnSave', type: 'check',
+    label: 'Compilar y mostrar el PDF al guardar (Ctrl+S)', en: 'Compile and show the PDF on save (Ctrl+S)',
+    hint: ['Desactivado, guardar solo guarda; se compila con «Compilar y ver» o, si está activo, al escribir.',
+      'Off, saving only saves; compile with "Compile & view" or, if enabled, as you type.'],
+  },
+  {
+    cat: 'compile', sec: ['Figuras y tablas', 'Figures and tables'], key: 'floatBarrier', type: 'check',
+    label: 'Las figuras y tablas no pasan de su apartado', en: 'Figures and tables never drift past their section',
+    hint: ['LaTeX coloca cada figura donde mejor le cabe, y una que no entra en la página puede acabar DESPUÉS del título del apartado siguiente (el texto «se adelanta» a la imagen). Con esto activado, antes de cada \\section, \\subsection y \\subsubsection se colocan todas las figuras y tablas pendientes (paquete placeins, \\FloatBarrier), de modo que el orden del PDF es el del documento. Desactívalo si prefieres el comportamiento estándar de LaTeX.',
+      'LaTeX places each figure where it fits best, and one that does not fit on the page can end up AFTER the next section heading (the text "overtakes" the picture). With this on, every pending figure and table is placed before each \\section, \\subsection and \\subsubsection (the placeins package, \\FloatBarrier), so the PDF follows the order of the document. Turn it off for LaTeX\'s standard behaviour.'],
   },
   {
     cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'warmEngine', type: 'check',
@@ -358,6 +394,16 @@ const FIELDS = () => [
     en: 'Keep the preamble loaded in advance (warm engine)',
     hint: ['Al terminar cada compilación, Pyx deja un motor LaTeX con el preámbulo (paquetes y fuentes) ya procesado, esperando. Si la siguiente compilación tiene el mismo preámbulo, solo se compone el cuerpo: en un informe típico pasa de ~0,7 s a ~0,1 s. Si el preámbulo, un .sty o el motor cambian, se compila de la forma normal. Ocupa algo de memoria mientras espera.',
       'After each compile, Pyx leaves a LaTeX engine with the preamble (packages and fonts) already processed, waiting. If the next compile has the same preamble, only the body is typeset: on a typical report ~0.7 s becomes ~0.1 s. If the preamble, a .sty or the engine changes, it compiles the usual way. Uses some memory while it waits.'],
+  },
+  {
+    cat: 'compile', sec: ['Velocidad', 'Speed'], key: 'pdfCompress', type: 'select',
+    label: 'Escritura del PDF (XeLaTeX)', en: 'Writing the PDF (XeLaTeX)',
+    opts: () => [
+      ['fast', tr('Rápida (recomendado)', 'Fast (recommended)')],
+      ['max', tr('Archivo lo más pequeño posible', 'Smallest possible file')],
+    ],
+    hint: ['XeLaTeX vuelve a comprimir al máximo todo el PDF en cada compilación, figuras incluidas. Con «Rápida» usa una compresión ligera: en un informe real de 18 páginas con ocho figuras, cada pasada baja de 17,3 s a 13,5 s y el PDF solo crece un 3 %. Elige «lo más pequeño posible» si vas a entregar el PDF y cada megabyte cuenta.',
+      'XeLaTeX recompresses the whole PDF at the maximum level on every compile, figures included. "Fast" uses light compression: on a real 18-page report with eight figures each pass drops from 17.3 s to 13.5 s and the PDF grows by only 3 %. Choose "smallest possible" if you are handing in the PDF and every megabyte counts.'],
   },
   {
     cat: 'compile', sec: ['Antes de compilar', 'Before compiling'], key: 'latexLint', type: 'check',
@@ -786,9 +832,9 @@ export default function ConfigDialog() {
               </Show>
 
               <Show when={!searching() && cat() === 'compile'}>
-                <div class="cfg-section">{tr('Motor', 'Engine')}</div>
+                <div class="cfg-section">{tr('Motor del documento abierto', 'Engine of the open document')}</div>
                 <div class="cfg-row">
-                  <span class="cfg-label">{tr('Motor LaTeX', 'LaTeX engine')}</span>
+                  <span class="cfg-label">{tr('Motor de este documento', 'Engine for this document')}</span>
                   <select class="cfg-select" disabled={!activeDoc()}
                     value={activeDoc()?.engine || state.env.latex || 'xelatex'} onChange={setEngine}>
                     <For each={engines()}>{(e) => <option value={e}>{e}</option>}</For>

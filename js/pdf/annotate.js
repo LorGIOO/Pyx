@@ -494,6 +494,17 @@ function showBrush(e, k) {
   brush.style.display = 'block';
 }
 function hideBrush() { if (brush) brush.style.display = 'none'; }
+// The circle must never outlive its reason: the tool is put down (the bar is
+// closed with the pointer still over the page — the layer stops taking the
+// pointer then, so it never hears it leave) or the pointer is elsewhere.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointermove', (e) => {
+    if (!brush || brush.style.display === 'none') return;
+    const over = e.target && e.target.closest && e.target.closest('.pdf-annotlayer');
+    if (!over || !BRUSH_TOOLS.has(annotTool())) hideBrush();
+  }, { capture: true, passive: true });
+  window.addEventListener('blur', hideBrush);
+}
 
 /* ---------- drawing ---------- */
 function newAnnot(tool, x, y) {

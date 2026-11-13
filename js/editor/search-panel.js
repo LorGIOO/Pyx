@@ -26,8 +26,16 @@ export function openSearch(view, { replace = false } = {}) {
   pending = { replace, seed: text.includes('\n') ? '' : text };
   openSearchPanel(view); // mounts a new panel (which takes `pending`) or focuses the open one
   const api = panels.get(view);
-  if (api && pending) api.apply(pending);
-  pending = null;
+  if (pending && api) {
+    // The panel was already open (a new one takes the request in mount()).
+    api.apply(pending);
+    pending = null;
+  } else if (pending) {
+    // A panel that mounts a moment later still finds the request; one that
+    // never does must not leave it behind for an unrelated Ctrl+F.
+    const req = pending;
+    setTimeout(() => { if (pending === req) pending = null; }, 400);
+  }
 }
 
 export function pyxSearchPanel(view) {
@@ -154,7 +162,14 @@ export function pyxSearchPanel(view) {
       const q = getSearchQuery(view.state);
       if (q && q.search) input.value = q.search;
       panels.set(view, { apply });
-      if (pending) { apply(pending); pending = null; } else { input.focus(); input.select(); }
+      if (pending) {
+        // NOT here: mount() runs inside the editor's own update, and apply()
+        // dispatches the search query — "update while an update is in
+        // progress" crashed the panel. Right after it, then.
+        const req = pending;
+        pending = null;
+        queueMicrotask(() => apply(req));
+      } else { input.focus(); input.select(); }
       updateCount();
     },
     update(u) {

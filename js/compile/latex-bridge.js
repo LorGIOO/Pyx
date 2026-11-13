@@ -672,7 +672,7 @@ const MISSING_FILE_GUARDS = [
   String.raw`\@ifundefined{verbatim@input}{}{\@ifundefined{Pyx@verbatim@input}{\let\Pyx@verbatim@input\verbatim@input\def\verbatim@input#1#2{\IfFileExists{#2}{\Pyx@verbatim@input{#1}{#2}}{\endgroup\Pyx@missing{#2}}}}{}}`,
 ];
 
-export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender }) {
+export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, floatBarrier = false }) {
   const guards = [];
   const seen = new Set();
   // A \py{} can expand to an \includegraphics — `figtex()` in the kernel
@@ -711,6 +711,26 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender 
     // (its values are already in Python): the command itself prints nothing.
     guards.push('\\providecommand\\pynotebook[1]{}');
     guards.push('\\providecommand\\pyfile[1]{}');
+  }
+  if (floatBarrier) {
+    // Figures and tables stay in the section they were written in. LaTeX
+    // defers a float that does not fit — and one stuck in the queue holds
+    // back every float after it — so a figure can come out AFTER the heading
+    // of the next section (measured: with plain LaTeX the figure of one
+    // section landed a page behind the next section's title). placeins'
+    // \FloatBarrier before every sectioning command places what is pending
+    // first. Skipped silently where the package is missing, and never loaded
+    // twice; its own [section] option covers \section, the hook below adds
+    // \subsection and \subsubsection (the recipe of placeins' manual).
+    // Not in beamer (frames place nothing by themselves) nor in a class
+    // without \section (letter): placeins' [section] option would redefine
+    // a command that is not there.
+    guards.push('\\@ifclassloaded{beamer}{}{\\@ifundefined{section}{}{'
+      + '\\IfFileExists{placeins.sty}{\\@ifpackageloaded{placeins}{}{\\usepackage[section]{placeins}}'
+      + '\\AtBeginDocument{\\@ifundefined{@fb@secFB}{}{'
+      + '\\@ifundefined{subsection}{}{\\let\\Pyx@subsection\\subsection\\renewcommand\\subsection{\\@fb@secFB\\Pyx@subsection}}'
+      + '\\@ifundefined{subsubsection}{}{\\let\\Pyx@subsubsection\\subsubsection\\renewcommand\\subsubsection{\\@fb@secFB\\Pyx@subsubsection}}'
+      + '}}}{}}}');
   }
   // LAST: the hooks wrap whatever the guards above may have just loaded
   // (graphicx, listings).

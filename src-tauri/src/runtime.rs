@@ -299,8 +299,21 @@ pub fn setup_ocr(app: Say) -> Result<String, String> {
         say(app, "Preparando el reconocedor de fórmulas (se descarga una sola vez)…");
         run(app, uv_command(&uv).args(["venv", "--python", "3.12", "--managed-python"]).arg(&env))?;
     }
-    say(app, "Instalando rapid_latex_ocr…");
-    run(app, uv_command(&uv).args(["pip", "install", "--python"]).arg(&py).arg("rapid_latex_ocr"))?;
+    say(app, "Instalando el reconocedor…");
+    // `requests` is used by the package to fetch its models and is not among
+    // its declared dependencies: without it the first recognition fails.
+    run(app, uv_command(&uv).args(["pip", "install", "--python"]).arg(&py).args(["rapid_latex_ocr", "requests"]))?;
+    // Its models (about 170 MB) are fetched the first time it is created —
+    // minutes on a slow line. Done HERE, where the user was told a download
+    // is under way, and not inside the first recognition, which is bounded
+    // in time and would be cut short.
+    say(app, "Descargando los modelos del reconocedor (unos 170 MB, una sola vez)…");
+    let mut warm = Command::new(&py);
+    // No progress bars: they redraw with carriage returns, and a download of
+    // minutes would arrive as one enormous "line".
+    warm.env("TQDM_DISABLE", "1");
+    warm.args(["-I", "-X", "utf8", "-c", "from rapid_latex_ocr import LaTeXOCR; LaTeXOCR(); print('modelos listos')"]);
+    run(app, &mut warm)?;
     std::fs::write(env.join("pyx-ocr-ready"), b"ok").map_err(|e| e.to_string())?;
     say(app, "Reconocedor de fórmulas listo.");
     Ok(py.to_string_lossy().to_string())

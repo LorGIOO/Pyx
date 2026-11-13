@@ -670,6 +670,8 @@ function renderVisible() {
       renderLoop = null;
     }
     setCurrentPage(currentVisiblePage());
+    // Everything in view is painted: the rest of the document, meanwhile.
+    schedulePrefetch();
   })();
   return renderLoop;
 }
@@ -781,6 +783,145 @@ function renderOrder(lo, hi) {
   return order;
 }
 
+/** The canvas a page is rasterized into, at EXACTLY the device resolution
+ *  (see renderPage), and the density it was made for. */
+function pageCanvas(vp) {
+  let os = dpr();
+  const cap = 12288;
+  if (vp.width * os > cap || vp.height * os > cap) os = Math.min(cap / vp.width, cap / vp.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(vp.width * os);
+  canvas.height = Math.round(vp.height * os);
+  // Integer backing ↔ device pixels: the CSS size derives from the backing so
+  // the mapping stays exactly 1:1 and the browser never resamples the raster.
+  canvas.style.width = canvas.width / os + 'px';
+  canvas.style.height = canvas.height / os + 'px';
+  return { canvas, os };
+}
+
+/** A painted page as it goes on screen: the canvas in its content box, with
+ *  the job that later makes it selectable and clickable. */
+function pageContent(doc, page, vp, canvas, n) {
+  // Canvas + text layer live in one content div so the zoom relayout can
+  // GPU-stretch them together while the crisp re-render is in flight.
+  const content = document.createElement('div');
+  content.className = 'pdf-page-content';
+  // The box is exactly its raster. Left to fill the page wrapper, it grew
+  // with the wrapper on every zoom and the provisional GPU stretch
+  // (placeWrap) then scaled it AGAIN: a page waiting in the scroll buffer was
+  // 1.7× too wide, the viewer gained a horizontal scrollbar and "fit" centred
+  // on that phantom width — the page slid off to one side (leaving zen mode
+  // or switching from "alto" back to "ancho").
+  content.style.width = canvas.style.width;
+  content.style.height = canvas.style.height;
+  content.appendChild(canvas);
+  // What makes the page selectable and clickable is built once every canvas
+  // in the window is painted (see renderPass) — and only if this raster is
+  // still the one on screen by then.
+  content.pyxLayers = async () => {
+    if (!content.isConnected) return;
+    try { await alive(doc, buildTextLayer(page, vp, content)); } catch (_) {}
+    try { await alive(doc, buildLinkLayer(page, vp, content)); } catch (_) {}
+    // Each page's OWN size: a landscape page in a portrait report has its
+    // marks where they were drawn, not stretched to page 1's shape.
+    try { buildAnnotLayer(n, content, baseW[n - 1], baseH[n - 1]); } catch (_) {}
+  };
+  return content;
+}
+
+/* Read-ahead: the rest of the document, painted while nobody is waiting.
+ *
+ * Only the pages in (and just around) the view are rasterized on demand, so
+ * every page reached by scrolling started blank and filled in a moment later
+ * — a second or more for a page with a dense plot. A native viewer shows the
+ * page at once because it already has it. So, when the view has been still
+ * for a moment and everything on screen is painted, the other pages are
+ * rasterized one at a time, nearest first, and kept in the stash: scrolling
+ * to them then costs nothing. A report of twenty pages is fully in memory a
+ * few seconds after it opens or recompiles.
+ *
+ * It never competes with the reader: one page at a time, it stops the
+ * instant the view moves or a new PDF arrives, and it only fills the stash's
+ * free room — it never evicts a raster to make space for a guess. */
+let prefetchTimer = 0;
+let prefetching = false;
+function schedulePrefetch() {
+  clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(prefetch, 300);
+}
+async function prefetch() {
+  if (prefetching || renderLoop || !pdfDoc || !container || !pageCount()) return;
+  const seq = renderSeq;
+  const doc = pdfDoc;
+  const s = getScale();
+  const key = String(s);
+  // Rasters of another zoom are of no use any more, and would hold the room.
+  for (const k of [...stash.keys()]) if (!k.endsWith(`@${key}`)) stashDrop(k, true);
+  const n = pageCount();
+  const [lo, hi] = visibleRange();
+  const still = () => seq === renderSeq && !renderLoop && !renderAgain && pdfDoc === doc && getScale() === s;
+  prefetching = true;
+  try {
+    for (let d = 1; d < n; d++) {
+      // Below before above: the direction a document is read in.
+      for (const i of [hi + d, lo - d]) {
+        if (i < 0 || i >= n || mounted.has(i) || stash.has(`${i}@${key}`)) continue;
+        if (!still()) return;
+        const density = dpr();
+        if (stashPx + pageWpx(i) * pageHpx(i) * density * density > STASH_PX) return; // no room: stop guessing
+        let page;
+        try { page = await alive(doc, doc.getPage(i + 1)); } catch (_) { return; }
+        if (!still()) return;
+        const vp = page.getViewport({ scale: s });
+        // A page of another size than assumed (an A3 plan in an A4 report):
+        // the layout learns its real size now, with the reading position
+        // anchored so nothing moves on screen — exactly what renderPage does
+        // when such a page is first shown. These are often the heaviest
+        // pages of a report, the ones most worth having ready.
+        const realW = vp.width / s, realH = vp.height / s;
+        if (Math.abs(realW - baseW[i]) > 0.5 || Math.abs(realH - baseH[i]) > 0.5) {
+          const anchor = topAnchor();
+          baseW[i] = realW;
+          baseH[i] = realH;
+          recomputeGeometry();
+          restoreTopAnchor(anchor);
+          for (const [j, el] of mounted) placeWrap(j, el);
+        }
+        const { canvas, os } = pageCanvas(vp);
+        const task = page.render({ canvas, viewport: vp, transform: os !== 1 ? [os, 0, 0, os, 0, 0] : null });
+        try {
+          await alive(doc, task.promise);
+        } catch (_) {
+          task.cancel();
+          canvas.width = 0;
+          return; // a new PDF, or a page that does not render: leave it to renderPage
+        }
+        if (!still()) { canvas.width = 0; return; }
+        const content = pageContent(doc, page, vp, canvas, i + 1);
+        const wrap = mounted.get(i);
+        if (wrap) {
+          // It scrolled into the window while it was being painted.
+          if (wrap.dataset.rscale !== key) {
+            const old = wrap.firstChild;
+            wrap.replaceChildren(content);
+            freeRaster(old);
+            wrap.dataset.rscale = key;
+            scheduleLayers();
+          } else canvas.width = 0;
+        } else {
+          const px = canvas.width * canvas.height;
+          stash.set(`${i}@${key}`, { content, px });
+          stashPx += px;
+        }
+        // Let the page breathe between two rasters.
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+  } finally {
+    prefetching = false;
+  }
+}
+
 async function renderPage(doc, n, wrap, s, seq) {
   let page;
   try {
@@ -810,17 +951,7 @@ async function renderPage(doc, n, wrap, s, seq) {
   // between samples and faded out. Device-exact rendering keeps every rule crisp
   // (TeXstudio behaviour); zoom sharpness is unaffected because pages
   // re-rasterize at the exact scale after every zoom.
-  let os = dpr();
-  const cap = 12288;
-  if (vp.width * os > cap || vp.height * os > cap) os = Math.min(cap / vp.width, cap / vp.height);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(vp.width * os);
-  canvas.height = Math.round(vp.height * os);
-  // Integer backing ↔ device pixels: the CSS size derives from the backing so
-  // the mapping stays exactly 1:1 and the browser never resamples the raster.
-  canvas.style.width = canvas.width / os + 'px';
-  canvas.style.height = canvas.height / os + 'px';
+  const { canvas, os } = pageCanvas(vp);
 
   // `canvas`, not a context: that is what lets PDF.js rasterize in its worker
   // (it paints the finished bitmap into this canvas).
@@ -848,19 +979,7 @@ async function renderPage(doc, n, wrap, s, seq) {
   }
   if (seq !== renderSeq || !mounted.has(n - 1)) { canvas.width = 0; return; }
 
-  // Canvas + text layer live in one content div so the zoom relayout can
-  // GPU-stretch them together while the crisp re-render is in flight.
-  const content = document.createElement('div');
-  content.className = 'pdf-page-content';
-  // The box is exactly its raster. Left to fill the page wrapper, it grew
-  // with the wrapper on every zoom and the provisional GPU stretch
-  // (placeWrap) then scaled it AGAIN: a page waiting in the scroll buffer was
-  // 1.7× too wide, the viewer gained a horizontal scrollbar and "fit" centred
-  // on that phantom width — the page slid off to one side (leaving zen mode
-  // or switching from "alto" back to "ancho").
-  content.style.width = canvas.style.width;
-  content.style.height = canvas.style.height;
-  content.appendChild(canvas);
+  const content = pageContent(doc, page, vp, canvas, n);
   // The raster this one replaces (the previous version of the page, or the
   // same page at another zoom) is released at once, not when the collector
   // gets to it.
@@ -869,17 +988,6 @@ async function renderPage(doc, n, wrap, s, seq) {
   freeRaster(old);
   wrap.dataset.rscale = String(s);
   if (onFirstPaint) onFirstPaint();
-  // The page is VISIBLE now. What makes it selectable and clickable is built
-  // once every canvas in the window is painted (see renderPass) — and only if
-  // this raster is still the one on screen by then.
-  content.pyxLayers = async () => {
-    if (!content.isConnected) return;
-    try { await alive(doc, buildTextLayer(page, vp, content)); } catch (_) {}
-    try { await alive(doc, buildLinkLayer(page, vp, content)); } catch (_) {}
-    // Each page's OWN size: a landscape page in a portrait report has its
-    // marks where they were drawn, not stretched to page 1's shape.
-    try { buildAnnotLayer(n, content, baseW[n - 1], baseH[n - 1]); } catch (_) {}
-  };
 }
 
 /* ---------- scroll anchoring (used when geometry shifts under us) ---------- */
@@ -920,7 +1028,11 @@ async function buildLinkLayer(page, vp, content) {
       if (e.ctrlKey) return; // Ctrl+click = SyncTeX jump to source, not the link
       e.preventDefault();
       e.stopPropagation();
-      if (a.url) openExternal(a.url);
+      // Only web and mail links leave the app. A PDF can come from anyone
+      // (a plan brought in with \includepdf, a document opened to read), and
+      // a link in it is handed to the system's shell: nothing but http(s)
+      // and mailto is opened — never a file path or another scheme.
+      if (a.url) { if (/^(https?:\/\/|mailto:)/i.test(String(a.url).trim())) openExternal(String(a.url).trim()); }
       else goToDest(a.dest);
     });
     layer.appendChild(el);

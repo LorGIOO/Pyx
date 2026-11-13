@@ -426,6 +426,8 @@ export function switchTo(index) {
 // shows that PDF instead of running LaTeX again for the same bytes (an
 // explicit "Compilar" still forces). Lazy import avoids a static cycle.
 function compileAfterSave() {
+  // Configuración → Compilación → «Compilar y mostrar el PDF al guardar».
+  if (general.compileOnSave === false) return;
   import('../../compile/compiler.js').then((m) => m.compileActive(true, { force: false })).catch(() => {});
 }
 

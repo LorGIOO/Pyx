@@ -81,7 +81,10 @@ async fn compile_latex(
     warm: Option<bool>,
     prewarm: Option<bool>,
     gen: Option<u64>,
+    fast_pdf: Option<bool>,
 ) -> Result<latex::CompileResult, String> {
+    // Absent = fast: what every caller that predates the option gets.
+    latex::set_fast_pdf(fast_pdf.unwrap_or(true));
     let (res, next) = tauri::async_runtime::spawn_blocking(move || {
         let opts = latex::CompileOpts {
             jobname,
@@ -843,13 +846,13 @@ async fn image_to_latex(request: tauri::ipc::Request<'_>) -> Result<String, Stri
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let img = dir.join(format!("{stamp}.png"));
-        let script = dir.join("img2latex.py");
         std::fs::write(&img, &bytes).map_err(|e| e.to_string())?;
-        std::fs::write(&script, IMG2LATEX_PY).map_err(|e| e.to_string())?;
         let mut cmd = Command::new(&py);
         // -I: isolated — no PYTHON* variables, no user site, nothing from the
         // folder it runs in. UTF-8 so the JSON line is read as written.
-        cmd.args(["-I", "-X", "utf8"]).arg(&script).arg(&img)
+        // The script travels as `-c` text (sys.argv[1] is still the image): there
+        // is no file on disk to be replaced between writing it and running it.
+        cmd.args(["-I", "-X", "utf8", "-c", IMG2LATEX_PY]).arg(&img)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         quiet(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| format!("No se pudo iniciar el reconocedor: {e}"))?;

@@ -3,6 +3,109 @@
 Todas las versiones publicadas de Pyx. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [1.8.0] — 2026-11-13
+
+### Más rápido
+
+- **Compilar tarda bastante menos en documentos con preámbulo pesado.**
+  Medido en un informe real de 18 páginas (122 paquetes, ocho figuras en
+  PDF), que tardaba 17,3 s por pasada:
+  - «Compilar y ver» usa ahora también el motor precalentado. Hasta ahora
+    solo lo aprovechaban las compilaciones al guardar y al escribir, y el
+    botón que más se pulsa era justo el que pagaba el preámbulo entero cada
+    vez (7 s en ese documento). «Recompilar desde cero» sigue partiendo de
+    nada.
+  - XeLaTeX ya no vuelve a comprimir al máximo todo el PDF en cada
+    compilación: con compresión ligera la pasada baja de 17,3 s a 13,5 s y
+    el PDF solo crece un 3 %. Configuración → Compilación → «Escritura del
+    PDF» permite pedir el archivo más pequeño.
+- **Visor de PDF: las páginas ya están cuando llegas a ellas.** Cuando la
+  vista lleva un momento quieta, el resto del documento se dibuja en segundo
+  plano, las páginas más cercanas primero, y se conserva. En ese mismo
+  informe, llegar a una página pasaba de esperar a que se dibujara (4,5 s en
+  un A3 con cincuenta imágenes) a 4–13 ms. Se detiene en cuanto te mueves y
+  nunca desaloja una página ya dibujada para adelantar otra.
+
+### Corregido
+
+- **Ctrl+clic llevaba a unas líneas más arriba o más abajo** en cuanto había
+  por encima una tabla o una figura insertada con `\py{…}` de varias líneas
+  (`tabletex`, `figtex`) o un `\pyif{…}` escrito en varias líneas: el mapa
+  entre el PDF y el código solo descontaba las celdas. Ahora sigue también
+  esas líneas, en los dos sentidos, y los errores del registro apuntan a su
+  línea real.
+- Ctrl+clic en una página sin texto —una figura a página completa, un plano
+  traído con `\includepdf`— ya no se queda sin hacer nada: lleva a la orden
+  que puso esa página.
+- **Marcadores del PDF.** Tras recompilar seguían apuntando al PDF anterior,
+  y un clic llevaba a otra página o a ninguna. Ahora se releen en cada carga,
+  muestran su número de página, resaltan el apartado que se está leyendo y
+  sus ramas se pueden plegar.
+- El botón «Borrar anotaciones» parecía no funcionar: borraba la página del
+  centro del visor, que a menudo no era la anotada. Ahora hay dos botones
+  (esta página / todo el documento), y si la página a la vista no tiene
+  anotaciones dice en cuáles las hay.
+- Un enlace dentro de un PDF solo se abre si es web o de correo.
+
+### Mejorado
+
+- **Modo de anotación del PDF, rehecho.**
+  - Las marcas se editan: con «Seleccionar», cada una muestra sus tiradores
+    para cambiarle el tamaño y la forma, se mueve arrastrándola o con las
+    flechas del teclado, y su color, grosor y estilo se cambian desde la barra.
+  - Líneas y flechas rectas, curvas (tirando de su centro) o en codo, con
+    punta al final, al inicio, en los dos extremos o sin punta, y trazo
+    continuo o discontinuo. Mayús las bloquea a 0°, 45° y 90°, también al
+    mover un extremo.
+  - El puntero del lápiz, el rotulador y el borrador es un círculo —solo el
+    contorno— del tamaño exacto de la punta. El grosor se escribe como
+    número, o se cambia con la rueda.
+  - El borrador borra la marca entera o solo la parte que toca.
+  - Cuadros de texto editables escritos sobre la página, con su tamaño de
+    letra.
+  - Herramienta **láser**: un trazo para señalar que se desvanece solo y no
+    se guarda.
+  - Los comentarios se pliegan a su icono con un clic (y hay un botón para
+    plegarlos o abrirlos todos).
+  - «Guardar una copia del PDF» puede llevar las anotaciones dibujadas en
+    sus páginas.
+- **Ctrl+R: reemplazar.** Con una palabra seleccionada, se buscan todas sus
+  apariciones y el cursor queda en «Reemplazar».
+- **Pegar desde Excel.** Además de lo que ya hacía, reconoce una sola
+  columna, las celdas combinadas en vertical y las negritas, y elige
+  booktabs mirando el preámbulo del documento raíz (antes solo el del archivo
+  abierto). Se puede fijar el estilo de líneas y pedir que la tabla venga en
+  un entorno `table` con su título.
+- **Asistente de tabla**, rehecho: una rejilla donde se escribe o se pegan
+  las celdas de Excel, alineación por columna, cuatro estilos de líneas,
+  colocación, título y etiqueta, tamaño de letra y vista del código que se
+  va a insertar.
+- **Asistente de figura**, rehecho: varias imágenes como subfiguras,
+  miniatura de cada una, ancho en porcentaje o en centímetros, alto máximo,
+  y la ruta relativa a la carpeta del documento raíz (subiendo con `..`
+  cuando hace falta) en vez de una ruta absoluta.
+- **Las pestañas de los documentos** ocupan el 60 % de lo que ocupaban, y su
+  ancho se puede elegir.
+- **Configuración**: secciones que estaban partidas en dos vuelven a ser
+  una, y hay opciones nuevas: motor LaTeX por defecto, compilar o no al
+  guardar, botón del ratón que arrastra la página del PDF (central o
+  derecho), ancho de las pestañas, y las de pegado de tablas e imágenes.
+
+### Añadido
+
+- **Imagen a LaTeX.** Pega una captura de una fórmula (Ctrl+V) o usa
+  Matemáticas → «Imagen a LaTeX»: Pyx escribe su LaTeX donde está el cursor,
+  como fórmula independiente, en línea o tal cual si ya estás dentro de una.
+  El reconocedor se descarga la primera vez (unos 450 MB) en la carpeta de
+  Pyx, sin tocar tu Python, y después funciona sin conexión.
+- Pegar una imagen también puede guardarla en una carpeta del proyecto e
+  insertar su figura.
+- **Las figuras y tablas no pasan de su apartado** (Configuración →
+  Compilación, activado). LaTeX puede dejar una figura que no cabe después
+  del título del apartado siguiente; ahora se colocan todas las pendientes
+  antes de cada `\section`, `\subsection` y `\subsubsection`. Comprobado que
+  el orden que da Pyx sin esta opción es exactamente el de LaTeX.
+
 ## [1.7.0] — 2026-11-10
 
 ### Corregido

@@ -284,14 +284,22 @@ describe('compilación al escribir', () => {
     expect(engine.calls.at(-1).text).toContain('GEN 2');
   });
 
-  it('en segundo plano usa el motor en espera; «Compilar» nunca', async () => {
+  // The paused engine serves every compile but the one that starts from
+  // nothing: "Compilar y ver" used to be kept from it, and on a document with
+  // a heavy preamble it was the one compile that paid for all of it (7 s of a
+  // 17 s pass, measured), every time the button was pressed.
+  it('el motor en espera sirve a «Compilar» y al segundo plano; «desde cero» nunca', async () => {
     edit('GEN 1');
     await compileActive(true);
     edit('GEN 2');
     await compileActive(false);
     await settled();
-    expect(engine.calls[0]).toMatchObject({ warm: false, prewarm: true });
+    edit('GEN 3');
+    await compileActive(true, { fresh: true });
+    await settled();
+    expect(engine.calls[0]).toMatchObject({ warm: true, prewarm: true });
     expect(engine.calls[1]).toMatchObject({ warm: true, prewarm: true });
+    expect(engine.calls[2]).toMatchObject({ warm: false, clean: true });
     expect(engine.calls[1].gen).toBeGreaterThan(engine.calls[0].gen);
   });
 

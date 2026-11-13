@@ -1104,6 +1104,35 @@ fn recorded_inputs(out_dir: &Path, job: &str, run_dir: &Path, log: &str) -> Vec<
 // died; one older than WARM_MAX_AGE (\today must not be yesterday's). Then the
 // pass runs normally — the warm engine only ever saves time.
 
+// ---------------------------------------------------------------------------
+// Writing the PDF faster (xelatex)
+// ---------------------------------------------------------------------------
+//
+// xelatex hands its pages to xdvipdfmx, which by default recompresses every
+// stream at zlib's level 9. Measured on a real 18-page report with eight PDF
+// figures (three runs each, quiet machine): 17.3 s per pass at the default,
+// 13.5 s at level 1 — against 12.9 s with no PDF at all — for a file 3 %
+// larger (12.3 MB instead of 11.9). Nearly all of what level 9 buys is spent
+// recompressing figures that are already compressed.
+//
+// The driver is named in full, with the two options xelatex itself gives it
+// (`-q`: quiet; `-E`: embed fonts whatever their licence flags say), so the
+// only thing that changes is the level. Configuración → Compilación can ask
+// for the smallest file instead.
+static FAST_PDF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Choose between a faster pass (true, the default) and the smallest PDF.
+pub fn set_fast_pdf(on: bool) {
+    FAST_PDF.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The `-output-driver` argument for this engine, if it takes one.
+fn pdf_driver_arg(engine_cmd: &str) -> Option<&'static str> {
+    let name = Path::new(engine_cmd).file_stem().and_then(|s| s.to_str()).unwrap_or(engine_cmd).to_ascii_lowercase();
+    (name == "xelatex" && FAST_PDF.load(std::sync::atomic::Ordering::Relaxed))
+        .then_some("-output-driver=xdvipdfmx -q -E -z 1")
+}
+
 /// Line the stub prints when its preamble is done and it starts waiting.
 const WARM_READY: &str = "PYXWARMREADY";
 /// A paused engine is discarded after this long (memory, and `\today`).
@@ -1343,8 +1372,12 @@ fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &P
         .arg(format!("-output-directory={}", out_dir.display()))
         .arg(format!("-jobname={job}"))
         .arg("-recorder")
-        .env("TEXINPUTS", texinputs(out_dir, search_dirs))
-        .arg(&stub);
+        .env("TEXINPUTS", texinputs(out_dir, search_dirs));
+    // The same PDF driver a normal pass uses: this engine writes the PDF too.
+    if let Some(driver) = pdf_driver_arg(engine_cmd) {
+        cmd.arg(driver);
+    }
+    cmd.arg(&stub);
     crate::quiet(&mut cmd);
     let Ok(sp) = spawn_watched(cmd, true) else { return };
     let id = WARM_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2716,6 +2749,12 @@ fn compile_locked(
         }
         if let Some(j) = jobname.as_ref() {
             cmd.arg(format!("-jobname={j}"));
+        }
+        // The pass that writes the PDF writes it fast (see FAST_PDF).
+        if final_pass {
+            if let Some(driver) = pdf_driver_arg(&engine_cmd) {
+                cmd.arg(driver);
+            }
         }
         // Every file the engine opens, for the app's "did anything change?"
         cmd.arg("-recorder");

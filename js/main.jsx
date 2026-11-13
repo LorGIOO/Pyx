@@ -55,6 +55,8 @@ window.addEventListener('click', (e) => {
 
 // Apply any saved syntax-highlight customizations.
 initSettings();
+// Configuración → General → «Ancho de las pestañas».
+document.documentElement.style.setProperty('--doc-tab-w', `${+gv('tabWidth') || 132}px`);
 
 // The auxiliary viewer window is created with an init script that defines
 // __PYX_VIEWER__ (a query string would be percent-encoded by WebviewUrl::App).

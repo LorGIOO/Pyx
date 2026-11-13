@@ -1461,6 +1461,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           + `${why ? ` (${why})` : ''}: en el PDF aparece «No se pudo leer» en su lugar.`;
       }
     }
+    use.floatBarrier = general.floatBarrier !== false;
     const shim = safetyPreamble(use);
 
     /* Where each file's processed copy goes.
@@ -1652,7 +1653,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       || []
     )[1];
     const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()
-      || state.env.latex || 'xelatex';
+      || general.defaultEngine || state.env.latex || 'xelatex';
 
     // Nothing the engine reads changed: running it again would burn seconds to
     // produce the same bytes. Skipped ONLY when all of this holds —
@@ -1696,8 +1697,17 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // run it. Either kind leaves the next engine paused, for the typing that
     // follows.
     const warmOn = general.warmEngine !== false;
+    // The paused engine serves "Compilar y ver" too, not only the compiles a
+    // save or a typing pause fires. It was kept from the manual compile "to
+    // run it the way TeXstudio would" — which on a document with a heavy
+    // preamble (measured: 7 s of a 17 s pass, 122 packages) meant the button
+    // the user presses most was the one compile that paid for all of it,
+    // every time. The paused engine is only taken when the preamble is
+    // byte-for-byte the same and nothing it read has changed (latex.rs), so
+    // the result is the same PDF; «Recompilar desde cero» still starts from
+    // nothing.
     const res = await compileLatex(buildPath, cwd, engine, passes, stem, searchDirs, fresh,
-      warmOn && !force, warmOn, gen);
+      warmOn && !fresh, warmOn, gen, general.pdfCompress !== 'max');
     phase.tex = performance.now() - tTex;
     engineMs = phase.tex;
     beat();

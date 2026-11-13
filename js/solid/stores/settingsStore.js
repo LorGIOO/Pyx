@@ -142,6 +142,8 @@ export function resetAll() {
 // categories so "Restablecer esta sección" knows which keys to drop.
 export const GENERAL_SECTIONS = {
   general: {
+    // Width of a document tab while they all fit (styles/tabs.css).
+    tabWidth: 132,
     restoreSession: false,   // reopen last session's files on launch
     autosave: false,         // periodic save of the active document
     autosaveMin: 5,          // minutes between autosaves
@@ -208,11 +210,22 @@ export const GENERAL_SECTIONS = {
     encoding: 'UTF-8',
     liveCompile: true,
     liveDelay: 1100,
+    // '' = whichever engine is installed; a document's own choice and its
+    // `% !TeX program` line come first (compiler.js).
+    defaultEngine: '',
+    // Ctrl+S also compiles and brings the viewer up (docStore.js).
+    compileOnSave: true,
+    // \FloatBarrier before every section heading: figures and tables stay
+    // in the section they were written in (latex-bridge.js safetyPreamble).
+    floatBarrier: true,
     // Seconds a Python cell may run before it is interrupted (0: no limit).
     cellTimeout: 0,
     // Keep a LaTeX engine paused after the preamble, ready for the next
     // compile (latex.rs, "Warm engine").
     warmEngine: true,
+    // How xelatex's PDF is written: 'fast' (light compression: a pass about
+    // a fifth shorter, the file ~3 % larger) or 'max' (smallest file).
+    pdfCompress: 'fast',
     // Underline LaTeX structure errors while typing (latex-lint.js).
     latexLint: true,
     // …plus ChkTeX's style warnings (needs chktex; off: they are many).

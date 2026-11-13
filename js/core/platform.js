@@ -223,8 +223,8 @@ export const detectEnv = () => invoke('detect_env');
 // `warm` = let a paused engine (preamble already typeset) run this pass;
 // `prewarm` = leave one paused for the next (latex.rs, "Warm engine").
 // `gen` = the app's number for this request; it comes back in the result.
-export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false, warm = true, prewarm = warm, gen = 0) =>
-  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean, warm, prewarm, gen });
+export const compileLatex = (path, projectDir, engine, passes = 1, jobname = null, searchDirs = [], clean = false, warm = true, prewarm = warm, gen = 0, fastPdf = true) =>
+  invoke('compile_latex', { path, projectDir, engine, passes, jobname, searchDirs, clean, warm, prewarm, gen, fastPdf });
 // Stop the LaTeX run in flight (engine + PDF driver).
 export const compileCancel = () => invoke('compile_cancel');
 // The project's working directory (created on demand). Everything the build

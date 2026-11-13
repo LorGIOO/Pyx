@@ -33,7 +33,7 @@
      made three open chapters fill half the strip. With many documents open
      they narrow to 60px (a few letters and the close box) before the strip
      starts to scroll. */
-  flex: 0 1 132px;
+  flex: 0 1 var(--doc-tab-w, 132px);
   min-width: 60px;
   height: 100%;
   background: var(--theme-tab-bg);

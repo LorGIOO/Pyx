@@ -12,10 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24, el mismo con el que se desarrolla. Con Node 20 fallaban tres
+      # pruebas por el propio Node y no por la app: le falta
+      # Promise.withResolvers (que usa PDF.js) y su TextDecoder de
+      # Windows-1252 no trata bien los bytes 0x80-0x9F. En la app esas dos
+      # cosas las pone el WebView, no Node.
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Configurar Rust
         uses: dtolnay/rust-toolchain@stable

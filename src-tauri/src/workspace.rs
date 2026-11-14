@@ -42,6 +42,12 @@ fn cache_root() -> PathBuf {
     base.unwrap_or_else(std::env::temp_dir).join("Pyx").join("build")
 }
 
+/// The folder that holds every project's working directory.
+pub fn cache_root_dir() -> Option<PathBuf> {
+    let r = cache_root();
+    r.is_dir().then_some(r)
+}
+
 /// Is `dir` one of the working directories (or inside one)?
 pub fn in_cache(dir: &Path) -> bool {
     let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();

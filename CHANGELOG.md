@@ -25,12 +25,12 @@ Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:
   o dos puntas; trazo discontinuo; grosor a medida; puntero circular del
   tamaño de la punta; borrador entero o por partes; cuadros de texto; láser;
   comentarios plegables a su icono; exportar el PDF con las anotaciones.
-- Mientras una herramienta está en la mano, las páginas no se mueven solas.
+- Mientras una herramienta está en la mano, las páginas no se mueven: ni
+  solas ni al dibujar con un lápiz digital o con el dedo.
 
 ### Escribir
 
-- Imagen a LaTeX: pega una captura de una fórmula y se escribe su código. El
-  reconocedor se queda cargado: ~1 s por fórmula tras la primera.
+- Pegar una imagen la guarda en la carpeta del proyecto y escribe su figura.
 - Asistentes de tabla y figura nuevos, con vista previa del código, pegar
   desde Excel en una rejilla y un estilo propio que se guarda.
 - Corrector más completo en español: vocabulario técnico, verbos con
@@ -46,5 +46,10 @@ Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:
 - La carpeta del programa contiene solo el programa: compilaciones,
   registros y entornos de Python van a `%LOCALAPPDATA%\com.pyx.studio`. Lo
   que guardaban versiones anteriores se traslada solo al arrancar.
+- Un `.pltx` guarda solo el documento y los resultados de sus celdas, no el
+  PDF ni los archivos de compilación: pesa lo que el texto.
+- La carpeta de trabajo no acumula basura: el visor no duplica el PDF, y al
+  arrancar se borran los proyectos sin compilar desde hace un mes, las copias
+  de la sesión anterior y los archivos intermedios.
 - Pestañas de documentos más pequeñas, con ancho configurable.
 - Instaladores comprobados con antivirus antes de publicarse.

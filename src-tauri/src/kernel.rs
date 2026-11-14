@@ -296,6 +296,11 @@ pub fn list_interpreters() -> Vec<PyProbe> {
 /// upgrades Pyx can never keep running the PREVIOUS version's kernel out of a
 /// stale temp file — a failure mode that looks like the new features simply not
 /// existing.
+/// The file name of this version's kernel script in the temp folder.
+pub fn kernel_file_name() -> String {
+    kernel_path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+}
+
 fn kernel_path() -> std::path::PathBuf {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in KERNEL_PY.as_bytes() {

@@ -184,14 +184,8 @@ export const GENERAL_SECTIONS = {
     // «Guardar como mi estilo» in the table and figure assistants (null: Pyx's).
     tableStyle: null,
     figureStyle: null,
-    // A picture pasted into the editor (img-latex.js): 'ask', 'formula'
-    // (recognize it as LaTeX) or 'figure' (save it and insert the figure).
-    pasteImageAs: 'formula',
     // Folder, next to the root document, where pasted pictures are saved.
     pasteImageDir: 'imagenes',
-    // A recognized formula outside mathematics: 'display' (\[ … \]),
-    // 'inline' ($…$) or 'raw' (as recognized).
-    ocrMode: 'display',
   },
   complete: {
     completion: true,

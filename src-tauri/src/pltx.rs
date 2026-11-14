@@ -1,9 +1,11 @@
 //! `.pltx` container format — a ZIP, Word-style.
 //!
-//! A `.pltx` bundles the document source, the cell results and the ENTIRE
-//! working directory of the project — the `.build.tex` copies, the engine's
-//! scratch (.aux, .log, .toc, .out, .mtc*, .fls, .maf…), the SyncTeX index and
-//! the PDF. None of that is ever written next to the document.
+//! A `.pltx` bundles the document source and the cell results. The engine's
+//! working directory (the `.build.tex` copies, .aux, .log, the SyncTeX index,
+//! the PDF) lives in Pyx's data folder: never next to the document, and never
+//! inside it. Containers saved by earlier versions may still carry a `build/`
+//! folder; it is read once (to show the last PDF at once) and dropped at the
+//! next save.
 //!
 //! The result is a project folder that holds only what the author put in it:
 //! the `.pltx` files, their images and their `.sty` packages. Same idea as a
@@ -234,26 +236,14 @@ pub fn read(path: &str, restore: bool) -> Result<PltxRead, String> {
 
 static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Payloads that are already compressed, so the zip stores them verbatim.
-fn precompressed(rel: &str) -> bool {
-    matches!(
-        rel.rsplit('.').next().map(str::to_ascii_lowercase).as_deref(),
-        Some("pdf" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "gz" | "zip" | "xz" | "7z")
-    )
-}
-
-/// Save a `.pltx`: source + cell results + the project's whole working
-/// directory, written to a temp file and renamed so a crash mid-write can never
-/// corrupt the document.
+/// Save a `.pltx`: the source and the cells' results, written to a temp file
+/// and renamed so a crash mid-write can never corrupt the document.
 ///
-/// The working directory is NOT deleted afterwards: it lives outside the
-/// user's folder, it is invisible, and keeping it is what lets the next compile
-/// reuse the engine's cross-reference state instead of starting from zero.
-///
-/// While an engine is writing into that directory (a save during a compile),
-/// its half-written files are not packed: the document keeps the working
-/// directory of its previous save, copied over as it was. The source and the
-/// results — what the user actually saved — are always the current ones.
+/// Only the document. It used to carry the project's whole working directory
+/// too — the PDF, the `.build.tex` copies, the engine's scratch — so every
+/// report in the user's folder weighed its PDF a second time (and again in
+/// every backup of that folder). The working directory stays where it is, in
+/// Pyx's data folder, and the next compile rebuilds whatever is missing.
 pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), String> {
     // One save at a time. Two at once — Ctrl+S pressed again before the first
     // save finished — wrote the SAME temp file: one of them found it already
@@ -262,17 +252,12 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
     let _one_at_a_time = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let p = Path::new(path);
     let tmp = p.with_extension("pltx.tmp");
-    let dir = workspace::build_dir(path);
-    let busy = workspace::is_busy(&dir);
-    let previous = if busy { fs::read(p).ok().filter(|b| is_zip(b)) } else { None };
     {
         let file = fs::File::create(&tmp)
             .map_err(|e| format!("No se pudo escribir el .pltx: {e}"))?;
         let mut zip = zip::ZipWriter::new(file);
         let deflate: zip::write::FileOptions<'_, ()> =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        let store: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
         let mut put = |name: &str,
                        data: &[u8],
@@ -286,50 +271,6 @@ pub fn write(path: &str, source: &str, outputs: Option<&str>) -> Result<(), Stri
         put(SOURCE_ENTRY, source.as_bytes(), deflate)?;
         if let Some(o) = outputs.filter(|o| !o.is_empty()) {
             put(OUTPUTS_ENTRY, o.as_bytes(), deflate)?;
-        }
-        if !busy {
-            for (rel, abs) in workspace::walk(&dir) {
-                // XeTeX's scratch name for a SyncTeX file it is still writing;
-                // one left behind by an engine that died is never state.
-                if rel.contains("(busy)") {
-                    continue;
-                }
-                // The paused engine's stub (latex.rs, "Warm engine"): a
-                // copy of the preamble that the next compile rewrites.
-                if rel.starts_with(crate::latex::WARM_DIR) {
-                    continue;
-                }
-                // The viewers' copies of the PDF (latex.rs, "A PDF nobody is
-                // writing"): the PDF itself is already packed.
-                if rel.starts_with(crate::latex::VIEW_DIR) {
-                    continue;
-                }
-                // xelatex's intermediate (.xdv): rewritten by every compile and
-                // never read back — as big as the PDF, for nothing.
-                if rel.to_ascii_lowercase().ends_with(".xdv") {
-                    continue;
-                }
-                if let Ok(data) = fs::read(&abs) {
-                    // The text of a build directory (.aux, .log, .toc) deflates
-                    // to a fraction of its size and is worth compressing. The
-                    // PDF and the figures are ALREADY compressed: re-deflating
-                    // them costs most of the save on a figure-heavy report and
-                    // buys nothing.
-                    let opts = if precompressed(&rel) { store } else { deflate };
-                    put(&format!("{BUILD_PREFIX}{rel}"), &data, opts)?;
-                }
-            }
-        } else if let Some(bytes) = previous.as_deref() {
-            // Raw copies: the entries go over byte for byte, not recompressed.
-            if let Ok(mut old) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) {
-                for i in 0..old.len() {
-                    if let Ok(f) = old.by_index_raw(i) {
-                        if f.name().starts_with(BUILD_PREFIX) {
-                            zip.raw_copy_file(f).map_err(|e| format!("zip: {e}"))?;
-                        }
-                    }
-                }
-            }
         }
         let file = zip.finish().map_err(|e| format!("zip: {e}"))?;
         // On disk BEFORE it takes the document's place. The rename is atomic
@@ -381,102 +322,32 @@ mod tests {
     /// root. When every read also restored the saved working directory, each of
     /// those reads put the LAST SAVE's `.build.tex` back on top of the one the
     /// compile had just written, and the engine typeset stale text.
+    /// A saved document is the document: its source and its results. The
+    /// working directory (PDF, build copies, the engine's scratch) is neither
+    /// packed into it nor touched by saving.
     #[test]
-    fn only_opening_restores_the_working_directory() {
-        let dir = std::env::temp_dir().join(format!("pyx-pltx-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let doc = dir.join("_Proyecto.pltx");
-        let doc = doc.to_str().unwrap();
-        let work = workspace::ensure_build_dir(doc).unwrap();
-        let build = work.join("_Proyecto.build.tex");
-
-        // Saved with the OLD build in its working directory…
-        fs::write(&build, "VERSION GUARDADA").unwrap();
-        write(doc, r"\documentclass{article}", None).unwrap();
-        // …then the compile the save triggered writes the NEW one. (The pause
-        // keeps the two timestamps apart on a coarse system clock; a real
-        // compile ends seconds after the save.)
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        fs::write(&build, "VERSION RECIEN COMPILADA").unwrap();
-
-        // A compile-time read must leave it alone.
-        let r = read(doc, false).unwrap();
-        assert!(r.is_zip);
-        assert_eq!(r.source.as_deref(), Some(r"\documentclass{article}"));
-        assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION RECIEN COMPILADA");
-
-        // Opening keeps it too: it is NEWER than the saved document, so it is
-        // the latest build, and the zip only has the one from before the save.
-        read(doc, true).unwrap();
-        assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION RECIEN COMPILADA");
-
-        // But a working file OLDER than the document is stale — left by some
-        // other version of it — and opening brings back what was saved.
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        fs::write(&build, "VERSION VIEJA DE OTRA COPIA").unwrap();
-        fs::File::options().write(true).open(&build).unwrap().set_modified(old).unwrap();
-        read(doc, true).unwrap();
-        assert_eq!(fs::read_to_string(&build).unwrap(), "VERSION GUARDADA");
-        // …stamped with the time of the SAVE, not of the opening: a chapter
-        // edited after that save must still look newer than what came back.
-        let saved = fs::metadata(doc).unwrap().modified().unwrap();
-        assert_eq!(fs::metadata(&build).unwrap().modified().unwrap(), saved);
-
-        let _ = fs::remove_dir_all(&work);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// A save that lands while the engine writes into the working directory
-    /// must not pack its half-written files: it keeps the previous save's
-    /// working directory. A left-over `(busy)` file is never packed.
-    #[test]
-    fn a_save_during_a_compile_keeps_the_previous_working_directory() {
-        let dir = std::env::temp_dir().join(format!("pyx-pltx-busy-{}", std::process::id()));
+    fn a_saved_pltx_holds_only_the_document() {
+        let dir = std::env::temp_dir().join(format!("pyx-pltx-only-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let doc = dir.join("_Informe.pltx");
         let doc = doc.to_str().unwrap();
         let work = workspace::ensure_build_dir(doc).unwrap();
-        let entry = |name: &str| -> Option<String> {
-            let bytes = fs::read(doc).unwrap();
-            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-            let mut s = String::new();
-            z.by_name(name).ok()?.read_to_string(&mut s).ok()?;
-            Some(s)
-        };
+        fs::write(work.join("_Informe.pdf"), vec![b'x'; 200_000]).unwrap();
+        fs::write(work.join("_Informe.build.tex"), "COPIA").unwrap();
 
-        fs::write(work.join("_Informe.log"), "LOG COMPLETO").unwrap();
-        write(doc, "v1", None).unwrap();
-        assert_eq!(entry("build/_Informe.log").as_deref(), Some("LOG COMPLETO"));
+        write(doc, r"\documentclass{article}", Some("{\"a\":1}")).unwrap();
+        let bytes = fs::read(doc).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let names: Vec<String> = (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect();
+        assert_eq!(names, vec!["manifest.json", "source.tex", "outputs.json"]);
+        assert!(bytes.len() < 2_000, "{} bytes", bytes.len());
+        assert_eq!(fs::read_to_string(work.join("_Informe.build.tex")).unwrap(), "COPIA");
 
-        // The engine is mid-run: a half-written log and XeTeX's scratch file.
-        fs::write(work.join("_Informe.log"), "LOG A MED").unwrap();
-        fs::write(work.join("_Informe.synctex(busy)"), "x").unwrap();
-        {
-            let _engine = workspace::mark_busy(&work);
-            write(doc, "v2", None).unwrap();
-            assert_eq!(entry("source.tex").as_deref(), Some("v2"), "the source is always the current one");
-            assert_eq!(entry("build/_Informe.log").as_deref(), Some("LOG COMPLETO"));
-            assert!(entry("build/_Informe.synctex(busy)").is_none());
-        }
-
-        // Engine done: the next save packs the directory as it now is.
-        write(doc, "v3", None).unwrap();
-        assert_eq!(entry("build/_Informe.log").as_deref(), Some("LOG A MED"));
-        assert!(entry("build/_Informe.synctex(busy)").is_none());
+        let r = read(doc, false).unwrap();
+        assert_eq!(r.source.as_deref(), Some(r"\documentclass{article}"));
 
         let _ = fs::remove_dir_all(&work);
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn already_compressed_payloads_are_stored_not_deflated() {
-        for f in ["main.pdf", "cap/fig.PNG", "x.synctex.gz", "a.jpeg"] {
-            assert!(precompressed(f), "{f}");
-        }
-        for f in ["main.aux", "main.log", "cap/uno.build.tex", "main.toc", "sinextension"] {
-            assert!(!precompressed(f), "{f}");
-        }
     }
 }

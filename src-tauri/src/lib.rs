@@ -805,212 +805,6 @@ async fn setup_python(app: tauri::AppHandle, packages: Option<Vec<String>>) -> R
         .map_err(|e| e.to_string())?
 }
 
-/// Is the formula recognizer (image -> LaTeX) installed?
-#[tauri::command]
-fn ocr_ready() -> bool {
-    runtime::ocr_python().is_some()
-}
-
-/// Install the formula recognizer in its own environment (runtime.rs). Its
-/// progress goes out as `setup:line` events, like the other installs.
-#[tauri::command]
-async fn setup_ocr(app: tauri::AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || runtime::setup_ocr(&setup_say(&app)))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// The recognizer's script travels inside the binary, like the kernel.
-const IMG2LATEX_PY: &str = include_str!("../python/img2latex.py");
-
-/// The recognizer, kept running between recognitions.
-///
-/// Loading its models is the slow part — seconds — and it used to be paid on
-/// EVERY formula, because each one started a new Python. Now one process
-/// loads them once and answers a line per image: the first formula of a
-/// session takes those seconds, the rest about one. It is its own process
-/// (never the kernel the document computes in), it is stopped after ten
-/// minutes without use, and it goes with the window.
-struct OcrServer {
-    child: std::process::Child,
-    stdin: std::process::ChildStdin,
-    lines: std::sync::mpsc::Receiver<String>,
-}
-static OCR_SERVER: std::sync::Mutex<Option<OcrServer>> = std::sync::Mutex::new(None);
-static OCR_LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-fn ocr_start() -> Result<OcrServer, String> {
-    use std::io::{BufRead, BufReader};
-    use std::process::{Command, Stdio};
-    let py = runtime::ocr_python().ok_or("El reconocedor de fórmulas no está instalado.")?;
-    let mut cmd = Command::new(&py);
-    // -I: isolated — no PYTHON* variables, no user site, nothing from the
-    // folder it runs in. The script travels as `-c` text: there is no file on
-    // disk to be replaced between writing it and running it.
-    cmd.args(["-I", "-X", "utf8", "-c", IMG2LATEX_PY, "--serve"])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-    quiet(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("No se pudo iniciar el reconocedor: {e}"))?;
-    let stdin = child.stdin.take().ok_or("reconocedor sin entrada")?;
-    let stdout = child.stdout.take().ok_or("reconocedor sin salida")?;
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    // READY, or the one line that says why not (the package is missing…).
-    match rx.recv_timeout(std::time::Duration::from_secs(240)) {
-        Ok(l) if l.trim() == "READY" => Ok(OcrServer { child, stdin, lines: rx }),
-        Ok(l) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let v: serde_json::Value = serde_json::from_str(&l).unwrap_or(serde_json::Value::Null);
-            Err(v["error"].as_str().unwrap_or("el reconocedor no pudo arrancar").to_string())
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err("El reconocedor no llegó a arrancar.".into())
-        }
-    }
-}
-
-fn ocr_stop(slot: &mut Option<OcrServer>) {
-    if let Some(mut s) = slot.take() {
-        let _ = s.child.kill();
-        let _ = s.child.wait();
-    }
-}
-
-/// Stop the recognizer (the window is closing).
-fn ocr_shutdown() {
-    if let Ok(mut g) = OCR_SERVER.lock() {
-        ocr_stop(&mut g);
-    }
-}
-
-/// Make sure the recognizer is up; starts the thread that stops it when idle.
-fn ocr_ensure(slot: &mut Option<OcrServer>) -> Result<(), String> {
-    if let Some(s) = slot.as_mut() {
-        if matches!(s.child.try_wait(), Ok(None)) {
-            return Ok(());
-        }
-        ocr_stop(slot);
-    }
-    *slot = Some(ocr_start()?);
-    OCR_LAST_USE.store(now_secs(), std::sync::atomic::Ordering::Relaxed);
-    std::thread::spawn(|| loop {
-        std::thread::sleep(std::time::Duration::from_secs(60));
-        let Ok(mut g) = OCR_SERVER.lock() else { return };
-        if g.is_none() {
-            return;
-        }
-        if now_secs().saturating_sub(OCR_LAST_USE.load(std::sync::atomic::Ordering::Relaxed)) > 600 {
-            ocr_stop(&mut g);
-            return;
-        }
-    });
-    Ok(())
-}
-
-/// Start the recognizer ahead of the first formula (the window calls this
-/// the moment a picture is pasted, while the user is still choosing what to
-/// do with it). Errors are for the recognition itself to report.
-#[tauri::command]
-async fn ocr_warm() {
-    let _ = tauri::async_runtime::spawn_blocking(|| {
-        if let Ok(mut g) = OCR_SERVER.lock() {
-            let _ = ocr_ensure(&mut g);
-        }
-    })
-    .await;
-}
-
-/// The LaTeX of the formula in an image. The image arrives as the request
-/// BODY (PNG/JPEG bytes: a screenshot pasted into the editor) and is written
-/// to a temporary file for the recognizer. Bounded in time.
-#[tauri::command]
-async fn image_to_latex(request: tauri::ipc::Request<'_>) -> Result<String, String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("image_to_latex espera la imagen en el cuerpo de la petición".into());
-    };
-    if bytes.is_empty() || bytes.len() > 40 * 1024 * 1024 {
-        return Err("La imagen está vacía o es demasiado grande.".into());
-    }
-    let bytes = bytes.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        use std::io::Write;
-        let dir = std::env::temp_dir().join(format!("pyx-ocr-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        let img = dir.join(format!("{stamp}.png"));
-        std::fs::write(&img, &bytes).map_err(|e| e.to_string())?;
-        let mut g = OCR_SERVER.lock().map_err(|_| "reconocedor no disponible".to_string())?;
-        let answer = (|| -> Result<String, String> {
-            ocr_ensure(&mut g)?;
-            let s = g.as_mut().ok_or("reconocedor no disponible")?;
-            // Anything left over from an earlier, abandoned request.
-            while s.lines.try_recv().is_ok() {}
-            writeln!(s.stdin, "{}", img.display()).and_then(|_| s.stdin.flush()).map_err(|e| e.to_string())?;
-            s.lines
-                .recv_timeout(std::time::Duration::from_secs(120))
-                .map_err(|_| "El reconocedor tardó demasiado y se ha detenido.".to_string())
-        })();
-        let _ = std::fs::remove_file(&img);
-        OCR_LAST_USE.store(now_secs(), std::sync::atomic::Ordering::Relaxed);
-        let line = match answer {
-            Ok(l) => l,
-            Err(e) => {
-                // Whatever state it is in, the next formula starts a fresh one.
-                ocr_stop(&mut g);
-                return Err(e);
-            }
-        };
-        let v: serde_json::Value = serde_json::from_str(&line).map_err(|_| "El reconocedor no respondió.".to_string())?;
-        if v["ok"].as_bool() == Some(true) {
-            Ok(v["latex"].as_str().unwrap_or("").to_string())
-        } else {
-            Err(v["error"].as_str().unwrap_or("no se pudo reconocer la imagen").to_string())
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// The picture on the system clipboard, as PNG bytes (empty: there is none).
-///
-/// The window can read a pasted picture by itself, but only inside a paste
-/// event; the «Imagen a LaTeX» button has no such event, and the WebView's
-/// own clipboard API may refuse — which sent the user to a file dialog for a
-/// screenshot that was sitting on the clipboard.
-#[tauri::command]
-async fn clipboard_image() -> Result<tauri::ipc::Response, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-        let Ok(img) = cb.get_image() else {
-            return Ok(tauri::ipc::Response::new(Vec::new()));
-        };
-        let mut out = Vec::new();
-        {
-            let mut enc = png::Encoder::new(&mut out, img.width as u32, img.height as u32);
-            enc.set_color(png::ColorType::Rgba);
-            enc.set_depth(png::BitDepth::Eight);
-            let mut w = enc.write_header().map_err(|e| e.to_string())?;
-            w.write_image_data(&img.bytes).map_err(|e| e.to_string())?;
-        }
-        Ok(tauri::ipc::Response::new(out))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// Install packages into the interpreter the kernel runs.
 #[tauri::command]
 async fn install_packages(app: tauri::AppHandle, python: String, packages: Vec<String>) -> Result<(), String> {
@@ -1631,6 +1425,8 @@ pub fn run() {
             // Data that earlier versions kept in the program folder moves to
             // the data folder, before anything reads it (runtime.rs).
             runtime::migrate_old_data();
+            // Old working directories and old kernel scripts, off the main thread.
+            std::thread::spawn(runtime::tidy_data);
             // The version in the window's own title: the taskbar and Alt+Tab
             // say which Pyx is running, not only the title bar drawn inside.
             if let Some(w) = app.get_webview_window("main") {
@@ -1665,11 +1461,6 @@ pub fn run() {
             install_tectonic,
             setup_python,
             install_packages,
-            ocr_ready,
-            setup_ocr,
-            image_to_latex,
-            ocr_warm,
-            clipboard_image,
             file_stamps,
             read_sources,
             read_notebook,
@@ -1704,7 +1495,6 @@ pub fn run() {
                     "main" => {
                         // The engine paused for the next compile goes too.
                         latex::drop_warm();
-                        ocr_shutdown();
                         if let Some(state) = window.try_state::<KernelState>() {
                             let _ = kernel::shutdown(&state.handle());
                         }

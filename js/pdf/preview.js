@@ -47,7 +47,7 @@ import { general } from '../solid/stores/settingsStore.js';
 import {
   getScale, setScale, getFitMode, setFitMode,
   setNumPages, setCurrentPage, setPreviewFile, setHasPdf, tool, setLastArea, pdfVersion, setPdfVersion,
-  setLoadError, setSearchProgress,
+  setLoadError, setSearchProgress, annotTool,
 } from '../solid/stores/previewStore.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -850,6 +850,9 @@ function schedulePrefetch() {
   prefetchTimer = setTimeout(prefetch, 300);
 }
 async function prefetch() {
+  // Not while drawing: it can re-lay-out the document (a page of another
+  // size) or replace a page's layers in the middle of a stroke.
+  if (annotTool()) return;
   if (prefetching || renderLoop || !pdfDoc || !container || !pageCount()) return;
   const seq = renderSeq;
   const doc = pdfDoc;
@@ -859,7 +862,7 @@ async function prefetch() {
   for (const k of [...stash.keys()]) if (!k.endsWith(`@${key}`)) stashDrop(k, true);
   const n = pageCount();
   const [lo, hi] = visibleRange();
-  const still = () => seq === renderSeq && !renderLoop && !renderAgain && pdfDoc === doc && getScale() === s;
+  const still = () => seq === renderSeq && !renderLoop && !renderAgain && pdfDoc === doc && getScale() === s && !annotTool();
   prefetching = true;
   try {
     for (let d = 1; d < n; d++) {
@@ -1543,7 +1546,10 @@ function attachEvents(el) {
     }
     // Which button drags the page is the user's choice (Configuración → Visor
     // PDF → Ratón): the middle one always does, the right one when asked to.
-    const wantPan = e.button === 1 || (e.button === 2 && general.pdfPanButton !== 'middle')
+    // While drawing, a pen's barrel button and Windows' press-and-hold arrive
+    // as a right click: they must not turn a stroke into a pan.
+    const drawing = !!annotTool() && e.pointerType !== 'mouse';
+    const wantPan = !drawing && (e.button === 1 || (e.button === 2 && general.pdfPanButton !== 'middle'))
       || (tool() === 'pan' && e.button === 0);
     if (wantPan) {
       e.preventDefault();

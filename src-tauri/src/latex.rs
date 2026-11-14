@@ -2136,10 +2136,18 @@ fn snapshot_pdf(pdf: &Path, out_dir: &Path, job: &str) -> Option<PdfInfo> {
     let id = COPY_IDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let name = format!("{job}.{:013}-{id}.pdf", now_ms());
     let dest = dir.join(&name);
-    let tmp = dir.join(format!("{name}.tmp"));
-    if std::fs::copy(pdf, &tmp).is_err() || std::fs::rename(&tmp, &dest).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return None;
+    // A HARD LINK, not a copy: the same bytes under a second name, which
+    // costs no disk space. It is safe because the engine never writes into
+    // an existing PDF — the previous one is moved aside before every run
+    // (ParkedPdf), so `<job>.pdf` is always a NEW file and this name keeps
+    // the version it was made from. A copy only where links are impossible
+    // (a FAT drive).
+    if std::fs::hard_link(pdf, &dest).is_err() {
+        let tmp = dir.join(format!("{name}.tmp"));
+        if std::fs::copy(pdf, &tmp).is_err() || std::fs::rename(&tmp, &dest).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return None;
+        }
     }
     let meta = std::fs::metadata(&dest).ok()?;
     if let Ok(mut g) = VIEW_COPY.lock() {
@@ -2147,6 +2155,8 @@ fn snapshot_pdf(pdf: &Path, out_dir: &Path, job: &str) -> Option<PdfInfo> {
     }
     // Keep this one and the one before it (a viewer may still be reading it);
     // a copy that cannot be deleted is one somebody has open — next time.
+    // The one before is the previous PDF's only remaining name, so it is the
+    // only extra space this costs, and only until the next compile.
     let prefix = format!("{job}.");
     let mut old: Vec<String> = std::fs::read_dir(&dir)
         .into_iter()

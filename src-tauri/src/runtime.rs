@@ -68,7 +68,7 @@ pub fn migrate_old_data() {
         return;
     }
     let _ = std::fs::create_dir_all(&new);
-    for name in ["env", "ocr", "uv", "tectonic", "python", "build", "logs", "jupyter", "history"] {
+    for name in ["env", "uv", "tectonic", "python", "build", "logs", "jupyter", "history"] {
         let from = old.join(name);
         let to = new.join(name);
         if !from.is_dir() {
@@ -100,6 +100,65 @@ pub fn migrate_old_data() {
 }
 #[cfg(not(windows))]
 pub fn migrate_old_data() {}
+
+/// Remove what nothing will use again, once per start (in the background):
+///   - the working directory of every project not compiled for 30 days —
+///     the next compile of that project simply makes it again;
+///   - in the others, the viewers' PDF copies of the last session and the
+///     .xdv intermediates;
+///   - the kernel scripts earlier versions of Pyx left in the temp folder
+///     (each version writes its own, named after its contents).
+pub fn tidy_data() {
+    let month = std::time::Duration::from_secs(30 * 24 * 3600);
+    if let Some(root) = crate::workspace::cache_root_dir() {
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for e in entries.flatten() {
+                let path = e.path();
+                if !path.is_dir() || crate::workspace::is_busy(&path) {
+                    continue;
+                }
+                let age = newest_mtime(&path).and_then(|t| t.elapsed().ok());
+                if age.is_some_and(|a| a > month) {
+                    let _ = std::fs::remove_dir_all(&path);
+                    continue;
+                }
+                // The viewers' copies of the PDF belong to the session that
+                // made them: at start nothing reads them any more. And the
+                // .xdv intermediates of xelatex are never read back.
+                let _ = std::fs::remove_dir_all(path.join(crate::latex::VIEW_DIR));
+                if let Ok(files) = std::fs::read_dir(&path) {
+                    for f in files.flatten() {
+                        if f.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("xdv")) {
+                            let _ = std::fs::remove_file(f.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let current = crate::kernel::kernel_file_name();
+    if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
+        for e in entries.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if n.starts_with("pyx_kernel_") && n.ends_with(".py") && n != current {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+/// The most recent modification time of anything directly inside `dir`.
+fn newest_mtime(dir: &Path) -> Option<std::time::SystemTime> {
+    let mut best = std::fs::metadata(dir).and_then(|m| m.modified()).ok();
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
+            if best.map_or(true, |b| t > b) {
+                best = Some(t);
+            }
+        }
+    }
+    best
+}
 
 const EXE: &str = if cfg!(windows) { ".exe" } else { "" };
 
@@ -319,59 +378,6 @@ pub fn setup_python(app: Say, packages: &[String]) -> Result<String, String> {
     say(app, format!("Instalando {}…", pkgs.join(", ")));
     run(app, uv_command(&uv).args(["pip", "install", "--python"]).arg(&py).args(&pkgs))?;
     say(app, "Python listo.");
-    Ok(py.to_string_lossy().to_string())
-}
-
-/* ---- formula recognition (image -> LaTeX) --------------------------------
-   Its own small environment, apart from the one the documents compute in:
-   the recognizer (rapid_latex_ocr: an ONNX port of LaTeX-OCR, no PyTorch)
-   does not install on every Python — it has no build for 3.13 — and nothing
-   it needs belongs in the user's interpreter. */
-fn ocr_dir() -> PathBuf {
-    tools_dir().join("ocr")
-}
-/// The interpreter of the recognizer's environment, once it is set up.
-pub fn ocr_python() -> Option<PathBuf> {
-    let p = if cfg!(windows) {
-        ocr_dir().join("Scripts").join("python.exe")
-    } else {
-        ocr_dir().join("bin").join("python")
-    };
-    // The marker is written only after the package installed: an environment
-    // left half-made by an interrupted download does not count as ready.
-    (p.exists() && ocr_dir().join("pyx-ocr-ready").exists()).then_some(p)
-}
-
-/// Create the recognizer's environment (standalone CPython 3.12 + the
-/// package). Its models are fetched by the package itself on first use.
-pub fn setup_ocr(app: Say) -> Result<String, String> {
-    if let Some(py) = ocr_python() {
-        return Ok(py.to_string_lossy().to_string());
-    }
-    let uv = ensure_uv(app)?;
-    let env = ocr_dir();
-    let py = if cfg!(windows) { env.join("Scripts").join("python.exe") } else { env.join("bin").join("python") };
-    if !py.exists() {
-        say(app, "Preparando el reconocedor de fórmulas (se descarga una sola vez)…");
-        run(app, uv_command(&uv).args(["venv", "--python", "3.12", "--managed-python"]).arg(&env))?;
-    }
-    say(app, "Instalando el reconocedor…");
-    // `requests` is used by the package to fetch its models and is not among
-    // its declared dependencies: without it the first recognition fails.
-    run(app, uv_command(&uv).args(["pip", "install", "--python"]).arg(&py).args(["rapid_latex_ocr", "requests"]))?;
-    // Its models (about 170 MB) are fetched the first time it is created —
-    // minutes on a slow line. Done HERE, where the user was told a download
-    // is under way, and not inside the first recognition, which is bounded
-    // in time and would be cut short.
-    say(app, "Descargando los modelos del reconocedor (unos 170 MB, una sola vez)…");
-    let mut warm = Command::new(&py);
-    // No progress bars: they redraw with carriage returns, and a download of
-    // minutes would arrive as one enormous "line".
-    warm.env("TQDM_DISABLE", "1");
-    warm.args(["-I", "-X", "utf8", "-c", "from rapid_latex_ocr import LaTeXOCR; LaTeXOCR(); print('modelos listos')"]);
-    run(app, &mut warm)?;
-    std::fs::write(env.join("pyx-ocr-ready"), b"ok").map_err(|e| e.to_string())?;
-    say(app, "Reconocedor de fórmulas listo.");
     Ok(py.to_string_lossy().to_string())
 }
 

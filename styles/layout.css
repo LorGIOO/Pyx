@@ -487,6 +487,11 @@
   /* GAP = 14px lives in preview.js; pages are placed by `top`, not by margins. */
 }
 .preview-scroll { touch-action: pan-x pan-y; } /* pinch reaches the app; touch panning stays native */
+/* With a drawing tool in hand, a pen or a finger on the page DRAWS. Native
+   panning stayed on there: every stroke with a stylus also scrolled the PDF,
+   with momentum — the page jerked away under the pen. */
+.preview-scroll.annot-active,
+.preview-scroll.annot-active .pdf-annotlayer { touch-action: none; overscroll-behavior: contain; }
 .preview-scroll.tool-pan { cursor: grab; }
 .preview-scroll.tool-pan .pdf-textlayer { pointer-events: none; }
 .preview-scroll.tool-magnify { cursor: zoom-in; }

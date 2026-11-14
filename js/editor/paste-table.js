@@ -214,9 +214,9 @@ export const pasteTables = EditorView.domEventHandlers({
     const cells = parseCells(view.state);
     const raw = data.getData('text/plain') || '';
     // A PICTURE and no text: a screenshot, an image copied from a viewer. It
-    // becomes the LaTeX of the formula it shows, or a figure of the document
-    // (img-latex.js asks which). A spreadsheet also puts a picture of the
-    // cells on the clipboard — but with their text, so it never comes here.
+    // is saved in the project and becomes a figure (img-latex.js). A
+    // spreadsheet also puts a picture of the cells on the clipboard — but
+    // with their text, so it never comes here.
     if (!raw.trim()) {
       const item = [...(data.items || [])].find((it) => it.kind === 'file' && /^image\/(png|jpe?g|bmp|webp|gif)/i.test(it.type));
       const file = item && item.getAsFile();

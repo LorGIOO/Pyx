@@ -65,7 +65,7 @@ Celdas de Python como en Jupyter, con su salida debajo: tablas de pandas, gráfi
 
 **Tablas e imágenes**
 
-Pega celdas de Excel y salen como tabla. Asistentes con vista previa del código y tu propio estilo guardado. Pega una captura de una fórmula y Pyx escribe su LaTeX.
+Pega celdas de Excel y salen como tabla. Asistentes con vista previa del código y tu propio estilo guardado. Pega una imagen y queda guardada en el proyecto con su figura escrita.
 
 </td><td valign="top">
 
@@ -77,7 +77,7 @@ Visor de PDF integrado y rápido con documentos largos, Ctrl+clic exacto entre c
 
 **Sin preparar nada**
 
-Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin tocar el sistema. Se actualiza solo desde Configuración.
+Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin tocar el sistema. Tus carpetas guardan solo tus archivos: un `.pltx` pesa lo que tu texto. Se actualiza solo desde Configuración.
 
 </td></tr>
 </table>
@@ -111,7 +111,6 @@ El [manual de usuario](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pd
 | [XeLaTeX / pdfLaTeX / LuaLaTeX](https://www.latex-project.org) · [Tectonic](https://tectonic-typesetting.github.io) | Componer el PDF |
 | [uv](https://github.com/astral-sh/uv) | Preparar un Python propio cuando no hay ninguno |
 | [Hunspell](https://hunspell.github.io) ([nspell](https://github.com/wooorm/nspell)) · diccionario RLA | El corrector ortográfico |
-| [RapidLaTeXOCR](https://github.com/RapidAI/RapidLaTeXOCR) | Reconocer fórmulas en imágenes |
 | [KaTeX](https://katex.org) | La vista previa de fórmulas en el editor |
 | [handcalcs](https://github.com/connorferster/handcalcs) | El desarrollo de los cálculos en el PDF |
 

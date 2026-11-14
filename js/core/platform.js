@@ -267,18 +267,6 @@ export const runtimeInfo = () => invoke('runtime_info');
 export const installTectonic = () => invoke('install_tectonic');
 export const setupPython = (packages = []) => invoke('setup_python', { packages });
 export const installPackages = (python, packages) => invoke('install_packages', { python, packages });
-// Formula recognition (image -> LaTeX): its own environment and process.
-export const ocrReady = () => invoke('ocr_ready');
-export const setupOcr = () => invoke('setup_ocr');
-// Start the recognizer ahead of the first formula (it loads its models once).
-export const ocrWarm = () => invoke('ocr_warm');
-/** The picture on the system clipboard as PNG bytes, or null when there is none. */
-export async function clipboardImage() {
-  if (!isTauri()) return null;
-  const b = await tauriInvoke('clipboard_image');
-  const bytes = b instanceof ArrayBuffer ? new Uint8Array(b) : ArrayBuffer.isView(b) ? new Uint8Array(b.buffer, b.byteOffset, b.byteLength) : new Uint8Array(b || []);
-  return bytes.length ? bytes : null;
-}
 export async function imageToLatex(bytes) {
   if (!isTauri()) return notDesktop('Imagen → LaTeX');
   return tauriInvoke('image_to_latex', bytes); // raw body: the image itself

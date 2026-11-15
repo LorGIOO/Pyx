@@ -37,6 +37,7 @@ export const collab = createMutable({
   joins: [],           // host: requests waiting for a yes/no [{ id, name, code }]
   files: [],           // [{ path }] of the shared project
   main: null,          // path of the main document
+  folder: null,        // host: the shared folder («carpeta madre»)
   follow: null,        // mid being followed
   notice: '',          // a short message (denied edit, someone joined…)
   noticeKind: 'info',

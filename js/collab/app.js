@@ -20,7 +20,7 @@ import {
   bindDoc, unbindDoc, unbindAll, isBound, boundPath, docIdOfPath, ydocOf, LOCAL,
 } from './ybridge.js';
 import { allowedChange, deniedMessage, fileKind, normPerms } from './permissions.js';
-import { setMembers, setPresence as storePresence, clearPresence } from './presence-store.js';
+import { setMembers, setPresence as storePresence, clearPresence, person } from './presence-store.js';
 import { collab, notify, savePrefs } from '../solid/stores/collabStore.js';
 import {
   newDocument, openPath, saveDocument, switchTo,
@@ -29,9 +29,9 @@ import { getDocContent, getDocText, broadcastCellRefresh } from '../editor/setup
 import { parseCells, parseCellsText, codeHashMap } from '../editor/cell-parse.js';
 import { serializeDoc, hydrateDoc } from '../editor/cell-outputs.js';
 import {
-  readDir, readPdfFile, invoke, isTauri, setInvokeGuard,
+  readDir, readPdfFile, readSources, invoke, isTauri, setInvokeGuard,
 } from '../core/platform.js';
-import { baseName, dirOf, joinPath, relativeTo, samePath } from '../core/paths.js';
+import { baseName, dirOf, joinPath, relativeTo, samePath, normalizePath } from '../core/paths.js';
 import { utf8, fromUtf8 } from './bytes.js';
 import { startPresence, stopPresence } from './presence-tracker.js';
 import { startPointers, stopPointers } from './pointer-layer.js';
@@ -79,9 +79,87 @@ const hostY = new Map();    // rel → Y.Doc (lives as long as the session)
 const saveTimers = new Map();
 const lastOuts = new Map();
 let filesTimer = 0;
+let lastEdit = null;        // rel of the shared file edited last (what a compile builds)
 
 const SKIP_DIRS = /^(\.|node_modules$|__pycache__$|\.git$|venv$|\.venv$|env$)/;
 const EDITABLE = /\.(pltx|tex|bib|sty|cls|bst|txt|md|py)$/i;
+
+/* ---------- the shared folder («carpeta madre») ----------
+ *
+ * A report often keeps its preamble in one folder and its chapters, figures
+ * and bibliography in sibling folders (`\input{../capitulos/cap1}`). Sharing
+ * only the root document's folder left those out: guests could not open them
+ * and the compile refused the `../`. The shared folder is therefore the
+ * common ancestor of the root document and everything it pulls in — found by
+ * reading the \input tree — and the host can pick another one. */
+
+const REF_RE = /\\(?:input|include|subfile|includegraphics|includepdf|includesvg|lstinputlisting|verbatiminput|inputminted|bibliography|addbibresource|pyfile|pynotebook)\*?\s*(?:\[[^\]]*\]\s*)*(?:\{[^{}]*\}\s*)?\{([^{}\\]+)\}/g;
+const INPUT_RE = /\\(?:input|include|subfile)\s*\{([^{}\\]+)\}/g;
+
+const segs = (p) => normalizePath(p).replace(/\\/g, '/').replace(/\/+$/, '').split('/');
+
+function commonAncestor(paths) {
+  let common = null;
+  for (const p of paths) {
+    const s = segs(p);
+    if (!common) { common = s; continue; }
+    let i = 0;
+    while (i < common.length && i < s.length && common[i].toLowerCase() === s[i].toLowerCase()) i++;
+    common = common.slice(0, i);
+  }
+  return common ? common.join('/') || '/' : null;
+}
+
+/** The folder a session should share for `doc` (its project's common
+ *  ancestor), or null for a document that has no file yet. */
+export async function detectShareRoot(doc) {
+  if (!doc || doc.kind || !doc.path) return null;
+  let rootDir = dirOf(doc.path);
+  try {
+    const comp = await import('../compile/compiler.js');
+    rootDir = (await comp.activeRootDir()) || rootDir;
+  } catch (_) { /* keep the document's folder */ }
+  const dirs = [rootDir, dirOf(doc.path)];
+  const seen = new Set();
+  let queue = [{ path: doc.path, text: getDocContent(doc.id) }];
+  for (let round = 0; round < 6 && queue.length && seen.size < 150; round++) {
+    const next = [];
+    for (const f of queue) {
+      if (seen.has(f.path)) continue;
+      seen.add(f.path);
+      const text = String(f.text || '').replace(/(^|[^\\])%.*$/gm, '$1');
+      for (const m of text.matchAll(REF_RE)) {
+        for (const name of m[1].split(',')) {
+          const n = name.trim();
+          if (!n || /^(~|\\\\|\|)/.test(n)) continue;
+          const abs = /^([A-Za-z]:[\\/]|\/)/.test(n) ? n : joinPath(rootDir, n);
+          dirs.push(dirOf(normalizePath(abs)));
+        }
+      }
+      for (const m of text.matchAll(INPUT_RE)) {
+        const n = m[1].trim();
+        const abs = normalizePath(/^([A-Za-z]:[\\/]|\/)/.test(n) ? n : joinPath(rootDir, n));
+        for (const c of /\.[a-z0-9]+$/i.test(abs) ? [abs] : [abs + '.tex', abs + '.pltx']) next.push(c);
+      }
+    }
+    const fresh = next.filter((p) => !seen.has(p));
+    if (!fresh.length) break;
+    let texts = [];
+    try { texts = await readSources(fresh); } catch (_) { texts = []; }
+    queue = fresh.map((p, i) => ({ path: p, text: texts[i] })).filter((f) => typeof f.text === 'string');
+  }
+  const anc = commonAncestor(dirs) || rootDir;
+  // Never climb, on its own, to the user's home folder or above it (that
+  // would offer every document they have), to a drive or the file-system
+  // root, or more than four levels above the root document. The host sees
+  // the folder before sharing and can choose another.
+  let home = null;
+  try { home = isTauri() ? await (await import('@tauri-apps/api/path')).homeDir() : null; } catch (_) { home = null; }
+  const depth = segs(anc).filter(Boolean).length;
+  const up = segs(rootDir).length - segs(anc).length;
+  if (depth < 2 || up > 4 || (home && relativeTo(anc, home) != null)) return rootDir;
+  return anc;
+}
 
 async function walkProject(dir) {
   const out = [];
@@ -145,8 +223,12 @@ async function hostOpenDoc(rel) {
     ydoc = new Y.Doc();
     hostY.set(rel, ydoc);
     bindDoc(doc.id, ydoc, rel, { from: 'cm' });
-    // What the guests write is saved into the real file, quietly.
-    ydoc.on('update', (_u, origin) => { if (origin !== LOCAL) scheduleSave(rel); });
+    // What the guests write is saved into the real file, quietly. And the
+    // file written in last is the one the next compile builds (its root).
+    ydoc.on('update', (_u, origin) => {
+      lastEdit = rel;
+      if (origin !== LOCAL) scheduleSave(rel);
+    });
   } else if (!isBound(doc.id)) {
     bindDoc(doc.id, ydoc, rel, { from: 'y' });
   }
@@ -206,7 +288,7 @@ function publishOutputs() {
   }
 }
 
-export async function startHosting({ relay, name, perms }) {
+export async function startHosting({ relay, name, perms, folder = null }) {
   if (host || guest) throw new Error('Ya hay una sesión en marcha.');
   const doc = activeDoc();
   if (!doc || doc.kind) throw new Error('Abre el documento que quieres compartir.');
@@ -217,7 +299,12 @@ export async function startHosting({ relay, name, perms }) {
   collab.name = name; collab.relay = relay; collab.defaultPerms = normPerms(perms);
   savePrefs();
 
-  root = doc.path ? dirOf(doc.path) : null;
+  root = doc.path ? (folder || await detectShareRoot(doc) || dirOf(doc.path)) : null;
+  if (root && relativeTo(root, doc.path) == null) {
+    resetUi();
+    throw new Error('La carpeta compartida tiene que contener el documento que compartes.');
+  }
+  collab.folder = root;
   mainDocId = doc.id;
   if (root) {
     mainRel = relativeTo(root, doc.path);
@@ -247,6 +334,9 @@ export async function startHosting({ relay, name, perms }) {
       onPresence: (mid, s) => storePresence(mid, s),
       onStatus: (s) => { collab.conn = s; },
       compileRequest: (m) => {
+        // Compile what THAT person is looking at (its root document).
+        const where = person(m.mid);
+        if (where && where.state && where.state.f && fileSet.has(where.state.f)) lastEdit = where.state.f;
         const target = collabHooks.compileTarget && collabHooks.compileTarget();
         if (!target || !target.path) {
           notify(`${m.name} quiere compilar: guarda el documento en una carpeta para poder compilar para todos.`, 'warn', 7000);
@@ -265,13 +355,18 @@ export async function startHosting({ relay, name, perms }) {
   // Hooks the app calls.
   collabHooks.shared = (docId) => isBound(docId);
   collabHooks.compileTarget = () => {
+    const last = lastEdit && docOfRel(lastEdit);
+    if (last) return last;
     const a = activeDoc();
     if (a && relOfDoc(a)) return a;
     return docOfRel(mainRel);
   };
   collabHooks.pdf = (pdfPath, rootPath) => publishPdf(pdfPath, rootPath);
   collabHooks.compileDone = () => publishOutputs();
-  collabHooks.restricted = () => true;
+  collabHooks.restricted = () => root || true;
+  collabHooks.lockMode = (paranoid) => (isTauri()
+    ? invoke('collab_restrict', { on: true, paranoid }).catch(() => {})
+    : Promise.resolve());
   collabHooks.closed = (d) => { if (isBound(d.id)) unbindDoc(d.id); };
   if (isTauri()) await invoke('collab_restrict', { on: true }).catch(() => {});
 
@@ -582,7 +677,8 @@ function teardown() {
   if (isTauri() && host) invoke('collab_restrict', { on: false }).catch(() => {});
   host = null;
   guest = null;
-  root = null; mainRel = null; mainDocId = null; fileSet = new Set();
+  root = null; mainRel = null; mainDocId = null; fileSet = new Set(); lastEdit = null;
+  collab.folder = null;
 }
 
 /** Leave (guest) or end the session for everyone (host). */

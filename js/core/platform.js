@@ -94,6 +94,12 @@ export async function openFileDialog() {
     ],
   });
 }
+/** Pick a folder (a shared session's «carpeta madre»). */
+export async function openFolderDialog(defaultPath) {
+  if (!isTauri()) return null;
+  const r = await dialog.open({ directory: true, multiple: false, defaultPath: defaultPath || undefined });
+  return typeof r === 'string' ? r : null;
+}
 export async function openExeDialog() {
   if (!isTauri()) return null;
   return dialog.open({

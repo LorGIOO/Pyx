@@ -2,6 +2,16 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar] — rama `remote`
+
+- La sesión comparte la **carpeta madre** del proyecto (detectada a partir de
+  lo que incluye el documento raíz, o la que elija el anfitrión), no solo la
+  del preámbulo: capítulos, figuras y bibliografía en carpetas vecinas se
+  abren, editan y compilan. Las rutas con `../` dentro de esa carpeta ya no
+  bloquean la compilación; lo de fuera sigue bloqueado.
+- Se compila el documento raíz del último archivo editado, o el que tiene
+  delante quien pide compilar.
+
 ## [2.0.1] — 2026-11-15 (pre-lanzamiento, rama `remote`)
 
 ### Trabajar a la vez (sesión compartida)

@@ -1,10 +1,11 @@
-import { createSignal, For, Show, onCleanup } from 'solid-js';
+import { createSignal, createEffect, For, Show, onCleanup } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
 import { collab, notify, inSession } from '../stores/collabStore.js';
 import { registerDialog, closeDialogs } from '../stores/dialogStore.js';
 import { permLabel } from '../../collab/permissions.js';
 import { onPresenceChange, person } from '../../collab/presence-store.js';
-import { askDialog } from '../../core/platform.js';
+import { askDialog, openFolderDialog, isTauri } from '../../core/platform.js';
+import { relativeTo } from '../../core/paths.js';
 
 // «Compartir» — start a shared session, join one with a code, and (host)
 // manage who is in and what each person may change.
@@ -106,13 +107,36 @@ export function MemberList(props) {
 function ShareForm() {
   const [busy, setBusy] = createSignal(false);
   const [perm, setPerm] = createSignal(permKey(collab.defaultPerms));
+  const [folder, setFolder] = createSignal(null);
+  const [picked, setPicked] = createSignal(false);
   const doc = () => activeDoc();
+  // The project's «carpeta madre», found from what the root document pulls
+  // in (chapters in ../capitulos, figures in ../figuras…); the host may pick
+  // another one.
+  createEffect(() => {
+    const d = doc();
+    if (picked()) return;
+    setFolder(null);
+    if (d && !d.kind && d.path) app().then((a) => a.detectShareRoot(d)).then((f) => { if (!picked()) setFolder(f); }).catch(() => {});
+  });
+  const choose = async () => {
+    const d = doc();
+    const f = await openFolderDialog(folder());
+    if (!f) return;
+    if (d && d.path && relativeTo(f, d.path) == null) {
+      collab.error = 'La carpeta compartida tiene que contener el documento que compartes.';
+      return;
+    }
+    collab.error = '';
+    setPicked(true);
+    setFolder(f);
+  };
   const start = async () => {
     if (!collab.name.trim()) { collab.error = 'Escribe tu nombre: es lo que verán los demás.'; return; }
     setBusy(true);
     collab.error = '';
     try {
-      await (await app()).startHosting({ relay: collab.relay.trim(), name: collab.name.trim(), perms: permsOf(perm()) });
+      await (await app()).startHosting({ relay: collab.relay.trim(), name: collab.name.trim(), perms: permsOf(perm()), folder: folder() });
     } catch (e) {
       collab.error = String((e && e.message) || e);
     } finally { setBusy(false); }
@@ -121,9 +145,17 @@ function ShareForm() {
     <div class="collab-form">
       <Show when={doc() && !doc().kind} fallback={<p class="collab-warn">Abre primero el documento que quieres compartir.</p>}>
         <p class="collab-lead">
-          Se comparte <b>{doc().path ? 'la carpeta de ' : ''}{doc().fileName}</b>. Tu Pyx guarda los archivos,
-          ejecuta el Python y compila; los demás ven el PDF al momento.
+          Tu Pyx guarda los archivos, ejecuta el Python y compila; los demás ven el PDF al momento.
         </p>
+        <div class="collab-field"><span>Carpeta compartida</span>
+          <Show when={doc().path} fallback={<p class="collab-hint">Solo <b>{doc().fileName}</b> (aún no está guardado en ninguna carpeta).</p>}>
+            <div class="collab-invite">
+              <code class="collab-invite-code" title={folder() || ''}>{folder() || 'Buscando la carpeta del proyecto…'}</code>
+              <Show when={isTauri()}><button class="ctl-btn" onClick={choose}>Cambiar…</button></Show>
+            </div>
+            <p class="collab-hint">Todo lo que hay dentro se puede abrir, editar y compilar en la sesión (también los capítulos de carpetas vecinas, con «../»). Lo de fuera, no.</p>
+          </Show>
+        </div>
       </Show>
       <label class="collab-field"><span>Tu nombre</span>
         <input class="collab-input" value={collab.name} maxLength={40} placeholder="Cómo te verán los demás"
@@ -203,6 +235,9 @@ function HostPanel() {
         </div>
         <p class="collab-hint">Quien lo tenga puede PEDIR entrar; tú aceptas a cada persona. Para cerrar el paso a todos, termina la sesión.</p>
       </div>
+      <Show when={collab.folder}>
+        <div class="collab-field"><span>Carpeta compartida</span><code class="collab-invite-code">{collab.folder}</code></div>
+      </Show>
       <JoinRequests />
       <div class="collab-field"><span>En la sesión</span><MemberList follow /></div>
       <div class="collab-actions">

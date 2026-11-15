@@ -22,7 +22,11 @@ el PDF del anfitrión, que les llega solo después de cada compilación.
 ## Compartir un proyecto (anfitrión)
 
 1. Abre el documento principal del proyecto.
-2. Pulsa **Compartir** (arriba a la derecha).
+2. Pulsa **Compartir** (arriba a la derecha). Pyx propone la **carpeta compartida**: la carpeta madre
+   del proyecto, la que contiene el preámbulo y todo lo que incluye (capítulos en `../capitulos`,
+   figuras en `../figuras`, bibliografía…). Puedes elegir otra con **Cambiar…**. Todo lo que hay
+   dentro se puede abrir, editar y compilar en la sesión; lo de fuera, no. Pyx nunca propone por sí
+   solo tu carpeta personal.
 3. Escribe tu nombre y la dirección del servidor de sesiones (`wss://…`, ver más abajo).
 4. Elige qué podrán modificar quienes entren:
    - **Python y LaTeX**: todo.
@@ -110,7 +114,7 @@ Para probar en un solo ordenador: `npm run relay` y la dirección `ws://localhos
 | El servidor lee o altera los documentos | Cifrado de extremo a extremo (AES-256-GCM, ECDH P-256, claves por persona y de grupo); mensajes repetidos o reordenados se rechazan. |
 | Un invitado «Solo LaTeX» cambia el Python | Su Pyx lo impide al teclear y el del anfitrión **lo comprueba otra vez** contra el texto real: si llega igualmente, lo deshace para todos antes de que nadie lo vea. |
 | Un invitado falsifica cambios en nombre de otro | Cada cambio lleva el identificador de su autor; el anfitrión rechaza los firmados con el de otra persona. |
-| Un LaTeX malicioso ejecuta programas o lee tus archivos | Durante la sesión el motor se lanza sin `shell-escape` y, en TeX Live, en modo paranoico (sin rutas absolutas ni `..`); además Pyx rechaza antes de compilar los `\input`, `\includegraphics`, `\verbatiminput`… que apunten fuera del proyecto. |
+| Un LaTeX malicioso ejecuta programas o lee tus archivos | Durante la sesión el motor se lanza siempre sin `shell-escape`. Antes de compilar, Pyx comprueba que cada `\input`, `\includegraphics`, `\bibliography`, `\verbatiminput`… apunte dentro de la carpeta compartida (con `../` incluido) y rechaza los nombres de archivo hechos con macros. Si el proyecto no sale de la carpeta del documento raíz, TeX Live además se lanza en modo paranoico (sin rutas absolutas ni `..`). |
 | Se expulsa a alguien | Se desconecta y la clave de grupo cambia: no puede leer nada de lo que sigue. |
 | Un PDF manipulado ataca al invitado | El visor nunca ejecuta código del PDF. |
 
@@ -118,8 +122,13 @@ Lo que **no** se puede evitar: si das permiso de Python a alguien, su código se
 ordenador (igual que si abrieras un cuaderno de Jupyter suyo). Y quien tenga el código de
 invitación puede pedir entrar: por eso hay que aceptar a cada persona.
 
-En MiKTeX y Tectonic no existe el modo paranoico de lectura: la protección contra leer archivos de
-fuera la da la comprobación de Pyx antes de compilar (y `shell-escape` sigue desactivado).
+El modo paranoico de TeX Live rechaza cualquier `..`, así que no se puede usar en proyectos con
+capítulos en carpetas vecinas; en ellos (y siempre en MiKTeX y Tectonic, que no lo tienen) la
+protección contra leer archivos de fuera de la carpeta compartida la da la comprobación de Pyx antes
+de compilar. Esa comprobación no interpreta TeX: alguien con permiso de LaTeX y mucha intención podría
+construir un nombre de archivo que la esquive. Por eso conviene aceptar solo a gente conocida.
+`shell-escape` sigue desactivado en todos los casos: nadie puede ejecutar programas en tu equipo
+desde LaTeX.
 
 ## Límites
 
@@ -129,5 +138,7 @@ fuera la da la comprobación de Pyx antes de compilar (y `shell-escape` sigue de
   equipo del anfitrión, que es quien compila.
 - Por ahora los invitados no crean, renombran ni borran archivos, ni pegan imágenes: lo hace el
   anfitrión y los demás lo ven en la lista de archivos.
-- En una sesión, las rutas de LaTeX deben quedarse dentro de la carpeta del proyecto
-  (sin `../` ni rutas absolutas).
+- En una sesión, las rutas de LaTeX deben quedarse dentro de la carpeta compartida, y los nombres
+  de archivo se escriben tal cual (no con macros como `\input{\carpeta/intro}`).
+- Lo que se compila es el documento raíz del último archivo editado (o el que tiene delante quien
+  pide compilar); el PDF que ven todos es el de esa última compilación.

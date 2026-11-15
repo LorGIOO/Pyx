@@ -39,7 +39,7 @@ import { auxOpen, lastArea, annotTool } from '../solid/stores/previewStore.js';
 import { saveActiveAs, saveWithEncoding, markSavedIfUnchanged } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
 import { collabHooks } from '../collab/hooks.js';
-import { latexEscapes } from '../collab/latex-guard.js';
+import { checkLatex } from '../collab/latex-guard.js';
 
 /* ---- live compile (TeXstudio-style) ----
    The editor schedules a background compile shortly after typing stops; the
@@ -1061,9 +1061,12 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // machine. A file read from outside the project would end up in the PDF
     // every guest receives — refused here (and by the engine, locked down in
     // latex.rs, on TeX Live).
-    if (collabHooks.restricted && collabHooks.restricted()) {
-      const bad = latexEscapes(files);
-      if (bad) throw new Error(bad);
+    const shared = collabHooks.restricted && collabHooks.restricted();
+    if (shared) {
+      const g = checkLatex(files, { shareRoot: typeof shared === 'string' ? shared : null, cwd });
+      if (g.error) throw new Error(g.error);
+      // Paranoid file access in the engine too, unless the project needs `..`.
+      if (collabHooks.lockMode) await collabHooks.lockMode(!g.climbs);
     }
     phase.prep = performance.now() - t0;
     const rootF = files.get(rootPath);

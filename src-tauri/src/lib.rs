@@ -110,8 +110,8 @@ async fn compile_latex(
 /// Shared session hosted from this window: lock the TeX engines down (no
 /// shell escape, no reading outside the project). See latex.rs.
 #[tauri::command]
-fn collab_restrict(on: bool) {
-    latex::set_restricted(on);
+fn collab_restrict(on: bool, paranoid: Option<bool>) {
+    latex::set_restricted(on, paranoid.unwrap_or(true));
 }
 
 /// ChkTeX style warnings for the text on screen (opt-in, latex-lint-ext.js).

@@ -14,7 +14,8 @@
 //   compileTarget() → doc|null       host: what a session compile builds
 //   pdf(path)                        host: a compile produced this PDF
 //   compileDone()                    host: a compile finished
-//   restricted() → bool              host: compile with LaTeX locked down
+//   restricted() → folder|false      host: compile with LaTeX locked down (shared folder)
+//   lockMode(paranoid)               host: engine lock for this compile
 //   synctexEdit(page, x, y)          guest: PDF → source, asked to the host
 //   synctexView(doc, line)           guest: source → PDF, asked to the host
 
@@ -31,6 +32,7 @@ export const collabHooks = {
   pdf: null,
   compileDone: null,
   restricted: null,
+  lockMode: null,
   synctexEdit: null,
   synctexView: null,
 };

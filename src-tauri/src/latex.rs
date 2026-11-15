@@ -1142,12 +1142,19 @@ pub fn set_fast_pdf(on: bool) {
 // such paths before compiling (collab/latex-guard.js), and shell escape is
 // off in all three.
 static RESTRICTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Paranoid file access on top (kpathsea refuses every `..`): only for a
+/// project that never climbs out of its root document's folder. One whose
+/// chapters live in `../capitulos` cannot compile that way; for it the app
+/// checks every file name against the shared folder before compiling.
+static PARANOID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-/// Turn the locked-down mode on or off. A preloaded engine started the other
-/// way is discarded: it must not survive into (or out of) a session.
-pub fn set_restricted(on: bool) {
+/// Turn the locked-down mode on or off (`paranoid`: also kpathsea's paranoid
+/// file access). A preloaded engine started another way is discarded: it
+/// must not survive into (or out of) a session.
+pub fn set_restricted(on: bool, paranoid: bool) {
     let was = RESTRICTED.swap(on, std::sync::atomic::Ordering::SeqCst);
-    if was != on {
+    let was_p = PARANOID.swap(paranoid, std::sync::atomic::Ordering::SeqCst);
+    if was != on || (on && was_p != paranoid) {
         drop_warm();
     }
 }
@@ -1164,10 +1171,10 @@ fn lock_down(cmd: &mut Command, out_dir: &Path, engine: bool) {
     if engine {
         cmd.arg("-no-shell-escape");
     }
-    cmd.env("shell_escape", "f")
-        .env("openin_any", "p")
-        .env("openout_any", "p")
-        .env("TEXMFOUTPUT", out_dir);
+    cmd.env("shell_escape", "f");
+    if PARANOID.load(std::sync::atomic::Ordering::SeqCst) {
+        cmd.env("openin_any", "p").env("openout_any", "p").env("TEXMFOUTPUT", out_dir);
+    }
 }
 
 /// The `-output-driver` argument for this engine, if it takes one.
@@ -4270,7 +4277,7 @@ Texto del capitulo dos.
         )
         .unwrap();
         let run = |locked: bool| -> String {
-            set_restricted(locked);
+            set_restricted(locked, true);
             let mut cmd = Command::new(&exe);
             cmd.current_dir(&proj)
                 .arg("-interaction=nonstopmode")
@@ -4279,7 +4286,7 @@ Texto del capitulo dos.
             lock_down(&mut cmd, &out, true);
             cmd.arg(out.join("main.build.tex"));
             let _ = cmd.output();
-            set_restricted(false);
+            set_restricted(false, true);
             fs::read_to_string(out.join("main.build.log")).unwrap_or_default()
         };
         let log = run(true);

@@ -3,6 +3,7 @@
 
 import { undo, redo, moveLineUp, moveLineDown } from '@codemirror/commands';
 import { openSearch } from './search-panel.js';
+import { collabHooks } from '../collab/hooks.js';
 import { EditorView } from '@codemirror/view';
 import { state } from '../core/state.js';
 import { getView as paneView, getViewOfDoc } from './setup.js';
@@ -382,27 +383,50 @@ export function buildLineToSource(realPath, line) {
 export async function forwardSearch(lineNo, word) {
   const v = getView();
   const d = state.documents[state.activeIndex];
-  if (!v || !d || d.kind || !d.path || !state.lastPdfPath) return;
-  const line = typeof lineNo === 'number' && lineNo > 0
-    ? Math.min(lineNo, v.state.doc.lines)
-    : v.state.doc.lineAt(v.state.selection.main.head).number;
-  const { synctexView } = await import('../core/platform.js');
-  // The engine compiled the copy that lives in the project's working
-  // directory, not a file next to the document.
-  const buildTex = sourceToBuildPath(d.path) || d.path.replace(/\.(tex|pltx)$/i, '') + '.build.tex';
-  const map = lineMapFor(d.path);
-  for (const tex of [buildTex, d.path]) {
+  // A collaborator's document: the host has the PDF's SyncTeX index.
+  if (v && d && d.remote && collabHooks.synctexView) {
+    const line = typeof lineNo === 'number' && lineNo > 0
+      ? Math.min(lineNo, v.state.doc.lines)
+      : v.state.doc.lineAt(v.state.selection.main.head).number;
     try {
-      const qLine = tex === buildTex ? srcToBuildLine(map, line) : line;
-      const loc = await synctexView(tex, qLine, state.lastPdfPath);
+      const loc = await collabHooks.synctexView(d, line);
       if (loc && loc.page) {
         state.previewVisible = true;
         const prev = await import('../pdf/preview.js');
         await prev.showPdfLocation(loc.page, loc.x, loc.y, word);
-        return;
       }
+    } catch (_) { /* no record there */ }
+    return;
+  }
+  if (!v || !d || d.kind || !d.path || !state.lastPdfPath) return;
+  const line = typeof lineNo === 'number' && lineNo > 0
+    ? Math.min(lineNo, v.state.doc.lines)
+    : v.state.doc.lineAt(v.state.selection.main.head).number;
+  const loc = await synctexLocate(d.path, line);
+  if (loc) {
+    state.previewVisible = true;
+    const prev = await import('../pdf/preview.js');
+    await prev.showPdfLocation(loc.page, loc.x, loc.y, word);
+  }
+}
+
+/** Source line → { page, x, y } in the last PDF, or null. Also what the host
+ *  answers a collaborator's forward search with. */
+export async function synctexLocate(docPath, line) {
+  if (!state.lastPdfPath) return null;
+  const { synctexView } = await import('../core/platform.js');
+  // The engine compiled the copy that lives in the project's working
+  // directory, not a file next to the document.
+  const buildTex = sourceToBuildPath(docPath) || docPath.replace(/\.(tex|pltx)$/i, '') + '.build.tex';
+  const map = lineMapFor(docPath);
+  for (const tex of [buildTex, docPath]) {
+    try {
+      const qLine = tex === buildTex ? srcToBuildLine(map, line) : line;
+      const loc = await synctexView(tex, qLine, state.lastPdfPath);
+      if (loc && loc.page) return { page: loc.page, x: loc.x, y: loc.y };
     } catch (_) { /* try the next candidate */ }
   }
+  return null;
 }
 
 /** After a background compile: show in the PDF the place being edited, if

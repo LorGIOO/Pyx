@@ -107,6 +107,13 @@ async fn compile_latex(
     Ok(res)
 }
 
+/// Shared session hosted from this window: lock the TeX engines down (no
+/// shell escape, no reading outside the project). See latex.rs.
+#[tauri::command]
+fn collab_restrict(on: bool) {
+    latex::set_restricted(on);
+}
+
 /// ChkTeX style warnings for the text on screen (opt-in, latex-lint-ext.js).
 #[tauri::command]
 async fn chktex_lint(text: String) -> Result<Vec<latex::ChkHit>, String> {
@@ -1443,6 +1450,7 @@ pub fn run() {
             read_pdf,
             open_pdf_external,
             chktex_lint,
+            collab_restrict,
             build_dir,
             copy_file,
             synctex_edit,

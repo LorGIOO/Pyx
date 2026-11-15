@@ -1126,6 +1126,50 @@ pub fn set_fast_pdf(on: bool) {
     FAST_PDF.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+// ---------------------------------------------------------------------------
+// Shared sessions: the host typesets text that OTHER people wrote.
+//
+// While a session is hosted, every engine and tool this module starts runs
+// locked down:
+//   * shell escape OFF (`-no-shell-escape`, and `shell_escape=f` for kpathsea):
+//     `\write18` and `\input|"cmd"` cannot start programs;
+//   * kpathsea's paranoid mode (`openin_any=p`, `openout_any=p`, with
+//     TEXMFOUTPUT = the working directory): no absolute paths, no `..`, no dot
+//     files — `\input{/home/me/.ssh/id_rsa}` cannot pull a private file into
+//     the PDF that every guest receives. Files of the project, of the working
+//     directory and of the TeX distribution are found as usual.
+// MiKTeX and Tectonic do not read the kpathsea variables; the app refuses
+// such paths before compiling (collab/latex-guard.js), and shell escape is
+// off in all three.
+static RESTRICTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turn the locked-down mode on or off. A preloaded engine started the other
+/// way is discarded: it must not survive into (or out of) a session.
+pub fn set_restricted(on: bool) {
+    let was = RESTRICTED.swap(on, std::sync::atomic::Ordering::SeqCst);
+    if was != on {
+        drop_warm();
+    }
+}
+
+pub fn restricted() -> bool {
+    RESTRICTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Apply the session lock-down to a TeX engine or tool, when it is on.
+fn lock_down(cmd: &mut Command, out_dir: &Path, engine: bool) {
+    if !restricted() {
+        return;
+    }
+    if engine {
+        cmd.arg("-no-shell-escape");
+    }
+    cmd.env("shell_escape", "f")
+        .env("openin_any", "p")
+        .env("openout_any", "p")
+        .env("TEXMFOUTPUT", out_dir);
+}
+
 /// The `-output-driver` argument for this engine, if it takes one.
 fn pdf_driver_arg(engine_cmd: &str) -> Option<&'static str> {
     let name = Path::new(engine_cmd).file_stem().and_then(|s| s.to_str()).unwrap_or(engine_cmd).to_ascii_lowercase();
@@ -1373,6 +1417,7 @@ fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &P
         .arg(format!("-jobname={job}"))
         .arg("-recorder")
         .env("TEXINPUTS", texinputs(out_dir, search_dirs));
+    lock_down(&mut cmd, out_dir, true);
     // The same PDF driver a normal pass uses: this engine writes the PDF too.
     if let Some(driver) = pdf_driver_arg(engine_cmd) {
         cmd.arg(driver);
@@ -1592,6 +1637,7 @@ fn run_tool(name: &str, args: &[String], cwd: &Path, envs: &[(&str, String)], lo
     for (k, v) in envs {
         c.env(k, v);
     }
+    lock_down(&mut c, cwd, false);
     crate::quiet(&mut c);
     log.push_str(&format!("===== Pyx: {name} =====\n"));
     match run_watched(c, Limits { loop_repeats: u32::MAX, stall_secs: 120, pass_secs: 5 * 60 }) {
@@ -2739,6 +2785,7 @@ fn compile_locked(
             // so the engine has to look there for the children a parent pulls
             // in. The trailing separator keeps the default search paths.
             .env("TEXINPUTS", texinputs(&out_dir, search_dirs));
+        lock_down(&mut cmd, &out_dir, true);
         // A pass we ALREADY know is not the last one exists only to settle
         // references and the table of contents — its PDF is thrown away. In
         // draft mode the engine skips font loading, image processing and the
@@ -4199,5 +4246,49 @@ Texto del capitulo dos.
         assert!(aux_poisoned(log, "main"));
         let log = "(./main.aux) (./cap.tex\n! Undefined control sequence.\nl.3 \\foo\n";
         assert!(!aux_poisoned(log, "main"), "the aux was closed before the error");
+    }
+
+    /// Shared session: the locked-down engine neither runs programs nor reads
+    /// files outside the project — the leak it closes is real without it.
+    #[test]
+    fn a_hosted_session_cannot_read_or_run_outside_the_project() {
+        let Some(exe) = resolve_engine("pdflatex") else { return };
+        let base = std::env::temp_dir().join(format!("pyx-restrict-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let proj = base.join("proj");
+        let out = proj.join("build");
+        fs::create_dir_all(&out).unwrap();
+        let secret = base.join("secreto.txt");
+        fs::write(&secret, "SECRETOXYZ").unwrap();
+        let pwned = base.join("pwned");
+        fs::write(proj.join("cap.tex"), "capitulo").unwrap();
+        let s = secret.to_string_lossy().replace('\\', "/");
+        let w = pwned.to_string_lossy().replace('\\', "/");
+        fs::write(
+            out.join("main.build.tex"),
+            format!("\\documentclass{{article}}\\begin{{document}}Hola \\input{{cap}} \\IfFileExists{{{s}}}{{\\input{{{s}}}}}{{NOABS}} \\IfFileExists{{../secreto.txt}}{{\\input{{../secreto.txt}}}}{{NOREL}} \\immediate\\write18{{touch {w}}}\\end{{document}}"),
+        )
+        .unwrap();
+        let run = |locked: bool| -> String {
+            set_restricted(locked);
+            let mut cmd = Command::new(&exe);
+            cmd.current_dir(&proj)
+                .arg("-interaction=nonstopmode")
+                .arg(format!("-output-directory={}", out.display()))
+                .env("TEXINPUTS", texinputs(&out, &[]));
+            lock_down(&mut cmd, &out, true);
+            cmd.arg(out.join("main.build.tex"));
+            let _ = cmd.output();
+            set_restricted(false);
+            fs::read_to_string(out.join("main.build.log")).unwrap_or_default()
+        };
+        let log = run(true);
+        assert!(log.contains("Output written"), "{log}");
+        assert!(!log.contains("secreto.txt)"), "the secret file was read: {log}");
+        assert!(!pwned.exists(), "a program ran");
+        // Without the lock the same document does read it (the test is real).
+        let open = run(false);
+        assert!(open.contains("secreto.txt"), "{open}");
+        let _ = fs::remove_dir_all(&base);
     }
 }

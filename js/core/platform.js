@@ -15,7 +15,19 @@ function notDesktop(feature) {
   return Promise.reject(new Error(`${feature} requiere la app de escritorio (npm run tauri:dev).`));
 }
 
+/* A shared session as a GUEST runs none of the document's code on this
+ * machine: the cells, the \py{} values and the LaTeX are other people's,
+ * and the host's Pyx runs them. The guard (collab/app.js) refuses the
+ * commands that would — the kernel, the engine — whatever part of the UI
+ * asks for them. */
+let invokeGuard = null;
+export function setInvokeGuard(fn) { invokeGuard = fn; }
+
 export async function invoke(cmd, args) {
+  if (invokeGuard) {
+    const why = invokeGuard(cmd);
+    if (why) return Promise.reject(new Error(why));
+  }
   if (!isTauri()) return notDesktop(cmd);
   return tauriInvoke(cmd, args);
 }

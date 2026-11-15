@@ -13,6 +13,7 @@ import Wizards from './components/Wizards.jsx';
 import NewDocDialog, { openNewDoc } from './components/NewDocDialog.jsx';
 import SetupDialog from './components/SetupDialog.jsx';
 import MacrosDialog from './components/MacrosDialog.jsx';
+import CollabDialog, { CollabOverlay } from './components/CollabDialog.jsx';
 import { t } from '../core/i18n.js';
 import { openDocument } from './stores/docStore.js';
 
@@ -114,6 +115,8 @@ export default function App() {
       <NewDocDialog />
       <SetupDialog />
       <MacrosDialog />
+      <CollabDialog />
+      <CollabOverlay />
     </>
   );
 }

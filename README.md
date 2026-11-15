@@ -84,6 +84,15 @@ Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin toca
 
 <br>
 
+## Trabajar a la vez
+
+Comparte un proyecto con un código y editadlo varias personas al mismo tiempo, viendo el ratón, el
+cursor y la selección de cada una en el editor y en el PDF. Quien comparte decide si cada persona
+puede tocar el Python, el LaTeX, ambos o nada. Cifrado de extremo a extremo, sin abrir puertos.
+Guía y servidor: [`Manual de usuario/colaboracion.md`](Manual%20de%20usuario/colaboracion.md).
+
+<br>
+
 ## Instalación
 
 | Sistema | Archivo |

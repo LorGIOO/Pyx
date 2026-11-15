@@ -1,0 +1,5 @@
+# Caddy pone el certificado TLS (wss://) automáticamente.
+# Sustituye relay.ejemplo.com por tu dominio y arranca el relé con TRUST_PROXY=1.
+relay.ejemplo.com {
+	reverse_proxy 127.0.0.1:8787
+}

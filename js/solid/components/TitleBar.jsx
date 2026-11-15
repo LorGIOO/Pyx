@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup, Show } from 'solid-js';
+import { createSignal, onMount, onCleanup, Show, For } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
 import {
@@ -12,6 +12,8 @@ import {
 import { doUndo, doRedo } from '../../editor/commands.js';
 import { setShowConfig } from '../stores/settingsStore.js';
 import { icons } from './ribbon/icons.js';
+import { collab, inSession } from '../stores/collabStore.js';
+import { openCollab, initials } from './CollabDialog.jsx';
 // Installs the drawn hover widget that replaces the native `title` tooltip,
 // app-wide. Imported here because the title bar is always mounted.
 import './Tooltip.jsx';
@@ -66,6 +68,31 @@ export default function TitleBar() {
       </div>
 
       <div class="window-controls">
+        {/* Shared session: who is here (click a face to follow that person)
+            and the «Compartir» button, Google Docs style. */}
+        <div class="collab-bar">
+          <Show when={inSession()}>
+            <div class="collab-faces">
+              <For each={collab.members.filter((m) => m.online !== false).slice(0, 6)}>
+                {(m) => (
+                  <button class="collab-face" classList={{ following: collab.follow === m.mid, me: collab.me && collab.me.mid === m.mid }}
+                    style={{ background: m.color }}
+                    title={collab.me && collab.me.mid === m.mid ? `${m.name} (tú)` : collab.follow === m.mid ? `Siguiendo a ${m.name} — clic para dejar de seguir` : `${m.name} — clic para seguirle`}
+                    onClick={() => {
+                      if (collab.me && collab.me.mid === m.mid) return;
+                      import('../../collab/presence-tracker.js').then((t) => t.followPerson(collab.follow === m.mid ? null : m.mid));
+                    }}>{initials(m.name)}</button>
+                )}
+              </For>
+            </div>
+          </Show>
+          <button class="collab-share" classList={{ live: inSession(), warn: collab.conn === 'reconnecting' || collab.conn === 'host-down' }}
+            title={inSession() ? 'Sesión compartida' : 'Trabajar a la vez con otras personas'}
+            onClick={() => openCollab()}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="6" cy="5.5" r="2.4" /><path d="M1.8 13.5c.5-2.4 2.2-3.8 4.2-3.8s3.7 1.4 4.2 3.8" /><circle cx="11.6" cy="6.2" r="1.9" /><path d="M11 9.8c1.7.1 2.9 1.3 3.3 3.2" /></svg>
+            <span>{inSession() ? (collab.joins.length ? `${collab.joins.length} esperando` : 'En sesión') : 'Compartir'}</span>
+          </button>
+        </div>
         <Show when={isTauri()}>
           <button class="window-btn" title={t('Minimizar', 'Minimize')} onClick={() => minimizeWindow()}>
             <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>

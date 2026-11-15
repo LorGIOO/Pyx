@@ -6,7 +6,7 @@
 // are forwarded between the views as annotated transactions so the text never
 // diverges.
 
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState, Compartment, Transaction } from '@codemirror/state';
 import { showMinimap } from '@replit/codemirror-minimap';
 import {
   EditorView,
@@ -36,7 +36,9 @@ import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/sea
 import { closeBrackets, closeBracketsKeymap, autocompletion } from '@codemirror/autocomplete';
 
 import { state as appState } from '../core/state.js';
-import { docIdFacet, syncAnnotation } from './doc-id.js';
+import { docIdFacet, syncAnnotation, remoteAnnotation } from './doc-id.js';
+import { collabHooks } from '../collab/hooks.js';
+import { remoteCarets } from '../collab/carets.js';
 import { cellsExtension, selectCellOrAll, refreshCells } from './cells.js';
 import {
   toggleLineComment, smartEnter, smartTab, moveCellOrLineUp, moveCellOrLineDown,
@@ -240,10 +242,17 @@ function makeUpdateListener(docId) {
   return EditorView.updateListener.of((u) => {
     if (u.docChanged) {
       const doc = appState.documents.find((d) => d.id === docId);
-      if (doc && !doc.modified) doc.modified = true;
+      if (doc && !doc.modified && (!collabHooks.modified || collabHooks.modified(docId))) doc.modified = true;
       pushDocText(u.state.doc, docId);
 
       const fromSync = u.transactions.some((tr) => tr.annotation(syncAnnotation));
+      // Shared session: what was typed HERE goes out to the others. Echoes
+      // from a sibling pane and edits that came in from the others do not.
+      if (!fromSync && collabHooks.local) {
+        for (const tr of u.transactions) {
+          if (tr.docChanged && !tr.annotation(remoteAnnotation)) collabHooks.local(docId, tr.changes, tr.startState.doc);
+        }
+      }
       if (!fromSync && changeHandler) changeHandler();
       if (!fromSync) {
         // Which pane produced this update?
@@ -252,11 +261,16 @@ function makeUpdateListener(docId) {
         for (const vw of viewsOfDoc(docId, srcPane)) {
           for (const tr of u.transactions) {
             if (!tr.docChanged) continue;
-            vw.dispatch({ changes: tr.changes, annotations: syncAnnotation.of(true) });
+            // Another person's edit stays out of the sibling's undo history too.
+            const annotations = tr.annotation(remoteAnnotation)
+              ? [syncAnnotation.of(true), Transaction.addToHistory.of(false)]
+              : syncAnnotation.of(true);
+            vw.dispatch({ changes: tr.changes, annotations, filter: false });
           }
         }
       }
     }
+    if ((u.selectionSet || u.docChanged) && collabHooks.selection) collabHooks.selection(docId, u.view);
     if (u.selectionSet || u.docChanged) {
       const head = u.state.selection.main.head;
       const line = u.state.doc.lineAt(head);
@@ -319,6 +333,14 @@ export function createDocState(docId, content) {
       dynamicKeys,
       pathLinks,
       makeUpdateListener(docId),
+      // Shared session: refuse at the keyboard an edit this person may not
+      // make (the host checks again, and that check is the one that counts).
+      EditorState.transactionFilter.of((tr) => {
+        if (!tr.docChanged || !collabHooks.filter || tr.annotation(remoteAnnotation) || tr.annotation(syncAnnotation)) return tr;
+        return collabHooks.filter(docId, tr) ? tr : [];
+      }),
+      // The other people's carets and selections, with their names.
+      remoteCarets,
       keymap.of([
         { key: 'Mod-a', run: selectCellOrAll },
         { key: 'Ctrl-t', run: toggleLineComment, preventDefault: true },
@@ -504,10 +526,35 @@ export function applyDocChanges(id, changes) {
   const st = docStates.get(id);
   if (!st) return false;
   // Through a transaction, so the change is in this state's undo history too.
-  docStates.set(id, st.update({ changes }).state);
-  // No view, no update listener: mark it by hand.
+  const tr = st.update({ changes });
+  docStates.set(id, tr.state);
+  // No view, no update listener: do by hand what it would have done.
+  if (tr.docChanged && collabHooks.local) collabHooks.local(id, tr.changes, st.doc);
   const doc = appState.documents.find((d) => d.id === id);
-  if (doc && !doc.modified) doc.modified = true;
+  if (doc && !doc.modified && (!collabHooks.modified || collabHooks.modified(id))) doc.modified = true;
+  return true;
+}
+
+/** Bring ANOTHER PERSON's edit into a document (shared session), wherever its
+ *  text lives. Never undoable from here, never sent back out, never refused
+ *  by the local permission filter. Returns false if the document is gone. */
+export function applyRemoteChanges(id, changes) {
+  const spec = {
+    changes,
+    annotations: [remoteAnnotation.of(true), Transaction.addToHistory.of(false)],
+    filter: false,
+  };
+  const view = getViewOfDoc(id);
+  if (view) {
+    view.dispatch(spec);
+    return true;
+  }
+  const st = docStates.get(id);
+  if (!st) return false;
+  docStates.set(id, st.update(spec).state);
+  const doc = appState.documents.find((d) => d.id === id);
+  if (doc && !doc.modified && (!collabHooks.modified || collabHooks.modified(id))) doc.modified = true;
+  if (changeHandler) changeHandler();
   return true;
 }
 

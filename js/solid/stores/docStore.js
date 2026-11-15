@@ -27,6 +27,7 @@ import { general } from './settingsStore.js';
 import { baseName, normalizePath, samePath } from '../../core/paths.js';
 import { parseCellsText, codeHashMap } from '../../editor/cell-parse.js';
 import { serializeDoc, hydrateDoc, clearDoc } from '../../editor/cell-outputs.js';
+import { collabHooks } from '../../collab/hooks.js';
 
 // A document "is Pyx" (has Python cells) when its text contains a %#python cell.
 // Such a document is saved as .pltx, never .tex.
@@ -248,7 +249,7 @@ export function isPyxDoc(doc) {
   return !!doc && !doc.kind;
 }
 
-export function newDocument(content = '', fileName = 'sin-título.pltx', path = null, format = null) {
+export function newDocument(content = '', fileName = 'sin-título.pltx', path = null, format = null, { activate = true, remote = null } = {}) {
   const id = nextId++;
   registerDoc(id, content);
   state.documents.push({
@@ -264,7 +265,13 @@ export function newDocument(content = '', fileName = 'sin-título.pltx', path = 
     // the document never applied; the compiler falls back to the detected
     // engine by itself.
     engine: undefined,
+    // Shared session, guest side: { path } of the host's file this tab edits.
+    // It has no file here: the host's Pyx saves it (collab/app.js).
+    remote,
   });
+  // A file a collaborator opened opens on the host in the BACKGROUND: the
+  // host keeps looking at what they were looking at.
+  if (!activate) return id;
   const pane = activePane();
   pane.docId = id;
   syncActiveIndex();
@@ -324,27 +331,27 @@ export async function openFromOs(paths) {
 const opening = new Map(); // normalized path -> Promise of the open in flight
 const pathKey = (p) => normalizePath(p).replace(/\\/g, '/').toLowerCase();
 
-export function openPath(path) {
+export function openPath(path, { background = false } = {}) {
   if (!path) return Promise.resolve();
   const key = pathKey(path);
   const flying = opening.get(key);
   if (flying) return flying;
-  const p = openPathNow(path);
+  const p = openPathNow(path, background);
   opening.set(key, p);
   const done = () => { if (opening.get(key) === p) opening.delete(key); };
   p.then(done, done);
   return p;
 }
 
-async function openPathNow(path) {
+async function openPathNow(path, background = false) {
   const existing = state.documents.findIndex((d) => !d.kind && samePath(d.path, path));
   if (existing >= 0) {
-    switchTo(existing);
+    if (!background) switchTo(existing);
     return;
   }
   try {
     const { text, outputs, format } = await readSource(path);
-    const id = newDocument(text, baseName(path), path, format);
+    const id = newDocument(text, baseName(path), path, format, { activate: !background });
     // Restore the results saved with the document. Anything whose cell has
     // changed since is dropped by the store — a number that no longer matches
     // its formula must never come back looking current.
@@ -359,7 +366,7 @@ async function openPathNow(path) {
     // Its saved PDF, at once — no compile needed to see a document you opened.
     // …and the kernel starts importing what the document's cells need, so its
   // first compile does not wait for scipy and matplotlib to load.
-  import('../../compile/compiler.js').then((m) => { m.showSavedPdf(); m.prewarmActive(); }).catch(() => {});
+  if (!background) import('../../compile/compiler.js').then((m) => { m.showSavedPdf(); m.prewarmActive(); }).catch(() => {});
   } catch (e) {
     // Say why. A damaged .pltx used to open silently as raw bytes.
     await messageDialog(`No se pudo abrir «${baseName(path)}».\n\n${String((e && e.message) || e)}`,
@@ -499,8 +506,15 @@ function serialized(doc, job) {
  *                  «Guardar como» is left alone and a failure is only logged. */
 export function saveDocument(doc, { compile = false, trim = true, interactive = true } = {}) {
   if (!doc || doc.kind) return Promise.resolve(false); // viewer tabs aren't saveable
+  // A collaborator's tab: the host's Pyx keeps the file; "save" = compile.
+  if (doc.remote) {
+    if (collabHooks.save) collabHooks.save(doc, { compile, interactive });
+    return Promise.resolve(true);
+  }
   return serialized(doc, async () => {
-    if (trim) trimTrailingWhitespace(doc);
+    // Not in a shared document: trimming would delete the space a
+    // collaborator just typed, under their cursor, mid-sentence.
+    if (trim && !(collabHooks.shared && collabHooks.shared(doc.id))) trimTrailingWhitespace(doc);
     let ok;
     // A document with Python cells must be a .pltx — if it has no path yet, or it
     // was a .tex that now has cells, prompt a Save As so it lands as .pltx.
@@ -658,6 +672,9 @@ export async function closeDocument(index) {
     else if (state.panes.length > 1) closePane(pane.id);
     else pane.docId = null;
   }
+  // A shared session lets go of it (guest: stop receiving its edits; host:
+  // the shared copy lives on while collaborators still have it open).
+  if (collabHooks.closed) { try { collabHooks.closed(doc); } catch (e) { console.error(e); } }
   disposeDoc(doc.id);
   // Results can hold megabytes of figures; a closed document keeps none.
   clearDoc(doc.id);

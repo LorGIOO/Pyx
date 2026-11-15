@@ -2,6 +2,27 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar] — rama `remote`
+
+### Trabajar a la vez (sesión compartida)
+
+- **Compartir** (arriba a la derecha): varias personas editan el mismo proyecto
+  a la vez, como en Overleaf o Google Docs, sin pasarse archivos.
+- Se ve en tiempo real el **ratón** de cada persona (en el editor y en el PDF,
+  en el mismo punto del texto o de la página aunque las ventanas sean
+  distintas), su cursor y su selección; «Seguir a» alguien muestra lo que ve.
+- El anfitrión elige por persona: **Python y LaTeX**, **solo LaTeX**, **solo
+  Python** o **solo lectura**, y lo puede cambiar en directo. Su Pyx comprueba
+  cada cambio contra el texto real y deshace lo que no está permitido.
+- El anfitrión ejecuta el Python y compila para todos; el PDF llega a los
+  invitados enviando solo las partes que cambian.
+- Cifrado de extremo a extremo; ningún equipo abre puertos; el servidor relé
+  (`server/`) no puede leer nada. Durante la sesión LaTeX se compila sin
+  `shell-escape` y sin leer archivos de fuera del proyecto.
+- Sin tirones en documentos grandes: con 40 000 líneas, teclear cuesta lo
+  mismo que sin sesión y los cambios de los demás llegan en unas decenas de ms.
+- Guía: `Manual de usuario/colaboracion.md`.
+
 ## [2.0.0] — 2026-11-13
 
 Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:

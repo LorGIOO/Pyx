@@ -38,6 +38,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import rendererUrl from 'pdfjs-dist/legacy/build/pdf.renderer.min.mjs?url';
 import { readPdfFile, openExternal, synctexEdit, pathExists, emitToWindow } from '../core/platform.js';
+import { collabHooks } from '../collab/hooks.js';
 import { baseName } from '../core/paths.js';
 import { buildPathToSource, sourceOfBuild } from '../compile/build-maps.js';
 import { loupeGeometry } from './loupe-geometry.js';
@@ -121,6 +122,9 @@ function parseOnce(bytes) {
     data: bytes,
     worker: sharedWorker(),
     disableWorkerRendering: !workerRendering,
+    // Never compile code out of a PDF: in a shared session the PDF comes
+    // from another machine (and the CSP forbids eval anyway).
+    isEvalSupported: false,
   });
   let timer = 0;
   const late = new Promise((_, reject) => {
@@ -447,6 +451,18 @@ let onFirstPaint = null;
  * first page on screen — or with null when a newer load took over meanwhile.
  * Rejects when the PDF cannot be shown; the viewer says why by itself.
  */
+// A PDF that came as bytes (a shared session: the host's PDF). Kept so the
+// viewer can reload it like a file (pane rebuilt, worker restarted).
+let memPdf = null; // { path, bytes }
+const readPdf = (path) => (memPdf && memPdf.path === path ? Promise.resolve(memPdf.bytes.slice()) : readPdfFile(path));
+
+/** Show a PDF held in memory (a collaborator's view of the host's PDF).
+ *  `name` is only what the viewer calls it. */
+export function loadPdfBytes(bytes, name = 'documento.pdf') {
+  memPdf = { path: `pyx-session://${name}`, bytes };
+  return loadPdf(memPdf.path);
+}
+
 export async function loadPdf(path) {
   const seq = ++loadSeq;
   const t0 = performance.now();
@@ -455,7 +471,7 @@ export async function loadPdf(path) {
     // No pane to show it in (the viewer is hidden): it is loaded when one
     // appears (setPreviewContainer) — parsing it now would be for nothing.
     if (!container) return null;
-    let bytes = await readPdfFile(path);
+    let bytes = await readPdf(path);
     const readMs = performance.now() - t0;
     if (seq !== loadSeq) return null; // a newer PDF is already on its way
     setPreviewFile(baseName(path));
@@ -469,7 +485,7 @@ export async function loadPdf(path) {
       // The bytes went to the old one: read them again.
       console.warn('[Pyx] el lector de PDF falló; se reinicia y se reintenta:', e);
       dropWorker();
-      bytes = await readPdfFile(path);
+      bytes = await readPdf(path);
       if (seq !== loadSeq) return null;
       doc = await parseOnce(bytes);
     }
@@ -1203,34 +1219,15 @@ function wordAtPoint(clientX, clientY) {
 
 async function synctexJump(pageNo, xPt, yPt, word) {
   if (!currentPath) return;
+  // A collaborator's PDF is the host's: the host looks the spot up.
+  if (memPdf && memPdf.path === currentPath && collabHooks.synctexEdit) {
+    try { await collabHooks.synctexEdit(pageNo, xPt, yPt, word); } catch (_) { /* no record there */ }
+    return;
+  }
   try {
-    const hit = await synctexEdit(currentPath, pageNo, xPt, yPt);
-    // Keep the separators synctex reported. Rewriting them to backslashes made
-    // inverse search a Windows-only feature: on macOS and Linux the resulting
-    // path never existed, so Ctrl+click in the PDF silently did nothing.
-    let p = String(hit.input || '');
-    // The engine compiles the .build.tex copies, which live in the project's
-    // WORKING DIRECTORY, outside the project. Map the reported path back to the
-    // real source file. The build is CLEAN LaTeX (cells removed), so its line
-    // numbers shift below every cell: translate through the compiler's map.
-    const wasBuild = /\.build\.tex$/i.test(p);
-    if (wasBuild) {
-      // The compiler's own record of which source each build copy came from
-      // (by its full relative path: two chapters called "intro" in different
-      // folders cannot be confused). Guessing from the name is the fallback.
-      const exact = sourceOfBuild(p);
-      if (exact) {
-        p = exact;
-      } else {
-        const back = buildPathToSource(p);
-        const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
-        for (const cand of [stem + '.pltx', stem + '.tex']) {
-          if (await pathExists(cand)) { p = cand; break; }
-        }
-      }
-    }
-    let line = hit.line || 1;
-    const column = typeof hit.column === 'number' ? hit.column : -1;
+    const hit = await synctexResolve(currentPath, pageNo, xPt, yPt);
+    const { column, wasBuild } = hit;
+    let { path: p, line } = hit;
     // The detached viewer window has no editor (and no compile state): ask the
     // MAIN window to open the source at this spot — it translates build lines.
     if (typeof window !== 'undefined' && window.__PYX_VIEWER__) {
@@ -1243,6 +1240,39 @@ async function synctexJump(pageNo, xPt, yPt, word) {
     await docStore.openPath(p);
     cmds.gotoLineCol(line, column, word);
   } catch (_) { /* synctex not available or no record at that point */ }
+}
+
+/** PDF spot → { path, line, column, wasBuild } of the SOURCE file (the build
+ *  copy mapped back to the real file; `line` is still a build line when
+ *  wasBuild). Also what the host answers a collaborator's Ctrl+click with. */
+export async function synctexResolve(pdfPath, pageNo, xPt, yPt) {
+  const hit = await synctexEdit(pdfPath, pageNo, xPt, yPt);
+  // Keep the separators synctex reported. Rewriting them to backslashes made
+  // inverse search a Windows-only feature: on macOS and Linux the resulting
+  // path never existed, so Ctrl+click in the PDF silently did nothing.
+  let p = String(hit.input || '');
+  // The engine compiles the .build.tex copies, which live in the project's
+  // WORKING DIRECTORY, outside the project. Map the reported path back to the
+  // real source file. The build is CLEAN LaTeX (cells removed), so its line
+  // numbers shift below every cell: the caller translates through the
+  // compiler's map.
+  const wasBuild = /\.build\.tex$/i.test(p);
+  if (wasBuild) {
+    // The compiler's own record of which source each build copy came from
+    // (by its full relative path: two chapters called "intro" in different
+    // folders cannot be confused). Guessing from the name is the fallback.
+    const exact = sourceOfBuild(p);
+    if (exact) {
+      p = exact;
+    } else {
+      const back = buildPathToSource(p);
+      const stem = back ? `${back.dir}/${back.stem}` : p.replace(/\.build\.tex$/i, '');
+      for (const cand of [stem + '.pltx', stem + '.tex']) {
+        if (await pathExists(cand)) { p = cand; break; }
+      }
+    }
+  }
+  return { path: p, line: hit.line || 1, column: typeof hit.column === 'number' ? hit.column : -1, wasBuild };
 }
 
 /* The selectable text over each page: PDF.js's own TextLayer.
@@ -1433,6 +1463,41 @@ export function goPrev() { goToPage(Math.max(1, currentVisiblePage() - 1)); }
 export function goNext() { goToPage(Math.min(pageCount() || 1, currentVisiblePage() + 1)); }
 
 /** The page occupying the middle of the viewport. Bisect, not a scan. */
+/* ---------- shared sessions: where a mouse is on the PDF ----------
+   In PDF points of a page, so it lands on the same spot of the same page in
+   every window, whatever its zoom, size or scroll. */
+
+/** Client point → { pg, x, y } (PDF points, top-left origin), or null. */
+export function pdfPointFromClient(cx, cy) {
+  for (const [i, wrap] of mounted) {
+    const r = wrap.getBoundingClientRect();
+    if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom && r.width && r.height) {
+      return { pg: i + 1, x: ((cx - r.left) / r.width) * baseW[i], y: ((cy - r.top) / r.height) * baseH[i] };
+    }
+  }
+  return null;
+}
+
+/** { pg, x, y } → where it is on screen: { x, y, box } with `box` the
+ *  viewer's visible rectangle, or { off: 'up'|'down', box } when that page is
+ *  scrolled out of view, or null when there is no such page. */
+export function clientFromPdfPoint(pg, x, y) {
+  const i = pg - 1;
+  if (!container || !baseW[i]) return null;
+  const box = container.getBoundingClientRect();
+  const wrap = mounted.get(i);
+  if (wrap) {
+    const r = wrap.getBoundingClientRect();
+    if (r.width && r.height) return { x: r.left + (x / baseW[i]) * r.width, y: r.top + (y / baseH[i]) * r.height, box };
+  }
+  return { off: i + 1 < currentVisiblePage() ? 'up' : 'down', box };
+}
+
+export function visiblePage() { return currentVisiblePage(); }
+
+/** The viewer's scrolling element (for presence: was the mouse over it?). */
+export function pdfContainer() { return container; }
+
 function currentVisiblePage() {
   if (!container || !pageCount()) return 1;
   const mid = container.scrollTop + container.clientHeight / 2 - padTop;

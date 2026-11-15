@@ -8,6 +8,7 @@ import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
 import ProjectSearch from './ProjectSearch.jsx';
+import CollabPanel from './CollabPanel.jsx';
 
 // Side-strip icons, same hand as the ribbon (16x16, 1.2px strokes). The
 // codicon each one is modelled on is named in the comment.
@@ -23,6 +24,8 @@ const I = {
   files: `<svg ${S}><path d="M5.5 1.5h4L12.5 4.5v8a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M9.5 1.5v3h3"/><path d="M2.5 4.2v9.3a1 1 0 0 0 1 1H10"/></svg>`,
   // codicon: search
   search: `<svg ${S}><circle cx="6.8" cy="6.8" r="4.3"/><path d="m10 10 4 4"/></svg>`,
+  // codicon: live-share
+  collab: `<svg ${S}><circle cx="6" cy="5.5" r="2.4"/><path d="M1.8 13.5c.5-2.4 2.2-3.8 4.2-3.8s3.7 1.4 4.2 3.8"/><circle cx="11.6" cy="6.2" r="1.9"/><path d="M11 9.8c1.7.1 2.9 1.3 3.3 3.2"/></svg>`,
 };
 const TABS = [
   { id: 'structure', label: 'Estructura', icon: I.structure },
@@ -30,6 +33,7 @@ const TABS = [
   { id: 'symbols', label: 'Símbolos', icon: I.symbols },
   { id: 'files', label: 'Archivos', icon: I.files },
   { id: 'search', label: 'Buscar en el proyecto', icon: I.search },
+  { id: 'collab', label: 'Sesión compartida', icon: I.collab },
 ];
 const KIND_SHORT = {
   part: 'P', chapter: 'C', section: 'S', subsection: 'ss',
@@ -112,6 +116,7 @@ export default function SidePanel() {
           <div class="side-content">
             {/* TOC: sectioning tree, click to jump; the cursor's section is
                 highlighted (TeXstudio-style); TODO/FIXME entries listed below. */}
+            <Show when={tab() === 'collab'}><CollabPanel /></Show>
             <Show when={tab() === 'toc'}>
               <Show when={toc().length} fallback={<div class="side-empty">{tr('Sin secciones todavía.', 'No sections yet.')}</div>}>
                 <For each={toc()}>

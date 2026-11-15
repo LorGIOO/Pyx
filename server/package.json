@@ -1,0 +1,18 @@
+{
+  "name": "pyx-relay",
+  "version": "1.0.0",
+  "description": "Relé cifrado de extremo a extremo para las sesiones compartidas de Pyx",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "relay.mjs",
+  "scripts": {
+    "start": "node relay.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "8.18.3"
+  }
+}

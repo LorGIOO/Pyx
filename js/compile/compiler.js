@@ -38,6 +38,8 @@ import { loadPdf, getPdfPath } from '../pdf/preview.js';
 import { auxOpen, lastArea, annotTool } from '../solid/stores/previewStore.js';
 import { saveActiveAs, saveWithEncoding, markSavedIfUnchanged } from '../solid/stores/docStore.js';
 import { general } from '../solid/stores/settingsStore.js';
+import { collabHooks } from '../collab/hooks.js';
+import { latexEscapes } from '../collab/latex-guard.js';
 
 /* ---- live compile (TeXstudio-style) ----
    The editor schedules a background compile shortly after typing stops; the
@@ -85,16 +87,26 @@ export function cancelLiveCompile() {
   state.livePending = false;
 }
 
+// When the typing pause started being waited for. In a shared session the
+// text can change without pause for minutes (several people writing): the
+// timer is then not pushed back past a limit, so the PDF keeps coming.
+let livePendingSince = 0;
+
 export function scheduleLiveCompile() {
   if (!state.liveCompile) { cancelLiveCompile(); return; }
-  const doc = activeDoc();
+  const target = collabHooks.compileTarget ? collabHooks.compileTarget() : null;
+  const doc = target || activeDoc();
   if (!doc || doc.kind || !doc.path) return;
+  if (target && liveTimer && livePendingSince
+    && performance.now() - livePendingSince > Math.max(2500, liveDelay() * 2.5)) return;
   clearTimeout(liveTimer);
+  if (!liveTimer) livePendingSince = performance.now();
   state.livePending = true; // the status LED shows "programada"
   liveTimer = setTimeout(() => {
     liveTimer = null;
+    livePendingSince = 0;
     state.livePending = false;
-    const d = activeDoc();
+    const d = (collabHooks.compileTarget && collabHooks.compileTarget()) || activeDoc();
     if (!d || d.kind || !d.path) return;
     // Python-only documents (cells, no LaTeX, no master) run cells ON DEMAND:
     // auto-running them on every typing pause could re-trigger long
@@ -209,7 +221,7 @@ function markPdfForeign(on) {
 
 export async function showSavedPdf() {
   const doc = activeDoc();
-  if (!doc || doc.kind) return;
+  if (!doc || doc.kind || doc.remote) return; // a collaborator's PDF comes from the host
   // No file on disk yet: no project, so no PDF of its own can exist.
   if (!doc.path) { markPdfForeign(true); return; }
   try {
@@ -925,6 +937,8 @@ function finishCompile() {
  *   incrementally — and fall back to a full run on any doubt.
  */
 export async function compileActive(showViewer = true, { force = showViewer, fresh = false } = {}) {
+  // A collaborator does not compile: the host's Pyx does, for everyone.
+  if (collabHooks.compile && collabHooks.compile(showViewer)) return null;
   if (fresh) force = true;
   if (state.compiling) {
     queued = !!(queued || showViewer);
@@ -934,7 +948,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     return;
   }
   cancelRequested = false;
-  let doc = activeDoc();
+  // Hosting a session: the shared project, even while the host looks at
+  // something else.
+  let doc = (collabHooks.compileTarget && collabHooks.compileTarget()) || activeDoc();
   if (!doc) return;
 
   // Claim the slot BEFORE the first await: a second request arriving while the
@@ -1041,6 +1057,14 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     const files = await gatherTree(rootPath, rootContent, cwd);
     beat();
     if (!mine()) return null;
+    // Hosting: text other people wrote is about to be typeset on THIS
+    // machine. A file read from outside the project would end up in the PDF
+    // every guest receives — refused here (and by the engine, locked down in
+    // latex.rs, on TeX Live).
+    if (collabHooks.restricted && collabHooks.restricted()) {
+      const bad = latexEscapes(files);
+      if (bad) throw new Error(bad);
+    }
     phase.prep = performance.now() - t0;
     const rootF = files.get(rootPath);
     const isPyx = rootF.isPyx;
@@ -1780,6 +1804,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     if (res.pdf_path) {
       lastPdfPath = res.pdf_path;
       state.lastPdfPath = res.pdf_path; // forward search reads this
+      // Hosting: the collaborators get it too, whatever this window shows.
+      if (collabHooks.pdf) { try { collabHooks.pdf(res.pdf_path, rootPath); } catch (e) { console.error(e); } }
       // Did the user move to a DIFFERENT project while this ran? Then the
       // viewer is showing that one, and this PDF must not take it over; it is
       // on disk, and coming back to this document brings it up (switchTo).
@@ -1816,6 +1842,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       if (engineMs != null) lastEngineMs = engineMs;
       state.compileMs = Math.round(performance.now() - t0);
       state.liveSuspended = false;
+      if (collabHooks.compileDone) { try { collabHooks.compileDone(doc); } catch (e) { console.error(e); } }
       finishCompile();
     }
   }

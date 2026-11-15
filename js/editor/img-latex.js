@@ -17,6 +17,13 @@ const stampName = () => {
 /** Save `bytes` into the project's image folder and insert the figure. */
 export async function insertImageAsFigure(view, bytes, ext = 'png') {
   if (!view || !bytes || !bytes.length) return false;
+  const { activeDoc } = await import('../core/state.js');
+  const ad = activeDoc();
+  if (ad && ad.remote) {
+    // A collaborator's tab: the project's folder is on the host's machine.
+    messageDialog('En una sesión compartida, las imágenes las añade el anfitrión: el proyecto está en su equipo.', { title: 'Pegar imagen' });
+    return false;
+  }
   const { activeRootDir } = await import('../compile/compiler.js');
   const root = await activeRootDir();
   if (!root) {

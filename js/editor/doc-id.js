@@ -18,3 +18,9 @@ export const docIdFacet = Facet.define({
 });
 
 export const docIdOf = (state) => state.facet(docIdFacet);
+
+// Marks a transaction that brings ANOTHER PERSON's edit in (a shared session,
+// collab/ybridge.js). It is never sent back out, never lands in this
+// window's undo history (Ctrl+Z undoes only what you typed) and is never
+// filtered by the local permission check.
+export const remoteAnnotation = Annotation.define();

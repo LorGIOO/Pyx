@@ -2,7 +2,7 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar] — rama `remote`
+## [2.0.1] — 2026-11-15 (pre-lanzamiento, rama `remote`)
 
 ### Trabajar a la vez (sesión compartida)
 

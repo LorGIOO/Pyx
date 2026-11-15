@@ -63,6 +63,23 @@ const EDIT = () => applyEditorSettings();
 const FIELDS = () => [
   /* ---------------- General ---------------- */
   {
+    cat: 'general', sec: ['Actualizaciones automáticas', 'Automatic updates'], key: 'autoUpdate', type: 'check',
+    label: 'Actualizar automáticamente', en: 'Update automatically',
+    hint: ['Pyx busca versiones nuevas al arrancar y cada 30 minutos, las descarga y comprueba en segundo plano y las instala al cerrarse (o al pulsar «Reiniciar para actualizar» en la barra de estado).',
+      'Pyx looks for new versions at start-up and every 30 minutes, downloads and verifies them in the background and installs them when it closes (or when you click «Restart to update» in the status bar).'],
+  },
+  {
+    cat: 'general', sec: ['Actualizaciones automáticas', 'Automatic updates'], key: 'updateChannel', type: 'select',
+    label: 'Versiones que recibir', en: 'Versions to receive',
+    opts: () => [
+      ['auto', tr('Automático (de prueba si tienes una de prueba)', 'Automatic (test ones if you have a test one)')],
+      ['stable', tr('Solo estables', 'Stable only')],
+      ['beta', tr('También las de prueba', 'Test versions too')],
+    ],
+    hint: ['Las versiones de prueba (pre-lanzamientos) traen lo último antes de que sea estable.',
+      'Test versions (pre-releases) bring the latest work before it is stable.'],
+  },
+  {
     cat: 'general', sec: ['Idioma', 'Language'], type: 'select',
     label: 'Idioma de la interfaz', en: 'Interface language',
     get: () => lang(), set: (v) => setLang(v),
@@ -819,8 +836,8 @@ export default function ConfigDialog() {
                   </button>
                 </div>
                 <p class="cfg-hint">
-                  {state.updateStatus || tr('Si hay una versión nueva, Pyx la descarga, comprueba que es la publicada (SHA-256), la instala y se vuelve a abrir solo. Solo pregunta si hay documentos sin guardar.',
-                    'If there is a new version, Pyx downloads it, checks it is the published one (SHA-256), installs it and reopens by itself. It only asks if there are unsaved documents.')}
+                  {state.updateStatus || tr('Si hay una versión nueva, Pyx la descarga, comprueba que es la publicada (SHA-256), la instala y se vuelve a abrir solo, en Windows, macOS y Linux (AppImage). Solo pregunta si hay documentos sin guardar.',
+                    'If there is a new version, Pyx downloads it, checks it is the published one (SHA-256), installs it and reopens by itself, on Windows, macOS and Linux (AppImage). It only asks if there are unsaved documents.')}
                 </p>
               </Show>
 

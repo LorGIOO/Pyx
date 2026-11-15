@@ -2,7 +2,20 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar] — rama `remote`
+## [2.0.2] — 2026-11-15 (pre-lanzamiento, rama `remote`)
+
+### Actualizaciones automáticas
+
+- Pyx busca versiones nuevas al arrancar, cada 30 minutos y al volver a la
+  ventana; las descarga y comprueba (SHA-256) en segundo plano y las instala
+  al cerrarse, o al momento con «Reiniciar para actualizar».
+- Ahora también en **macOS** (sustituye Pyx.app) y **Linux** (sustituye el
+  AppImage), no solo en Windows.
+- «Buscar actualizaciones» no veía las versiones de prueba: quien tiene una
+  versión de prueba recibe la más reciente (de prueba o estable); quien tiene
+  una estable, solo estables. Se puede elegir en Configuración → General.
+
+### Sesión compartida
 
 - La sesión comparte la **carpeta madre** del proyecto (detectada a partir de
   lo que incluye el documento raíz, o la que elija el anfitrión), no solo la

@@ -147,6 +147,8 @@ export const GENERAL_SECTIONS = {
     restoreSession: false,   // reopen last session's files on launch
     autosave: false,         // periodic save of the active document
     autosaveMin: 5,          // minutes between autosaves
+    autoUpdate: true,        // download updates in the background, install on close
+    updateChannel: 'auto',   // 'auto' | 'stable' | 'beta' (test versions too)
   },
   editor: {
     fontFamily: 'Cascadia Code',

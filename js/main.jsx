@@ -136,7 +136,12 @@ if (viewerBoot) {
           { title: 'Cerrar Pyx', okLabel: 'Cerrar', cancelLabel: 'Cancelar' },
         ).catch(() => true);
       }
-      if (go) await destroyWindow();
+      if (go) {
+        // A downloaded, verified update installs on the way out.
+        const { installOnExit } = await import('./core/updates.js');
+        if (await installOnExit()) return;
+        await destroyWindow();
+      }
     } finally {
       closingApp = false;
     }
@@ -277,7 +282,9 @@ if (viewerBoot) {
       .catch(() => {});
     ensureKernel().catch(() => {});
     // A newer Pyx on GitHub? Asked once the window is up, off the start-up path.
-    setTimeout(() => import('./core/updates.js').then((m) => m.checkForUpdate()).catch(() => {}), 8000);
+    // Updates: checked at start-up and every 30 min, downloaded in the
+    // background, installed when Pyx closes (core/updates.js).
+    import('./core/updates.js').then((m) => m.startAutoUpdate()).catch(() => {});
     // Anything the OS delivered before the listener above existed (a cold
     // start always beats the webview).
     //

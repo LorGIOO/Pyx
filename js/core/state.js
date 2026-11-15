@@ -63,7 +63,9 @@ export const state = createMutable({
   // user can act on ('' when it did). Never empty after a compile without PDF.
   compileReason: '',
   lastPdfPath: null,    // PDF written by the last successful compile
-  update: null,         // a newer release found on GitHub (core/updates.js)
+  update: null,
+  updateReady: null,       // version downloaded + verified, installed on close (core/updates.js)
+  updateDownloading: false,         // a newer release found on GitHub (core/updates.js)
   updateBusy: false,    // downloading / starting its installer
   // The build↔source line maps do NOT live here: they are large arrays of
   // integers that nothing renders, and a reactive store would wrap every one

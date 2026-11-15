@@ -71,12 +71,18 @@ export default function StatusBar() {
 
       <div class="status-spacer"></div>
       <Show when={state.update}>
-        <button class="status-item status-update" type="button" disabled={state.updateBusy}
-          title={t(`Hay una versión nueva de Pyx (${state.update.latest}). Pulsa para actualizar.`, `A new Pyx is out (${state.update.latest}). Click to update.`)}
+        <button class="status-item status-update" type="button" disabled={state.updateBusy || state.updateDownloading}
+          title={state.updateReady === state.update.latest
+            ? t(`Pyx ${state.update.latest} está descargado y comprobado: se instala al cerrar Pyx, o ahora con un clic.`, `Pyx ${state.update.latest} is downloaded and verified: it installs when Pyx closes, or now with a click.`)
+            : t(`Hay una versión nueva de Pyx (${state.update.latest}). Pulsa para actualizar.`, `A new Pyx is out (${state.update.latest}). Click to update.`)}
           onClick={() => import('../../core/updates.js').then((m) => m.installUpdate())}>
           {state.updateBusy
-            ? t('Descargando actualización…', 'Downloading update…')
-            : `⬆ ${t('Actualizar a', 'Update to')} ${state.update.latest}`}
+            ? t('Instalando…', 'Installing…')
+            : state.updateDownloading
+              ? t(`Descargando Pyx ${state.update.latest}…`, `Downloading Pyx ${state.update.latest}…`)
+              : state.updateReady === state.update.latest
+                ? `⬆ ${t('Reiniciar para actualizar a', 'Restart to update to')} ${state.update.latest}`
+                : `⬆ ${t('Actualizar a', 'Update to')} ${state.update.latest}`}
         </button>
       </Show>
 

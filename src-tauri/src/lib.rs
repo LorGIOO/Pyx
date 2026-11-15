@@ -124,8 +124,9 @@ async fn chktex_lint(text: String) -> Result<Vec<latex::ChkHit>, String> {
 
 /// The latest release on GitHub, and the installer for this system.
 #[tauri::command]
-async fn update_check() -> Result<update::UpdateInfo, String> {
-    tauri::async_runtime::spawn_blocking(update::check)
+async fn update_check(channel: Option<String>) -> Result<update::UpdateInfo, String> {
+    let channel = channel.unwrap_or_else(|| "auto".into());
+    tauri::async_runtime::spawn_blocking(move || update::check(&channel))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -145,8 +146,9 @@ async fn update_download(asset: update::Asset) -> Result<(), String> {
 /// documents itself, right before calling this — after the download, not
 /// before it, because the user keeps working while it runs.
 #[tauri::command]
-async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(update::launch)
+async fn update_install(app: tauri::AppHandle, reopen: Option<bool>) -> Result<(), String> {
+    let reopen = reopen.unwrap_or(true);
+    tauri::async_runtime::spawn_blocking(move || update::launch(reopen))
         .await
         .map_err(|e| e.to_string())??;
     app.exit(0);

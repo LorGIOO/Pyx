@@ -13,7 +13,8 @@
     "tauri:build": "npm run build && tauri build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "relay": "node server/relay.mjs"
+    "relay": "node server/relay.mjs",
+    "try": "vite build && node server/try.mjs"
   },
   "keywords": [
     "tauri",

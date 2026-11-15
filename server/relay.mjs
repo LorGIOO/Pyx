@@ -77,6 +77,9 @@ export function createRelay(options = {}) {
     : createHttp();
   http.on('request', (req, res) => {
     if (req.url === '/health') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok'); return; }
+    // Optional: serve something else on the same port (a test page of the
+    // app, see server/try.mjs). The relay itself needs nothing but /health.
+    if (o.onRequest) { o.onRequest(req, res); return; }
     res.writeHead(404); res.end();
   });
 

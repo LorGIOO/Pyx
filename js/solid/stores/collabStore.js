@@ -14,6 +14,17 @@ function loadPrefs() {
 
 const prefs = loadPrefs();
 
+/* Pyx opened in a web browser (the test page of server/try.mjs, which serves
+ * the app and the relay from the same address): the relay is right there. */
+function sameOriginRelay() {
+  try {
+    if (typeof window === 'undefined' || '__TAURI_INTERNALS__' in window) return '';
+    const { protocol, host } = window.location;
+    if (!/^https?:$/.test(protocol)) return '';
+    return `${protocol === 'https:' ? 'wss' : 'ws'}://${host}/relay`;
+  } catch (_) { return ''; }
+}
+
 export const collab = createMutable({
   role: null,          // null | 'host' | 'guest'
   phase: 'idle',       // idle | starting | waiting | in | ended
@@ -35,7 +46,7 @@ export const collab = createMutable({
   tab: 'share',        // 'share' | 'join'
   // Remembered between sessions (this machine only).
   name: typeof prefs.name === 'string' ? prefs.name : '',
-  relay: typeof prefs.relay === 'string' ? prefs.relay : '',
+  relay: typeof prefs.relay === 'string' && prefs.relay ? prefs.relay : sameOriginRelay(),
   defaultPerms: prefs.defaultPerms && typeof prefs.defaultPerms === 'object'
     ? { python: !!prefs.defaultPerms.python, latex: prefs.defaultPerms.latex !== false }
     : { python: false, latex: true },

@@ -12,6 +12,10 @@ y el PDF sale con los números ya puestos. Cambias un dato y todo se actualiza.
 [![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.0.0-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
 &nbsp;
 [![Manual de usuario](https://img.shields.io/badge/Manual_de_usuario-PDF-1F2937?style=for-the-badge)](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf)
+&nbsp;
+[![Web de Pyx](https://img.shields.io/badge/Web-lorgioo.github.io%2FPyx--web-F4F2EC?style=for-the-badge&labelColor=16171B)](https://lorgioo.github.io/Pyx-web/)
+
+**[lorgioo.github.io/Pyx-web](https://lorgioo.github.io/Pyx-web/)**: la presentación de Pyx, con demostraciones interactivas, las novedades de cada versión y el [manual en línea](https://lorgioo.github.io/Pyx-web/manual/).
 
 <br>
 

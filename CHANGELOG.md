@@ -2,6 +2,16 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [2.0.3] — 2026-11-16 (pre-lanzamiento, rama `remote`)
+
+- **El instalador de Windows de la 2.0.2 lo bloqueaba el antivirus.** El
+  ejecutable de Windows llevaba dentro, sin usarlo nunca, el código con el
+  que se actualizan macOS y Linux: un pequeño script que espera a que el
+  programa termine, borra (`rm -rf`) y sustituye la aplicación. Es justo lo
+  que los antivirus heurísticos consideran un troyano. Ahora cada sistema
+  lleva solo su propia forma de actualizarse; el de Windows, la misma que la
+  2.0.0.
+
 ## [2.0.2] — 2026-11-15 (pre-lanzamiento, rama `remote`)
 
 ### Actualizaciones automáticas

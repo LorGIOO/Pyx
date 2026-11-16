@@ -91,16 +91,30 @@ impl Kind {
 }
 
 /// What this installation can update by itself.
+///
+/// Each system's way of installing is COMPILED ONLY INTO THAT SYSTEM'S
+/// BUILD (`#[cfg]`, not `cfg!`). 2.0.2 carried the macOS and Linux code —
+/// a shell script that waits for the process to end, `rm -rf`s and swaps the
+/// application — inside the Windows executable too, where it never runs; that
+/// is exactly the shape antivirus heuristics call a dropper, and the Windows
+/// installer was blocked. The Windows build now holds only what 2.0.0 had.
+#[cfg(windows)]
 fn platform_kind() -> Option<Kind> {
-    if cfg!(windows) {
-        Some(Kind::Nsis)
-    } else if cfg!(target_os = "macos") {
-        app_bundle().map(|_| Kind::MacApp)
-    } else if std::env::var_os("APPIMAGE").map(|p| Path::new(&p).is_file()).unwrap_or(false) {
-        Some(Kind::AppImage)
-    } else {
-        None
-    }
+    Some(Kind::Nsis)
+}
+#[cfg(target_os = "macos")]
+fn platform_kind() -> Option<Kind> {
+    app_bundle().map(|_| Kind::MacApp)
+}
+#[cfg(target_os = "linux")]
+fn platform_kind() -> Option<Kind> {
+    std::env::var_os("APPIMAGE")
+        .filter(|p| Path::new(p).is_file())
+        .map(|_| Kind::AppImage)
+}
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+fn platform_kind() -> Option<Kind> {
+    None
 }
 
 /// "1.6.10" > "1.6.9": numeric, part by part ("v" prefix and suffixes ignored).
@@ -292,6 +306,7 @@ pub fn download(asset: Asset) -> Result<(), String> {
 }
 
 /// The running `Pyx.app` (macOS), from the executable's path.
+#[cfg(target_os = "macos")]
 fn app_bundle() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     exe.ancestors()
@@ -310,32 +325,50 @@ pub fn launch(reopen: bool) -> Result<(), String> {
         .filter(|(_, f)| f.is_file())
         .ok_or("No hay ninguna actualización descargada y comprobada.")?;
     match kind {
-        Kind::Nsis => {
-            // /P: passive (progress only, no questions) · /UPDATE: an update,
-            // not a first install · /R: reopen Pyx when done.
-            let mut args = vec!["/P", "/UPDATE"];
-            if reopen {
-                args.push("/R");
-            }
-            Command::new(&file)
-                .args(args)
-                .spawn()
-                .map_err(|e| format!("No se pudo iniciar el instalador: {e}"))?;
-            Ok(())
-        }
+        Kind::Nsis => install_nsis(&file, reopen),
         Kind::AppImage => install_appimage(&file, reopen),
         Kind::MacApp => install_mac_app(&file, reopen),
     }
 }
 
-/// Replace the running AppImage with the new one. Renaming over it is
+const NOT_HERE: &str = "Esta actualización es para otro sistema.";
+
+/// Run Tauri's NSIS installer (Windows) — what Pyx has always done.
+#[cfg(windows)]
+fn install_nsis(file: &Path, reopen: bool) -> Result<(), String> {
+    // /P: passive (progress only, no questions) · /UPDATE: an update, not a
+    // first install · /R: reopen Pyx when done.
+    let mut args = vec!["/P", "/UPDATE"];
+    if reopen {
+        args.push("/R");
+    }
+    Command::new(file)
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("No se pudo iniciar el instalador: {e}"))?;
+    Ok(())
+}
+#[cfg(not(windows))]
+fn install_nsis(_file: &Path, _reopen: bool) -> Result<(), String> {
+    Err(NOT_HERE.into())
+}
+#[cfg(not(target_os = "linux"))]
+fn install_appimage(_file: &Path, _reopen: bool) -> Result<(), String> {
+    Err(NOT_HERE.into())
+}
+#[cfg(not(target_os = "macos"))]
+fn install_mac_app(_file: &Path, _reopen: bool) -> Result<(), String> {
+    Err(NOT_HERE.into())
+}
+
+/// Replace the running AppImage with the new one (Linux build only). Renaming over it is
 /// atomic, and safe while it runs (the old file stays mounted until Pyx
 /// exits).
+#[cfg(target_os = "linux")]
 fn install_appimage(file: &Path, reopen: bool) -> Result<(), String> {
     let target = PathBuf::from(std::env::var_os("APPIMAGE").ok_or("Pyx no se está ejecutando como AppImage.")?);
     let staged = target.with_extension("AppImage.new");
     std::fs::copy(file, &staged).map_err(|e| format!("No se pudo escribir junto a {}: {e}", target.display()))?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
@@ -360,6 +393,7 @@ fn install_appimage(file: &Path, reopen: bool) -> Result<(), String> {
 /// script waits for this process, moves the old bundle aside, puts the new
 /// one in its place (and puts the old one back if that fails), and reopens.
 /// Paths go to the script as arguments, never into its text.
+#[cfg(target_os = "macos")]
 fn install_mac_app(file: &Path, reopen: bool) -> Result<(), String> {
     let bundle = app_bundle().ok_or("No se encontró la aplicación Pyx.app en uso.")?;
     let unpack = work_dir().join("unpacked");

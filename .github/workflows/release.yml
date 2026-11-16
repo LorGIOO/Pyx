@@ -131,9 +131,38 @@ jobs:
           cp "Manual de usuario/Manual de usuario de Pyx.pdf" "$manual"
           gh release upload "$RELEASE_TAG" "$manual" --repo "$GITHUB_REPOSITORY" --clobber
 
+      # pyx-update.json: lo que «Buscar actualizaciones» lee para saber cuál
+      # es la última versión y la huella SHA-256 de cada paquete (update.rs).
+      # Es una descarga corriente (releases/latest/download/pyx-update.json),
+      # no una consulta a la API de GitHub, que solo admite 60 por hora y por
+      # dirección pública: con Pyx abierto en un aula entera, la comprobación
+      # fallaba para todos. Las huellas se calculan aquí sobre los mismos
+      # archivos que se van a publicar.
+      - name: Adjuntar pyx-update.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir paquetes
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir paquetes \
+            --pattern '*_x64-setup.exe' --pattern '*.AppImage' --pattern '*.app.tar.gz'
+          ls -l paquetes
+          # Sin el instalador de Windows no hay nada que anunciar: se para aquí
+          # y la release se queda en borrador.
+          ls paquetes/*_x64-setup.exe >/dev/null
+          assets='[]'
+          for f in paquetes/*; do
+            assets=$(jq -c --arg name "$(basename "$f")" --argjson size "$(stat -c %s "$f")" \
+              --arg sha "$(sha256sum "$f" | cut -d' ' -f1)" \
+              '. + [{name: $name, size: $size, sha256: $sha}]' <<<"$assets")
+          done
+          jq -n --arg version "${RELEASE_TAG#v}" --argjson assets "$assets" \
+            '{version: $version, assets: $assets}' > pyx-update.json
+          cat pyx-update.json
+          gh release upload "$RELEASE_TAG" pyx-update.json --repo "$GITHUB_REPOSITORY" --clobber
+
       # Solo lo que ya está en main es la versión «latest», la que ofrece
-      # «Buscar actualizaciones» a todos los usuarios (update.rs pregunta por
-      # releases/latest). Una etiqueta sobre otra rama (p. ej. `remote`) sale
+      # «Buscar actualizaciones» a todos los usuarios (update.rs lee
+      # releases/latest/download/pyx-update.json). Una etiqueta sobre otra rama (p. ej. `remote`) sale
       # como PRE-LANZAMIENTO: se puede descargar, pero no llega sola a nadie.
       - name: Publicar la release
         env:

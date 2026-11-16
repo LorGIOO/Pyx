@@ -1,7 +1,9 @@
 // Pyx keeps itself up to date from its own GitHub releases (update.rs).
 //
-//   1. It looks for a new version a few seconds after start-up, every 30
-//      minutes after that, and when the window comes back after a while.
+//   1. It looks for a new version a little after start-up, every two hours
+//      after that, and when the window comes back after a while. The first
+//      check waits a different moment on each computer, so a classroom
+//      that starts Pyx at the same time does not ask all at once.
 //   2. When there is one (and «Actualizar automáticamente» is on), it is
 //      downloaded and its SHA-256 checked IN THE BACKGROUND — nothing stops
 //      while it happens.
@@ -22,11 +24,17 @@ import { invoke, isTauri, openExternal, messageDialog } from './platform.js';
 import { t } from './i18n.js';
 import { gv } from '../solid/stores/settingsStore.js';
 
-const EVERY = 30 * 60_000;      // between automatic checks
-const ON_FOCUS = 10 * 60_000;   // a window that comes back after this long checks again
+const EVERY = 2 * 60 * 60_000;  // between automatic checks
+const ON_FOCUS = 30 * 60_000;   // a window that comes back after this long checks again
+const MAX_AUTO_TRIES = 2;       // background downloads of one version before waiting to be asked
 let lastCheck = 0;
 let checking = null;
 let preparing = null;
+let lastError = '';
+let manual = false;
+const failed = new Map();       // version → background downloads that failed
+
+const reason = (e) => String((e && e.message) || e || '').trim();
 
 const channel = () => {
   const c = gv('updateChannel');
@@ -43,11 +51,18 @@ export function checkForUpdate() {
     try {
       const info = await invoke('update_check', { channel: channel() });
       lastCheck = Date.now();
+      lastError = '';
       state.update = info && info.newer ? info : null;
-      if (state.update && automatic()) prepare(state.update);
+      // In the background a version that keeps failing to download is not
+      // fetched over and over: after two tries it waits for the button.
+      if (state.update && automatic() && (failed.get(info.latest) || 0) < MAX_AUTO_TRIES) prepare(state.update);
       return info;
-    } catch (_) {
-      return null; // no connection: the next check asks again
+    } catch (e) {
+      // Not counted as a check, so the next tick asks again — but not at
+      // once: a refusal answered by asking harder only makes it last.
+      lastCheck = Date.now() - EVERY + 10 * 60_000;
+      lastError = reason(e);
+      return null;
     } finally {
       checking = null;
     }
@@ -62,9 +77,10 @@ function prepare(info) {
   if (preparing) return preparing;
   state.updateDownloading = true;
   preparing = invoke('update_download', { asset: info.asset })
-    .then(() => { state.updateReady = info.latest; return true; })
+    .then(() => { state.updateReady = info.latest; failed.delete(info.latest); state.updateStatus = ''; return true; })
     .catch((e) => {
-      state.updateStatus = t('No se pudo descargar la actualización: ', 'Could not download the update: ') + String((e && e.message) || e);
+      failed.set(info.latest, (failed.get(info.latest) || 0) + 1);
+      state.updateStatus = t('No se pudo descargar la actualización: ', 'Could not download the update: ') + reason(e);
       return false;
     })
     .finally(() => { state.updateDownloading = false; preparing = null; });
@@ -74,7 +90,7 @@ function prepare(info) {
 /** Start the automatic checks (main.jsx, once). */
 export function startAutoUpdate() {
   if (!isTauri()) return;
-  setTimeout(() => { checkForUpdate().catch(() => {}); }, 8000);
+  setTimeout(() => { checkForUpdate().catch(() => {}); }, 8000 + Math.floor(Math.random() * 20000));
   setInterval(() => {
     if (Date.now() - lastCheck >= EVERY) checkForUpdate().catch(() => {});
   }, 60_000);
@@ -105,7 +121,7 @@ export async function restartToUpdate() {
   } catch (e) {
     state.updateBusy = false;
     state.updateStatus = t('No se pudo actualizar.', 'Could not update.');
-    await messageDialog(t('No se pudo actualizar: ', 'Could not update: ') + String((e && e.message) || e));
+    await messageDialog(t('No se pudo actualizar: ', 'Could not update: ') + reason(e));
     return 'error';
   }
 }
@@ -137,7 +153,12 @@ export async function installUpdate() {
   }
   if (state.updateReady !== u.latest) {
     state.updateStatus = t(`Descargando Pyx ${u.latest}…`, `Downloading Pyx ${u.latest}…`);
-    if (!(await prepare(u))) return 'error';
+    if (!(await prepare(u))) {
+      // Said where the user is looking: the status bar button has no room.
+      await messageDialog(state.updateStatus || t('No se pudo descargar la actualización.', 'Could not download the update.'),
+        { title: t('Actualización', 'Update'), kind: 'warning' });
+      return 'error';
+    }
   }
   return restartToUpdate();
 }
@@ -145,9 +166,26 @@ export async function installUpdate() {
 /** «Buscar actualizaciones» (Configuración → General). */
 export async function updateNow() {
   if (!isTauri()) return 'offline';
+  // One at a time: a second click while the first is still asking, downloading
+  // or showing its question must not start a second installation.
+  if (state.updateBusy || manual) return 'busy';
+  manual = true;
+  try {
+    return await updateNowOnce();
+  } finally {
+    manual = false;
+  }
+}
+
+async function updateNowOnce() {
   state.updateStatus = t('Buscando…', 'Checking…');
   const info = await checkForUpdate();
-  if (!info) { state.updateStatus = t('Sin conexión con GitHub.', 'No connection to GitHub.'); return 'offline'; }
+  if (!info) {
+    // The reason as update.rs gives it: no connection, or GitHub refusing
+    // for a while — not always "no connection".
+    state.updateStatus = lastError || t('Sin conexión con GitHub.', 'No connection to GitHub.');
+    return 'offline';
+  }
   if (!info.newer) {
     const kind = info.channel === 'beta' ? t(' (incluidas las versiones de prueba)', ' (test versions included)') : '';
     state.updateStatus = t(`Tienes la última versión (${info.current})${kind}.`, `You have the latest version (${info.current})${kind}.`);

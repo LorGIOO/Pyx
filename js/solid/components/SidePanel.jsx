@@ -9,6 +9,7 @@ import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
 import ProjectSearch from './ProjectSearch.jsx';
 import CollabPanel from './CollabPanel.jsx';
+import { FEATURES } from '../../core/features.js';
 
 // Side-strip icons, same hand as the ribbon (16x16, 1.2px strokes). The
 // codicon each one is modelled on is named in the comment.
@@ -34,7 +35,7 @@ const TABS = [
   { id: 'files', label: 'Archivos', icon: I.files },
   { id: 'search', label: 'Buscar en el proyecto', icon: I.search },
   { id: 'collab', label: 'Sesión compartida', icon: I.collab },
-];
+].filter((t) => t.id !== 'collab' || FEATURES.collab);
 const KIND_SHORT = {
   part: 'P', chapter: 'C', section: 'S', subsection: 'ss',
   subsubsection: 'sss', paragraph: '¶', subparagraph: '¶¶',
@@ -116,7 +117,7 @@ export default function SidePanel() {
           <div class="side-content">
             {/* TOC: sectioning tree, click to jump; the cursor's section is
                 highlighted (TeXstudio-style); TODO/FIXME entries listed below. */}
-            <Show when={tab() === 'collab'}><CollabPanel /></Show>
+            <Show when={FEATURES.collab && tab() === 'collab'}><CollabPanel /></Show>
             <Show when={tab() === 'toc'}>
               <Show when={toc().length} fallback={<div class="side-empty">{tr('Sin secciones todavía.', 'No sections yet.')}</div>}>
                 <For each={toc()}>

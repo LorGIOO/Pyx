@@ -286,6 +286,7 @@ function recomputeGeometry() {
   // The sizer is at least as wide as the viewport, so narrow pages centre and
   // wide ones stay fully scrollable to their left edge.
   const availW = Math.max(0, container.clientWidth - padX);
+  const prevW = innerW;
   innerW = Math.max(maxW, availW);
 
   tops = new Array(n + 1);
@@ -298,6 +299,12 @@ function recomputeGeometry() {
 
   sizer.style.width = innerW + 'px';
   sizer.style.height = tops[n] + 'px';
+  // Pages are centred in the sizer. When it widens or narrows — a page
+  // further on turned out to be an A3 plan, a recompile changed which pages
+  // exist — every page would slide sideways by half the difference, and the
+  // one being read jumped right. The view moves with them instead, so what
+  // is on screen stays put. (Zoom and fit set their own position after this.)
+  if (prevW > 0 && innerW !== prevW) container.scrollLeft += (innerW - prevW) / 2;
 }
 
 /** Index of the last page whose top is at or above `y` (document coords, i.e.
@@ -547,8 +554,14 @@ async function layoutDoc(doc) {
   }
   if (seq !== loadSeq || doc !== pdfDoc) return; // a newer load owns the viewer now
   const vp = p1.getViewport({ scale: 1 });
-  baseW = new Array(n).fill(vp.width);
-  baseH = new Array(n).fill(vp.height);
+  // A recompile of the same document keeps the sizes already learnt for its
+  // pages (an A3 plan stays an A3 plan): starting again from page 1's size
+  // made the layout shrink and then grow back as each page was re-measured,
+  // which moved the whole PDF on screen after every compile.
+  const recompile = currentPath === loadedPath && baseW.length;
+  const oldW = baseW, oldH = baseH;
+  baseW = Array.from({ length: n }, (_, i) => (recompile && i < oldW.length && i > 0 ? oldW[i] : vp.width));
+  baseH = Array.from({ length: n }, (_, i) => (recompile && i < oldH.length && i > 0 ? oldH[i] : vp.height));
   setAnnotDoc(currentPath); // load this PDF's saved annotations
 
   // A RECOMPILE of the document you're reading must not jump the view — but
@@ -558,7 +571,10 @@ async function layoutDoc(doc) {
   // them back where they had been was a jump of its own.
   const sameDoc = currentPath === loadedPath && sizer && sizer.parentElement === container;
   const keepTop = sameDoc ? container.scrollTop : 0;
-  const keepLeft = sameDoc ? container.scrollLeft : 0;
+  // Horizontally, where the view is relative to the CENTRE of the pages: the
+  // pages' width may change with the new version, and a raw scrollLeft would
+  // then point somewhere else.
+  const keepFromCentre = sameDoc ? container.scrollLeft + container.clientWidth / 2 - innerW / 2 : null;
 
   renderSeq++;
   cancelRenders();
@@ -595,7 +611,8 @@ async function layoutDoc(doc) {
   // Set the scroll position LAST, once the geometry is final: a new document
   // opens at the top, a recompile stays where you were reading.
   container.scrollTop = keepTop;
-  container.scrollLeft = keepLeft;
+  if (keepFromCentre == null) centerHorizontally();
+  else container.scrollLeft = Math.max(0, innerW / 2 + keepFromCentre - container.clientWidth / 2);
   loadedPath = currentPath;
   setCurrentPage(currentVisiblePage());
   renderVisible();
@@ -1610,12 +1627,14 @@ function attachEvents(el) {
       }
     }
     // Which button drags the page is the user's choice (Configuración → Visor
-    // PDF → Ratón): the middle one always does, the right one when asked to.
+    // PDF → Ratón, also under Atajos de teclado): both, only the right one or
+    // only the middle one (the wheel).
     // While drawing, a pen's barrel button and Windows' press-and-hold arrive
     // as a right click: they must not turn a stroke into a pan.
     const drawing = !!annotTool() && e.pointerType !== 'mouse';
-    const wantPan = !drawing && (e.button === 1 || (e.button === 2 && general.pdfPanButton !== 'middle'))
-      || (tool() === 'pan' && e.button === 0);
+    const mode = general.pdfPanButton || 'right';
+    const panButton = (e.button === 1 && mode !== 'right-only') || (e.button === 2 && mode !== 'middle');
+    const wantPan = (!drawing && panButton) || (tool() === 'pan' && e.button === 0);
     if (wantPan) {
       e.preventDefault();
       panning = true;

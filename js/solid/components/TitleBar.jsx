@@ -14,6 +14,7 @@ import { setShowConfig } from '../stores/settingsStore.js';
 import { icons } from './ribbon/icons.js';
 import { collab, inSession } from '../stores/collabStore.js';
 import { openCollab, initials } from './CollabDialog.jsx';
+import { FEATURES } from '../../core/features.js';
 // Installs the drawn hover widget that replaces the native `title` tooltip,
 // app-wide. Imported here because the title bar is always mounted.
 import './Tooltip.jsx';
@@ -70,6 +71,7 @@ export default function TitleBar() {
       <div class="window-controls">
         {/* Shared session: who is here (click a face to follow that person)
             and the «Compartir» button, Google Docs style. */}
+        <Show when={FEATURES.collab}>
         <div class="collab-bar">
           <Show when={inSession()}>
             <div class="collab-faces">
@@ -93,6 +95,7 @@ export default function TitleBar() {
             <span>{inSession() ? (collab.joins.length ? `${collab.joins.length} esperando` : 'En sesión') : 'Compartir'}</span>
           </button>
         </div>
+        </Show>
         <Show when={isTauri()}>
           <button class="window-btn" title={t('Minimizar', 'Minimize')} onClick={() => minimizeWindow()}>
             <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>

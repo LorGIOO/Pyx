@@ -14,6 +14,7 @@ import NewDocDialog, { openNewDoc } from './components/NewDocDialog.jsx';
 import SetupDialog from './components/SetupDialog.jsx';
 import MacrosDialog from './components/MacrosDialog.jsx';
 import CollabDialog, { CollabOverlay } from './components/CollabDialog.jsx';
+import { FEATURES } from '../core/features.js';
 import { t } from '../core/i18n.js';
 import { openDocument } from './stores/docStore.js';
 
@@ -115,8 +116,10 @@ export default function App() {
       <NewDocDialog />
       <SetupDialog />
       <MacrosDialog />
-      <CollabDialog />
-      <CollabOverlay />
+      <Show when={FEATURES.collab}>
+        <CollabDialog />
+        <CollabOverlay />
+      </Show>
     </>
   );
 }

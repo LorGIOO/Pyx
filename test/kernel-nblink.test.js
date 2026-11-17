@@ -100,6 +100,26 @@ describe.skipIf(!python)('\\pynotebook: los valores del cuaderno, sin ejecutarlo
     expect(later.source).toBe('snapshot');
   });
 
+  // In the app the notebook's values are captured at its place in the
+  // document (the file's own values) and saved from a COPY of the namespace.
+  // Its functions still pointed at the original, were taken for foreign ones
+  // and pickled by name: the next session could not load them, and every
+  // \py{} calling a function of the notebook failed after a restart.
+  it('las funciones del cuaderno sobreviven a una sesión nueva aunque se guarden con su ámbito', async () => {
+    const nb3 = join(base, 'funciones.ipynb');
+    await send({ code: 'q_b = 0.4\ndef ce(z):\n    return 1 + z / 10\ndef presion(z):\n    return q_b * ce(z)', reset: true });
+    await send({ nblink: 'capture', key: 'nb3', names: ['q_b', 'ce', 'presion'], cwd: base });
+    const s = await send({ nblink: 'save', notebook: nb3, names: ['presion', 'q_b'], scopes: ['nb3'], codeHash: 'f1', reads: [] });
+    expect(s.errors).toEqual({});
+    await send({ code: 'pass', reset: true });
+    const r = await send({ nblink: 'fetch', notebook: nb3, names: ['presion', 'q_b'], codeHash: 'f1' });
+    expect(r.source).toBe('snapshot');
+    const a = await send({ nblink: 'apply', notebook: nb3, names: Object.keys(r.names) });
+    expect(a.ok).toBe(true);
+    expect(a.errors || {}).toEqual({});
+    expect(await value('round(presion(5), 3)')).toBe('0.6');
+  });
+
   it('aplicar de nuevo los mismos valores los marca como sin cambios', async () => {
     const r = await send({ nblink: 'fetch', notebook: nb, names: ['Q'], codeHash: 'c1' });
     const a = await send({ nblink: 'apply', notebook: nb, names: Object.keys(r.names) });

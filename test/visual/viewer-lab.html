@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- Banco de pruebas del visor de PDF en un navegador real (lo usa
+     test/visual/viewer-shift.mjs con Playwright). No forma parte de la app. -->
+<html><head><meta charset="utf-8"><title>viewer lab</title>
+<link rel="stylesheet" href="/styles/styles.css">
+<style>html,body{margin:0;height:100%} #pane{position:absolute;inset:0;width:900px;height:700px}</style>
+</head><body>
+<div id="pane" class="preview-scroll"></div>
+<script type="module">
+  import * as V from '/js/pdf/preview.js';
+  import { PDFDocument, StandardFonts } from 'pdf-lib';
+  import { general } from '/js/solid/stores/settingsStore.js';
+  V.setPreviewContainer(document.getElementById('pane'));
+  // A report: A4 pages, and one A3 landscape plan in the middle.
+  async function makePdf(pages, tag) {
+    const d = await PDFDocument.create();
+    const f = await d.embedFont(StandardFonts.Helvetica);
+    pages.forEach(([w, h], i) => {
+      const p = d.addPage([w, h]);
+      p.drawText(`${tag} pagina ${i + 1}`, { x: 60, y: h - 80, size: 24, font: f });
+      p.drawRectangle({ x: 40, y: 40, width: w - 80, height: h - 80, borderWidth: 2 });
+    });
+    return d.save();
+  }
+  window.lab = {
+    V, general,
+    async load(spec, tag) { const b = await makePdf(spec, tag); await V.loadPdfBytes(b, 'informe.pdf'); },
+    firstPageLeft() {
+      const pane = document.getElementById('pane');
+      const w = pane.querySelector('.pdf-page, [data-page], .pdf-sizer > div');
+      return w ? Math.round(w.getBoundingClientRect().left) : null;
+    },
+    scrollLeft() { return document.getElementById('pane').scrollLeft; },
+  };
+  window.labReady = true;
+</script>
+</body></html>

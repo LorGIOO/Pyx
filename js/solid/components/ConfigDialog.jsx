@@ -21,6 +21,15 @@ import { state, activeDoc } from '../../core/state.js';
 import { t as tr, lang, setLang } from '../../core/i18n.js';
 import { icons } from './ribbon/icons.js';
 
+// Which mouse button drags the PDF (Configuración → Visor PDF, and also under
+// Atajos de teclado, where people look for it). 'right' is the original
+// behaviour: right button AND wheel button.
+const PAN_OPTS = () => [
+  ['right', tr('El botón derecho o la rueda (los dos)', 'The right button or the wheel (both)')],
+  ['right-only', tr('Solo el botón derecho', 'Only the right button')],
+  ['middle', tr('Solo la rueda (botón central)', 'Only the wheel (middle button)')],
+];
+
 const CATEGORIES = () => [
   { id: 'general', label: 'General' },
   { id: 'editor', label: tr('Editor', 'Editor') },
@@ -455,10 +464,7 @@ const FIELDS = () => [
   {
     cat: 'pdf', sec: ['Ratón', 'Mouse'], key: 'pdfPanButton', type: 'select',
     label: 'Mover la página arrastrando con', en: 'Drag the page with',
-    opts: () => [
-      ['right', tr('El botón derecho (y el central)', 'The right button (and the middle one)')],
-      ['middle', tr('Solo el botón central (la rueda)', 'Only the middle button (the wheel)')],
-    ],
+    opts: () => PAN_OPTS(),
     hint: ['Mantén pulsado ese botón sobre el PDF y arrastra para desplazarte en cualquier dirección. La herramienta «Mover» (la mano) lo hace con el botón izquierdo. Con el botón derecho pulsado, la rueda sigue haciendo zoom.',
       'Hold that button over the PDF and drag to move in any direction. The "Pan" tool (the hand) does it with the left button. With the right button held, the wheel still zooms.'],
   },
@@ -878,6 +884,18 @@ export default function ConfigDialog() {
               </For>
 
               <Show when={!searching() && cat() === 'keys'}>
+                <div class="cfg-section">{tr('Ratón en el visor PDF', 'Mouse in the PDF viewer')}</div>
+                <div class="cfg-row">
+                  <span class="cfg-label">{tr('Mover la página arrastrando con', 'Drag the page with')}</span>
+                  <select class="cfg-select" value={general.pdfPanButton || 'right'}
+                    onChange={(e) => setGeneral({ pdfPanButton: e.currentTarget.value })}>
+                    <For each={PAN_OPTS()}>{([v, l]) => <option value={v}>{l}</option>}</For>
+                  </select>
+                </div>
+                <p class="cfg-hint">
+                  {tr('Mantén pulsado ese botón sobre el PDF y arrastra para moverte en cualquier dirección. La rueda, girándola, sigue desplazando arriba y abajo; con Ctrl (o con el botón derecho pulsado) hace zoom.',
+                    'Hold that button over the PDF and drag to move in any direction. Turning the wheel still scrolls up and down; with Ctrl (or the right button held) it zooms.')}
+                </p>
                 <p class="cfg-hint">
                   {tr(
                     'Atajos de las herramientas de la aplicación (los comandos LaTeX no van aquí: son comandos en sí mismos). Pulsa «Cambiar» y teclea la combinación nueva; Esc cancela. Los conflictos se marcan en rojo.',

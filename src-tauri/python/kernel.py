@@ -3598,6 +3598,15 @@ _NB_COLLECT = r'''
 import pickle, pickletools, hashlib, json, os, sys, types, inspect, time, builtins, ast, textwrap, linecache, io, marshal
 res = {}
 CELLS = globals().get("CELLS") or []
+# The namespace the notebook's functions were defined in. Usually NS itself;
+# but Pyx may collect over a COPY of its namespace (with the file's own
+# values on top, _nb_save), whose functions still point at the original.
+# Checking only `is NS` then took every function for a foreign one: it was
+# pickled by name, and could not be loaded back — the document lost the
+# notebook's functions on the next compile with Jupyter closed.
+_HOMES = tuple(h for h in (NS, globals().get("HOME")) if h is not None)
+def _home(g):
+    return any(g is h for h in _HOMES)
 
 def _class_source(cls):
     # inspect cannot find a class typed in a Jupyter cell (its module has no
@@ -3671,7 +3680,7 @@ def _own(v):
     # Defined by the notebook's code (or plain data) — not the environment's
     # replacement of a builtin (IPython's or Pyx's own `open`, say).
     if isinstance(v, types.FunctionType):
-        return v.__globals__ is NS
+        return _home(v.__globals__)
     return not callable(v)
 
 def _code_names(co):
@@ -3695,7 +3704,7 @@ class _Pickler(pickle.Pickler):
         super().__init__(*a, **kw)
         self.fn_names = []
     def reducer_override(self, obj):
-        if isinstance(obj, types.FunctionType) and obj.__globals__ is NS:
+        if isinstance(obj, types.FunctionType) and _home(obj.__globals__):
             self.fn_names += _code_names(obj.__code__)
             cl = tuple(c.cell_contents for c in obj.__closure__) if obj.__closure__ else None
             return (rebuild, (marshal.dumps(obj.__code__), obj.__name__, obj.__defaults__,
@@ -3783,7 +3792,7 @@ while True:
     deps = []
     if isinstance(v, types.ModuleType):
         item = {"module": v.__name__}
-    elif ((isinstance(v, types.FunctionType) and v.__globals__ is NS)
+    elif ((isinstance(v, types.FunctionType) and _home(v.__globals__))
           or (isinstance(v, type) and getattr(v, "__module__", None) == "__main__")):
         # By SOURCE when the source defines exactly this name at the top
         # (portable between Python versions); a closure, a lambda, an alias
@@ -3845,7 +3854,11 @@ _JUPYTER_TAKE = _NB_COLLECT
 # served with Jupyter closed instead of running the notebook. Bounded in size
 # per value and in total time, so a compile never pays for them.
 # 2: items carry what they need ("deps"): a function travels with its helpers.
-_NB_FORMAT = 2
+# 3: snapshots taken by Pyx itself before 2.1 could hold the notebook's
+# functions pickled by name (see _HOMES in _NB_COLLECT), which no later run
+# can load. They are not trusted: the notebook runs once more and a good
+# snapshot replaces them.
+_NB_FORMAT = 3
 _NB_EXTRA_LIMIT = 1_000_000     # bytes per value
 _NB_EXTRA_BUDGET = 16_000_000   # bytes for all of them
 
@@ -4674,7 +4687,7 @@ def _nb_apply(req):
 def _nb_collect(ns, names, extra, out_dir, known=None, cells=None):
     """The collector (_NB_COLLECT) over `ns`: the items for `names` and what
     they need, plus the small extras."""
-    g = {"__builtins__": builtins, "NS": ns, "NAMES": list(names), "EXTRA": list(extra),
+    g = {"__builtins__": builtins, "NS": ns, "HOME": NS, "NAMES": list(names), "EXTRA": list(extra),
          "KNOWN": dict(known or {}), "OUT": out_dir, "LIMIT": _NB_EXTRA_LIMIT,
          "BUDGET": _NB_EXTRA_BUDGET, "WRITE": False, "CELLS": list(cells or [])}
     exec(_NB_COLLECT, g)

@@ -74,11 +74,31 @@ describe('collab · qué es Python y qué es LaTeX', () => {
     expect(classifyChange(DOC, a, 'm.pltx').python).toBe(true);
   });
 
-  it('un .tex es todo LaTeX; un .py es todo Python', () => {
-    expect(fileKind('cap.tex')).toBe('latex');
+  it('un .py es todo Python; un .tex se mira por lo que ejecutaría', () => {
     expect(fileKind('calc.py')).toBe('python');
-    expect(classifyChange('a', 'b', 'cap.tex')).toEqual({ python: false, latex: true });
     expect(classifyChange('a', 'b', 'calc.py')).toEqual({ python: true, latex: false });
+    expect(fileKind('cap.tex')).toBe('mixed');
+    expect(classifyChange('a', 'b', 'cap.tex')).toEqual({ python: false, latex: true });
+  });
+
+  // El compilador ejecuta las celdas de CUALQUIER archivo del proyecto que
+  // las tenga, también de un .tex (o un .sty, o un .txt traído con \input).
+  // Quien solo puede tocar LaTeX no puede colar código por ahí.
+  it('con permiso solo de LaTeX no se puede meter Python en un .tex', () => {
+    const latexOnly = { python: false, latex: true };
+    const tex = 'Texto del capítulo.\n';
+    for (const name of ['cap.tex', 'estilo.sty', 'notas.txt', 'refs.bib', 'clase.cls', 'LEEME.md']) {
+      const cell = tex + '%#python\nimport os; os.system("calc")\n%#end\n';
+      expect(classifyChange(tex, cell, name).python, name).toBe(true);
+      expect(allowedChange(tex, cell, name, latexOnly), name).toEqual({ ok: false, why: 'python' });
+      expect(allowedChange(tex, tex + '\\py{__import__("os").getcwd()}\n', name, latexOnly).ok, name).toBe(false);
+      expect(allowedChange(tex, tex + '\\pynotebook{malo.ipynb}\n', name, latexOnly).ok, name).toBe(false);
+      expect(allowedChange(tex, tex + '\\pyif{__import__("os").system("x")}{a}{b}\n', name, latexOnly).ok, name).toBe(false);
+      // …y sigue pudiendo escribir LaTeX corriente.
+      expect(allowedChange(tex, tex + '\\section{Nuevo} $x^2$\n', name, latexOnly), name).toEqual({ ok: true });
+    }
+    // Quien solo puede tocar Python no reescribe la prosa de un .tex.
+    expect(allowedChange(tex, 'Otro texto.\n', 'cap.tex', { python: true, latex: false })).toEqual({ ok: false, why: 'latex' });
   });
 
   it('allowedChange aplica los permisos', () => {

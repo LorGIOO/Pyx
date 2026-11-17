@@ -464,7 +464,6 @@ function guestFilter(docId, tr) {
   let why = 'read';
   if (!p.python && !p.latex) ok = false;
   else if (kind === 'python') { ok = p.python; why = 'python'; }
-  else if (kind === 'latex') { ok = p.latex; why = 'latex'; }
   else {
     // A window around the change, widened to whole cells: the same rule the
     // host applies to the whole text, without stringifying the whole text on

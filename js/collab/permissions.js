@@ -38,12 +38,19 @@ export function permLabel(p) {
   return 'Solo lectura';
 }
 
-/** How a file is treated: 'python' (all of it executes), 'latex' (nothing
- *  executes: Pyx never runs cells in a .tex) or 'mixed'. */
+/** How a file is treated: 'python' (all of it executes) or 'mixed' (its
+ *  cells, `\py{}`, `\pyif` conditions and links execute; the rest is LaTeX).
+ *
+ *  There is NO "pure LaTeX" kind, on purpose. A `.tex` was once treated as
+ *  one ("Pyx never runs cells in a .tex"), but the compiler does run them:
+ *  any file of the project that carries `%#python` cells — a `.tex`, and
+ *  just as well a `.sty` or a `.txt` pulled in with `\input` — is processed
+ *  like a `.pltx`. With that kind, someone allowed to change only LaTeX
+ *  could type a cell into a `.tex` and the host's machine executed it. Every
+ *  text file is therefore checked by what would execute in it. */
 export function fileKind(name) {
   const n = String(name || '').toLowerCase();
   if (/\.(py|ipynb)$/.test(n)) return 'python';
-  if (/\.(tex|bib|sty|cls|bst|txt|md)$/.test(n)) return 'latex';
   return 'mixed';
 }
 
@@ -106,7 +113,6 @@ export function classifyChange(before, after, fileName) {
   if (before === after) return { python: false, latex: false };
   const kind = fileKind(fileName);
   if (kind === 'python') return { python: true, latex: false };
-  if (kind === 'latex') return { python: false, latex: true };
   return {
     python: pythonProjection(before) !== pythonProjection(after),
     latex: latexProjection(before) !== latexProjection(after),
@@ -210,7 +216,6 @@ export function quickVerdict(before, after, delta, fileName, perms, cellsOf) {
   if (!p.python && !p.latex) return null;
   const kind = fileKind(fileName);
   if (kind === 'python') return p.python ? true : null;
-  if (kind === 'latex') return p.latex ? true : null;
   const edits = deltaEdits(delta);
   if (!edits.length) return true;
   const cb = cellsOf(before), ca = cellsOf(after);

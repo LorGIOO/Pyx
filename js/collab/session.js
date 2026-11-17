@@ -31,6 +31,10 @@ const MAX_UPDATE = 1024 * 1024;                   // one Yjs update from a guest
 const MAX_DOC = 32 * 1024 * 1024;                 // a shared text may not grow past this
 const BATCH_MS = 16;                              // edits are merged per frame
 const PRESENCE_MS = 33;                           // ~30 presence updates per second
+// The largest message a GUEST may send in fragments: an edit (MAX_UPDATE)
+// plus room to spare. Without a bound of its own, each guest could make the
+// host hold 96 MB while "sending" a message that never ends.
+const MAX_FROM_GUEST = 2 * 1024 * 1024;
 const BLOB_BATCH = 900 * 1024;                    // chunk bytes per message (relay limit is 2 MB)
 
 /** Serialize async work in arrival order (decryption must not reorder). */
@@ -81,13 +85,15 @@ function fragments(bytes) {
 }
 
 class Reassembler {
-  constructor() { this.cur = null; }
+  /** `max`: the largest message this sender may put together. */
+  constructor(max = MAX_REASSEMBLY) { this.cur = null; this.max = max; }
   /** A fragment arrived: the whole message once complete, else null. */
   take(h, body) {
-    if (!(h.n > 1) || !(h.i >= 0) || h.i >= h.n || h.n * FRAG > MAX_REASSEMBLY) { this.cur = null; return null; }
+    if (!(h.n > 1) || !(h.i >= 0) || h.i >= h.n || h.n * FRAG > this.max) { this.cur = null; return null; }
     if (h.i === 0) this.cur = { id: h.id, n: h.n, parts: [], size: 0 };
     const c = this.cur;
     if (!c || c.id !== h.id || c.parts.length !== h.i) { this.cur = null; return null; }
+    if (body.length > FRAG) { this.cur = null; return null; }
     c.parts.push(body.slice());
     c.size += body.length;
     if (c.parts.length < c.n) return null;
@@ -283,7 +289,7 @@ export class HostSession {
     let parsed;
     try { parsed = unpack(plain); } catch (_) { return; }
     if (parsed.header.t === 'frag') {
-      if (!m.reasm) m.reasm = new Reassembler();
+      if (!m.reasm) m.reasm = new Reassembler(MAX_FROM_GUEST);
       try { parsed = m.reasm.take(parsed.header, parsed.body); } catch (_) { parsed = null; }
       if (!parsed) return;
     }
@@ -302,7 +308,20 @@ export class HostSession {
     // same person the host already let in — no second approval.
     if (typeof j.resume === 'string') {
       for (const m of this.byMid.values()) {
-        if (m.resume === j.resume && !m.online) {
+        if (m.resume !== j.resume) continue;
+        // The same person on a NEW connection while the old one still looks
+        // alive: a Wi-Fi that dropped is only noticed by the relay after its
+        // next heartbeat (up to 40 s), and until then the returning guest
+        // was treated as a stranger — the host was asked to approve again
+        // and the person appeared twice. The token is the proof; the old
+        // connection is let go.
+        if (m.online && m.id !== id) {
+          this.members.delete(m.id);
+          this.inviteIn.delete(m.id);
+          this.relay.control({ t: 'kick', id: m.id });
+          m.online = false;
+        }
+        if (!m.online) {
           await this.admit(m, id, idBytes, pub);
           return;
         }
@@ -359,7 +378,7 @@ export class HostSession {
     m.chanIn = new Chan(key, this.room, C.CH_PAIR, 'h2g', 'g2h');
     m.online = true;
     m.subs = new Set();
-    m.reasm = new Reassembler();
+    m.reasm = new Reassembler(MAX_FROM_GUEST);
     this.members.set(id, m);
     if (!welcomed) await this.sendInvite(id, idBytes, msg('welcome', { pub: b64u(hp.pub) }));
     this.relay.control({ t: 'admit', id });
@@ -483,6 +502,10 @@ export class HostSession {
 
     const full = p.python && p.latex;
     const none = !p.python && !p.latex;
+    // The size cap holds for everybody. With full rights nothing below can
+    // undo an edit, so one that could take the text past the cap is refused
+    // before it is applied (an update is never smaller than what it inserts).
+    if (full && d.ytext.length + update.length > MAX_DOC) { deny('size'); this.sendTo(m, msg('resync', { path })); return; }
     // The app's own immutable text of the file before the change (O(1)),
     // for the fast path; the full strings only when that cannot decide.
     const beforeText = !full && this.a.textOf ? this.a.textOf(path) : null;

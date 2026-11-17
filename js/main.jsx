@@ -282,7 +282,7 @@ if (viewerBoot) {
       .catch(() => {});
     ensureKernel().catch(() => {});
     // A newer Pyx on GitHub? Asked once the window is up, off the start-up path.
-    // Updates: checked at start-up and every 30 min, downloaded in the
+    // Updates: checked at start-up and every two hours, downloaded in the
     // background, installed when Pyx closes (core/updates.js).
     import('./core/updates.js').then((m) => m.startAutoUpdate()).catch(() => {});
     // Anything the OS delivered before the listener above existed (a cold

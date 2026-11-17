@@ -2453,6 +2453,12 @@ def _fmt(value):
         elif isinstance(value, _np.generic):
             value = value.item()
 
+    # pandas' "no value" markers are NaN by another name: a missing datum
+    # must not reach the PDF as "<NA>" or "NaT" any more than NaN may.
+    _pd = sys.modules.get("pandas")
+    if _pd is not None and (value is _pd.NA or value is _pd.NaT):
+        raise ValueError("el resultado es un dato ausente de pandas (%s)" % (value,))
+
     # pint Quantity: the magnitude under the same strict rules, plus units.
     _pint = sys.modules.get("pint")
     if _pint is not None:

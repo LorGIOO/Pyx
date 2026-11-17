@@ -304,6 +304,48 @@ describe('collab · sesión de extremo a extremo con el relé', () => {
     await h.host.end();
   }, 15000);
 
+  // The relay only notices a dead connection at its next heartbeat. Until
+  // then the host still believes the guest is connected — and the guest,
+  // already back on a new connection, was treated as a stranger.
+  it('quien vuelve antes de que se note su desconexión no pide paso otra vez ni sale dos veces', async () => {
+    const h = makeHost();
+    const invite = await h.host.start();
+    const n = await join(h, invite, 'Nora', { python: true, latex: true });
+    const d = await n.g.openDoc('main.pltx');
+    const hostDoc = h.docs.get('main.pltx');
+    // The host never hears that the old connection went away.
+    const real = h.host.onControl.bind(h.host);
+    h.host.onControl = (c) => { if (!(c.t === 'peer' && c.ev === 'leave')) real(c); };
+    n.g.relay.ws.close();
+    d.getText('t').insert(0, '% de vuelta\n');
+    await until(() => text(hostDoc).includes('de vuelta'), 8000);
+    expect(h.events.joins).toHaveLength(1);
+    expect(h.events.members.filter((m) => m.name === 'Nora')).toHaveLength(1);
+    expect(h.events.members.find((m) => m.name === 'Nora').online).toBe(true);
+    // And she still receives what the host writes.
+    hostDoc.getText('t').insert(0, '% hola\n');
+    await until(() => text(d).includes('hola'));
+    expect(text(d)).toBe(text(hostDoc));
+    await h.host.end();
+  }, 15000);
+
+  it('un texto no crece sin límite ni siquiera con todos los permisos', async () => {
+    const h = makeHost();
+    const invite = await h.host.start();
+    const g = await join(h, invite, 'Gus', { python: true, latex: true });
+    const d = await g.g.openDoc('main.pltx');
+    const hostDoc = h.docs.get('main.pltx');
+    // Pretend the shared text is already near the cap (32 MB) without
+    // building one: the host measures the text it holds.
+    const yt = hostDoc.getText('t');
+    Object.defineProperty(yt, 'length', { get: () => 32 * 1024 * 1024 - 10, configurable: true });
+    d.getText('t').insert(0, 'x'.repeat(200));
+    await until(() => g.ev.denied.some((x) => x.why === 'size'));
+    delete yt.length;
+    expect(text(hostDoc)).toBe(DOC);
+    await h.host.end();
+  });
+
   it('rechazar una petición', async () => {
     const h = makeHost();
     const invite = await h.host.start();
@@ -331,4 +373,55 @@ describe('collab · documentos grandes', () => {
     await until(() => text(h.docs.get('grande.tex')).startsWith('Párrafo 0 X'));
     await h.host.end();
   }, 20000);
+});
+
+describe('collab · el relé aguanta lo que le echen', () => {
+  const open = (u) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(u);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => resolve(ws);
+    ws.onerror = reject;
+  });
+  const room = 'sala-de-prueba-0123456789';
+  const token = 't'.repeat(43);
+
+  it('ningún mensaje de un cliente lo tumba', async () => {
+    const hostWs = await open(url);
+    hostWs.send(JSON.stringify({ t: 'hello', role: 'host', room, token }));
+    await new Promise((r) => { hostWs.onmessage = r; });
+    // Orders that are not objects: `null` used to throw inside the relay and
+    // take the whole process — every session of every user — down.
+    for (const bad of ['null', '0', '"x"', '[]', '{', 'true', '{"t":"kick","id":null}', '{"t":"admit","id":{}}']) hostWs.send(bad);
+    hostWs.send(new Uint8Array([0x21, 1, 2]));           // a truncated address
+    hostWs.send(new Uint8Array(0));                       // an empty frame
+    hostWs.send(new Uint8Array([0x99, 1, 2, 3]));         // an unknown type
+    await new Promise((r) => setTimeout(r, 150));
+    // Still serving: a new session works end to end.
+    const h = makeHost();
+    const invite = await h.host.start();
+    const g = await join(h, invite, 'Zoe', { python: true, latex: true });
+    expect(text(await g.g.openDoc('main.pltx'))).toBe(DOC);
+    await h.host.end();
+    hostWs.close();
+  });
+
+  it('un invitado no puede hacer que el anfitrión acumule un mensaje sin fin', async () => {
+    const h = makeHost();
+    const invite = await h.host.start();
+    const g = await join(h, invite, 'Mal', { python: true, latex: true });
+    await g.g.openDoc('main.pltx');
+    const m = [...h.host.members.values()][0];
+    // 300 fragments announced (75 MB): refused at the first one.
+    const { pack } = await import('../js/collab/wire.js');
+    await g.g.out.run(async () => {
+      for (let i = 0; i < 3; i++) g.g.relay.toHost(await g.g.pair.out.seal(pack({ t: 'frag', id: 7, i, n: 300 }, new Uint8Array(1000))));
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(m.reasm.cur).toBeNull();
+    // …and a legitimate edit still goes through afterwards.
+    const d = await g.g.openDoc('main.pltx');
+    d.getText('t').insert(0, '% bien\n');
+    await until(() => text(h.docs.get('main.pltx')).includes('% bien'));
+    await h.host.end();
+  });
 });

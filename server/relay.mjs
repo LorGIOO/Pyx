@@ -113,7 +113,17 @@ export function createRelay(options = {}) {
     ws.on('pong', () => { me.alive = true; });
     const helloTimer = setTimeout(() => { if (!me.role) ws.close(1008, 'hello'); }, o.helloMs);
 
+    // Nothing a client sends may bring the relay down: whatever goes wrong
+    // while handling one frame costs that connection, not the server.
     ws.on('message', (data, isBinary) => {
+      try {
+        onMessage(data, isBinary);
+      } catch (e) {
+        log('error en un mensaje:', (e && e.message) || e);
+        try { ws.close(1011, 'error'); } catch (_) { /* already gone */ }
+      }
+    });
+    const onMessage = (data, isBinary) => {
       if (!me.role) {
         if (isBinary) { ws.close(1008, 'hello'); return; }
         let h;
@@ -165,7 +175,11 @@ export function createRelay(options = {}) {
         if (!isBinary) {
           let c;
           try { c = JSON.parse(String(data)); } catch (_) { return; }
-          const g = c && typeof c.id === 'string' ? r.guests.get(c.id) : null;
+          // Anything that is not an object (`null`, a number, a string) is
+          // ignored: reading `.t` of it threw, and an exception in this
+          // handler took the whole relay — every session — down with it.
+          if (!c || typeof c !== 'object') return;
+          const g = typeof c.id === 'string' ? r.guests.get(c.id) : null;
           if (c.t === 'admit' && g) g.admitted = true;
           else if (c.t === 'kick' && g) { sendJson(g.ws, { t: 'kicked' }); g.ws.close(1000, 'kicked'); }
           else if (c.t === 'close') dropRoom(me.room, 'host');
@@ -193,7 +207,7 @@ export function createRelay(options = {}) {
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
       if (buf[0] !== 0x10 || !r.host) return;
       sendBin(r.host, Buffer.from([0x10]), me.idBuf, buf.subarray(1));
-    });
+    };
 
     ws.on('close', () => {
       clearTimeout(helloTimer);

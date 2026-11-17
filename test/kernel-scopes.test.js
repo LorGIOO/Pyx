@@ -125,6 +125,15 @@ describe.skipIf(!python)('archivos vinculados: dependencias, ámbitos y tablas',
     expect(v['"%.2f" % 2.5'].value).toBe('2.50');
   });
 
+  it('prec son decimales en un número, una tabla de pandas o un array', async () => {
+    await send({ code: 'import pandas as pd\nimport numpy as np\ndf = pd.DataFrame({"a": [41.25, 0.0]})\narr = np.array([12.345])', reset: true });
+    const v = await evals(['tex(2.345, prec=1)', 'tex(df, prec=1)', 'tex(arr, prec=1)']);
+    expect(v['tex(2.345, prec=1)'].value).toBe('2.3');
+    expect(v['tex(df, prec=1)'].value).toContain('41.2');
+    expect(v['tex(df, prec=1)'].value).not.toContain('e+01');
+    expect(v['tex(arr, prec=1)'].value).toContain('12.3');
+  });
+
   it('tras editar el cuaderno se recupera todo lo de la última ejecución (solo se ejecuta lo cambiado)', async () => {
     const nb = join(base, 'calculo.ipynb');
     const cells = ['import math\nL = 12.0', 'def area(b):\n    return b * L', 'A = area(3)'];

@@ -82,9 +82,22 @@ export function protectedRanges(text) {
   const ranges = [];
   const inVerb = createVerbatimTracker();
   let pos = 0;
+  // Python cells (`%#python … %#end`, the same rule as cell-parse.js): their
+  // lines are CODE, not text of the document. A `\py{x}` in a comment or a
+  // string of a cell (`s = r"\py{x}"`) was evaluated as if it were in the
+  // text, and an empty one stopped the compile with a SyntaxError.
+  let cellFrom = -1;
   for (const line of text.split('\n')) {
     const end = pos + line.length;
-    if (inVerb(line)) {
+    if (cellFrom >= 0) {
+      if (line.trim().startsWith('%#end')) { ranges.push([cellFrom, end]); cellFrom = -1; }
+      pos = end + 1;
+      continue;
+    }
+    const verb = inVerb(line);
+    if (!verb && line.indexOf('%#') >= 0 && line.trim().startsWith('%#python')) {
+      cellFrom = pos;
+    } else if (verb) {
       ranges.push([pos, end]);
     } else if (line.indexOf('\\verb') >= 0) { // cheap reject for the common line
       const re = /\\verb\*?([^A-Za-z\s])/g;
@@ -783,7 +796,8 @@ export function findPyxLeaks(text) {
   let m, line = 1, scanned = 0;
   while ((m = re.exec(text))) {
     while (scanned < m.index) { if (text.charCodeAt(scanned) === 10) line++; scanned++; }
-    if (inRanges(skip, m.index)) continue;
+    // Commented-out text (`% \py{x}`) never reaches the page: not a leak.
+    if (inRanges(skip, m.index) || inTexComment(text, m.index)) continue;
     // \py*{…} was rewritten to \texttt{\detokenize{\py{…}}}: literal by
     // construction, not a leak.
     if (text.slice(m.index - 12, m.index) === '\\detokenize{') continue;

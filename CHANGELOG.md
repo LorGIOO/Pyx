@@ -2,6 +2,41 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [2.1.0] — 2026-11-17
+
+### Cambiado
+
+- **Compartir queda en pausa.** La sesión compartida ya no aparece en la
+  interfaz (ni el botón de la barra de título ni su pestaña del panel lateral)
+  mientras se mejora. El código sigue en Pyx, sin activar; volverá en una
+  versión posterior.
+- El visor de PDF se mueve arrastrando con **el botón derecho, la rueda
+  (botón central) o los dos**, a elegir en *Configuración → Atajos de teclado*
+  (también en *Configuración → Visor PDF*). Por defecto, los dos, como antes.
+- En `tabletex()` y `tex()`, `prec` son siempre **decimales**, también en una
+  tabla de pandas o un array: `prec=1` escribe `41.2`, no `4e+01`.
+
+### Corregido
+
+- Al compilar, o tras un cambio grande, **el PDF ya no salta hacia la
+  derecha**: si la página más ancha cambia, la vista se mantiene centrada donde
+  estaba.
+- Las **funciones de un cuaderno** vinculado con `\pynotebook{}` funcionan
+  también en la compilación siguiente, al reutilizar los valores guardados
+  (antes: «Can't get attribute … on `__main__`»). Los valores guardados por
+  versiones anteriores se recalculan una vez.
+- Un `\py{}` escrito dentro del código de una celda (en un comentario de
+  Python, por ejemplo) ya no se evalúa como si fuera texto del documento.
+- Un `\py{}` en un comentario de LaTeX (`% … \py{} …`) ya no produce el aviso
+  «sin resolver».
+
+### Para desarrollar
+
+- `test/e2e/real-compile.test.js`: compila un proyecto completo con el
+  compilador de Pyx, Python y LaTeX de verdad. Con él se construyen y se
+  comprueban los [proyectos de ejemplo](https://lorgioo.github.io/Pyx-web/ejemplos/)
+  de la web.
+
 ## [2.0.0] — 2026-11-17
 
 Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:

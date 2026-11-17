@@ -47,6 +47,11 @@ describe('defusePyxLeaks', () => {
     const t = '\\begin{verbatim}\n\\py{ roto\n\\end{verbatim}\n';
     expect(defusePyxLeaks(t, findPyxLeaks(t))).toBe(t);
   });
+  it('does not report a \\py{} in a LaTeX comment, but still one after it', () => {
+    const t = '% aquí \\py{} y \\pyif usan las variables\ntexto \\py{x}\n';
+    expect(findPyxLeaks(t).map((l) => l.line)).toEqual([2]);
+    expect(findPyxLeaks('100\\% \\py{x}')).toHaveLength(1);
+  });
 });
 
 describe('resolvePyText', () => {
@@ -272,5 +277,20 @@ describe('safetyPreamble · handcalcs', () => {
     expect(block).toContain('\\@ifundefined{aligned}{\\usepackage{amsmath}}{}');
     const without = safetyPreamble({ envs: new Set(), styles: new Set(), usesPy: true });
     expect(without).not.toContain('amsmath');
+  });
+});
+
+// A cell is Python code, not text of the document: a \py{} written in a
+// comment or a string of a cell was evaluated as if it were in the text.
+import { findPyExprs as _fpe, findPyIfExprs as _fpi } from '../js/compile/latex-bridge.js';
+describe('\\py{} dentro de una celda', () => {
+  it('no se evalúa: es código de Python, no texto', () => {
+    const t = 'Antes \\py{a}\n%#python id=x1\nx = 1  # se ve con \\py{x}\ns = r"\\py{}"\nt = r"\\pyif{c}{s}{n}"\n%#end\nDespués \\py{b} \\pyif{ok}{sí}{no}\n';
+    expect(_fpe(t).map((e) => e.expr)).toEqual(['a', 'b']);
+    expect(_fpi(t).map((e) => e.cond ?? e.expr)).toHaveLength(1);
+  });
+  it('una celda sin cerrar no oculta el resto del documento', () => {
+    const t = '\\py{a}\n%#python\nx = 1\n\\py{b}\n';
+    expect(_fpe(t).map((e) => e.expr)).toEqual(['a', 'b']);
   });
 });

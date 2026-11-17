@@ -9,13 +9,13 @@
 Un editor de LaTeX con celdas de Python dentro. Escribes el informe, calculas en él<br>
 y el PDF sale con los números ya puestos. Cambias un dato y todo se actualiza.
 
-[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.0.0-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
+[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.1.0-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
 &nbsp;
 [![Manual de usuario](https://img.shields.io/badge/Manual_de_usuario-PDF-1F2937?style=for-the-badge)](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf)
 &nbsp;
 [![Web de Pyx](https://img.shields.io/badge/Web-lorgioo.github.io%2FPyx--web-F4F2EC?style=for-the-badge&labelColor=16171B)](https://lorgioo.github.io/Pyx-web/)
 
-**[lorgioo.github.io/Pyx-web](https://lorgioo.github.io/Pyx-web/)**: la presentación de Pyx, con demostraciones interactivas, las novedades de cada versión y el [manual en línea](https://lorgioo.github.io/Pyx-web/manual/).
+**[lorgioo.github.io/Pyx-web](https://lorgioo.github.io/Pyx-web/)**: la presentación de Pyx, con demostraciones interactivas, [proyectos de ejemplo para descargar](https://lorgioo.github.io/Pyx-web/ejemplos/), las novedades de cada versión y el [manual en línea](https://lorgioo.github.io/Pyx-web/manual/).
 
 <br>
 
@@ -88,21 +88,12 @@ Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin toca
 
 <br>
 
-## Trabajar a la vez
-
-Comparte un proyecto con un código y editadlo varias personas al mismo tiempo, viendo el ratón, el
-cursor y la selección de cada una en el editor y en el PDF. Quien comparte decide si cada persona
-puede tocar el Python, el LaTeX, ambos o nada. Cifrado de extremo a extremo, sin abrir puertos.
-Guía y servidor: [`Manual de usuario/colaboracion.md`](Manual%20de%20usuario/colaboracion.md).
-
-<br>
-
 ## Instalación
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** 10/11 (64 bits) | [`Pyx_2.0.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
-| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.0.0_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
+| **Windows** 10/11 (64 bits) | [`Pyx_2.1.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
+| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.1.0_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
 | **Linux** | [`.deb`, `.rpm` o `.AppImage`](https://github.com/LorGIOO/Pyx/releases/latest) |
 
 Si ya tienes Python (Anaconda, python.org…) o LaTeX (MiKTeX, TeX Live, MacTeX), Pyx los usa. Si no, al arrancar ofrece prepararlos. Las versiones nuevas se instalan desde **Configuración → General → Buscar actualizaciones**.

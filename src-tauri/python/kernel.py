@@ -1139,6 +1139,9 @@ def _build_pyx_module():
         numpy array       -> matrix environment `env` (math mode)
         pandas DataFrame  -> tabular (to_latex)       (text mode)
         float + prec      -> rounded                  (either)
+
+        `prec` is always DECIMAL PLACES (0.1f), for a number, a table or a
+        matrix alike: a table of MWh with prec=1 reads 41.2, not 4e+01.
         anything else     -> str(obj)
 
         Every branch is gated on the library being ALREADY imported by the
@@ -1168,7 +1171,7 @@ def _build_pyx_module():
                 if isinstance(obj, pd.Series):
                     obj = obj.to_frame()
                 if isinstance(obj, pd.DataFrame):
-                    ff = ("%%.%dg" % prec) if prec is not None else None
+                    ff = ("%%.%df" % prec) if prec is not None else None
                     return obj.to_latex(
                         index=index, float_format=(lambda v: ff % v) if ff else None)
             except Exception:
@@ -1178,7 +1181,7 @@ def _build_pyx_module():
             try:
                 if isinstance(obj, np.ndarray):
                     arr = np.atleast_2d(obj)
-                    fmt = (lambda v: "%.*g" % (prec, v)) if prec is not None else str
+                    fmt = (lambda v: "%.*f" % (prec, v)) if prec is not None else str
                     rows = [" & ".join(fmt(v) for v in row) for row in arr]
                     return "\\begin{%s} %s \\end{%s}" % (env, " \\\\ ".join(rows), env)
             except Exception:

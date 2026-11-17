@@ -2,118 +2,41 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [Sin publicar] (rama `remote`)
+## [2.0.0] — 2026-11-17
 
-### Seguridad de la sesión compartida
-
-- **Con permiso «Solo LaTeX» se podía ejecutar Python en el equipo del
-  anfitrión.** Bastaba escribir una celda `%#python` (o `\py{}`, `\pyif`,
-  `\pynotebook`) en un `.tex`, `.sty` o `.txt` compartido: se daba por hecho
-  que en esos archivos nada se ejecuta, pero el compilador sí ejecuta las
-  celdas de cualquier archivo que las tenga. Ahora todo archivo de texto se
-  comprueba por lo que ejecutaría.
-- **Un solo mensaje podía tumbar el servidor de sesiones** y cortar las de
-  todo el mundo (una orden de control que no fuera un objeto, p. ej. `null`).
-  Ya no; ningún error al tratar un mensaje detiene el relé.
-- En una sesión se rechaza el código Lua (`\directlua`, `luacode`), que
-  puede leer cualquier archivo por su cuenta, y las órdenes de lectura
-  escritas de forma encubierta (`\csname input\endcsname`, `\catcode`).
-- El tope de 32 MB por documento vale también para quien tiene todos los
-  permisos, y un invitado no puede hacer que el anfitrión acumule en memoria
-  un mensaje sin fin.
-- La dirección del servidor tiene que ser `wss://` (solo `ws://localhost`
-  para pruebas).
-
-### Sesión compartida
-
-- Quien vuelve tras un corte de red antes de que el servidor note la
-  desconexión ya no tiene que ser aprobado otra vez ni aparece duplicado.
-- Montar el servidor de sesiones: `render.yaml` (Render) y `server/fly.toml`
-  (Fly.io) listos para usar, y `js/collab/default-relay.js` para que todos
-  los usuarios lo tengan ya puesto (`server/README.md`).
-
-### Actualizaciones con muchos usuarios
-
-- **«Buscar actualizaciones» fallaba para todos en un aula u oficina** con un
-  falso «sin conexión»: la API de GitHub solo admite 60 consultas por hora y
-  por dirección pública, que un grupo detrás del mismo router agota enseguida.
-  Una instalación estable lee ahora `pyx-update.json`, que cada versión
-  publica: una descarga corriente, sin ese límite. Si aun así GitHub rechaza
-  la consulta, el mensaje lo dice.
-- Comprobación cada dos horas (antes cada 30 minutos) y escalonada al
-  arrancar; una descarga que falla no se reintenta sin fin en segundo plano.
-- Un paquete ya descargado y comprobado no se vuelve a bajar. Un segundo clic
-  en «Buscar actualizaciones» no lanza dos instalaciones.
-- En Linux, el segundo usuario del mismo equipo no podía actualizar (la
-  descarga iba a `/tmp`, compartido): va a la caché de cada usuario.
-
-### Python
-
-- **El kernel de Python fallaba a veces al arrancar** («SyntaxError» en una
-  línea cualquiera, o «terminó al arrancar») cuando dos arranques coincidían:
-  uno leía el archivo del kernel a medio escribir por el otro. Ahora se
-  escribe aparte y se renombra, y si ya está intacto no se toca. En Linux
-  vive en la carpeta del usuario, no en `/tmp`.
-- `\py{}` rechaza los datos ausentes de pandas (`pd.NA`, `pd.NaT`) como ya
-  rechazaba NaN: no llegan al PDF como «<NA>».
-
-## [2.0.3] — 2026-11-16 (pre-lanzamiento, rama `remote`)
-
-- **El instalador de Windows de la 2.0.2 lo bloqueaba el antivirus.** El
-  ejecutable de Windows llevaba dentro, sin usarlo nunca, el código con el
-  que se actualizan macOS y Linux: un pequeño script que espera a que el
-  programa termine, borra (`rm -rf`) y sustituye la aplicación. Es justo lo
-  que los antivirus heurísticos consideran un troyano. Ahora cada sistema
-  lleva solo su propia forma de actualizarse; el de Windows, la misma que la
-  2.0.0.
-
-## [2.0.2] — 2026-11-15 (pre-lanzamiento, rama `remote`)
-
-### Actualizaciones automáticas
-
-- Pyx busca versiones nuevas al arrancar, cada 30 minutos y al volver a la
-  ventana; las descarga y comprueba (SHA-256) en segundo plano y las instala
-  al cerrarse, o al momento con «Reiniciar para actualizar».
-- Ahora también en **macOS** (sustituye Pyx.app) y **Linux** (sustituye el
-  AppImage), no solo en Windows.
-- «Buscar actualizaciones» no veía las versiones de prueba: quien tiene una
-  versión de prueba recibe la más reciente (de prueba o estable); quien tiene
-  una estable, solo estables. Se puede elegir en Configuración → General.
-
-### Sesión compartida
-
-- La sesión comparte la **carpeta madre** del proyecto (detectada a partir de
-  lo que incluye el documento raíz, o la que elija el anfitrión), no solo la
-  del preámbulo: capítulos, figuras y bibliografía en carpetas vecinas se
-  abren, editan y compilan. Las rutas con `../` dentro de esa carpeta ya no
-  bloquean la compilación; lo de fuera sigue bloqueado.
-- Se compila el documento raíz del último archivo editado, o el que tiene
-  delante quien pide compilar.
-
-## [2.0.1] — 2026-11-15 (pre-lanzamiento, rama `remote`)
+Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:
 
 ### Trabajar a la vez (sesión compartida)
 
 - **Compartir** (arriba a la derecha): varias personas editan el mismo proyecto
-  a la vez, como en Overleaf o Google Docs, sin pasarse archivos.
+  a la vez, como en Overleaf o Google Docs, sin pasarse archivos. Funciona sin
+  configurar nada: Pyx trae puesto su servidor de sesiones.
 - Se ve en tiempo real el **ratón** de cada persona (en el editor y en el PDF,
   en el mismo punto del texto o de la página aunque las ventanas sean
   distintas), su cursor y su selección; «Seguir a» alguien muestra lo que ve.
 - El anfitrión elige por persona: **Python y LaTeX**, **solo LaTeX**, **solo
   Python** o **solo lectura**, y lo puede cambiar en directo. Su Pyx comprueba
-  cada cambio contra el texto real y deshace lo que no está permitido.
+  cada cambio contra el texto real y deshace lo que no está permitido, en
+  cualquier archivo del proyecto (`.pltx`, `.tex`, `.sty`…).
 - El anfitrión ejecuta el Python y compila para todos; el PDF llega a los
   invitados enviando solo las partes que cambian.
-- Cifrado de extremo a extremo; ningún equipo abre puertos; el servidor relé
-  (`server/`) no puede leer nada. Durante la sesión LaTeX se compila sin
-  `shell-escape` y sin leer archivos de fuera del proyecto.
-- Sin tirones en documentos grandes: con 40 000 líneas, teclear cuesta lo
-  mismo que sin sesión y los cambios de los demás llegan en unas decenas de ms.
-- Guía: `Manual de usuario/colaboracion.md`.
+- Se comparte la **carpeta madre** del proyecto: capítulos, figuras y
+  bibliografía en carpetas vecinas se abren, editan y compilan.
+- Cifrado de extremo a extremo; ningún equipo abre puertos; el servidor no
+  puede leer nada. Durante la sesión LaTeX se compila sin `shell-escape`, sin
+  Lua y sin leer archivos de fuera del proyecto.
+- Quien pierde la conexión sigue escribiendo y, al volver, todo se une solo,
+  sin pedir paso otra vez. Probado con una docena de personas a la vez.
+- Guía: `Manual de usuario/colaboracion.md`. El servidor (`server/`) se puede
+  montar en cualquier sitio (`server/README.md`).
 
-## [2.0.0] — 2026-11-13
+### Actualizaciones automáticas
 
-Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:
+- Pyx busca versiones nuevas al arrancar y cada dos horas; las descarga y
+  comprueba (SHA-256) en segundo plano y las instala al cerrarse, o al momento
+  con «Reiniciar para actualizar». En Windows, macOS y Linux (AppImage).
+- Funciona aunque muchos equipos compartan la misma conexión (un aula, una
+  oficina): no depende del límite de consultas de la API de GitHub.
 
 ### Compilar y ver
 
@@ -149,6 +72,10 @@ Primera versión de la nueva etapa de Pyx. Recoge todo lo anterior y añade:
 
 ### Aplicación
 
+- El kernel de Python arranca siempre a la primera, aunque se abran dos a la
+  vez.
+- `\py{}` rechaza los datos ausentes de pandas (`pd.NA`, `pd.NaT`) como ya
+  rechazaba NaN.
 - La versión se ve en el título de la ventana.
 - Configuración → General → «Buscar actualizaciones»: descarga, comprueba,
   instala y reabre Pyx sin más pasos.

@@ -1,0 +1,34 @@
+# De un solo uso: deja el repositorio sin ninguna versión publicada antes de
+# publicar de nuevo la 2.0.0. Borra todas las releases (con sus instaladores)
+# y todas las etiquetas, y la rama de trabajo claude/peaceful-lamport-41y9to.
+# Se lanza a mano: Actions → «Limpiar versiones» → Run workflow.
+name: Limpiar versiones
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  limpiar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Borrar releases, etiquetas y la rama de trabajo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          for tag in $(gh release list --repo "$REPO" --limit 200 --json tagName --jq '.[].tagName'); do
+            echo "Release $tag"
+            gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag
+          done
+          for tag in $(gh api "repos/$REPO/git/matching-refs/tags/" --jq '.[].ref | sub("refs/tags/"; "")'); do
+            echo "Etiqueta $tag"
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"
+          done
+          gh api -X DELETE "repos/$REPO/git/refs/heads/claude/peaceful-lamport-41y9to" || echo "La rama ya no existía"
+          echo "Quedan:"
+          gh release list --repo "$REPO"
+          gh api "repos/$REPO/git/matching-refs/tags/" --jq '.[].ref'

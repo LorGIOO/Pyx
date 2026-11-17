@@ -9,7 +9,7 @@
 // or any machine with Docker) and write its address below, for example
 //   export const DEFAULT_RELAY = 'wss://pyx-relay.onrender.com';
 // It must start with wss:// (TLS). Nothing else in the app needs to change.
-export const DEFAULT_RELAY = '';
+export const DEFAULT_RELAY = 'wss://pyx-relay.onrender.com';
 
 /** `url` if it is a usable relay address, else ''. */
 export function validRelay(url) {

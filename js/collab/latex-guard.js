@@ -42,6 +42,12 @@ const IMPORT_RE = /\\(?:sub)?import\*?\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g;
 const RAW_RE = /\\(?:openin|openout)\s*\d*\s*=?\s*([^\s\\{}]+)|\\(?:@@input|input)(?![A-Za-z@])\s+([^\s\\{}%][^\s%]*)/g;
 const MACRO_INPUT = /\\(?:@@input|input|include)(?![A-Za-z@])\s*\\(?!py\{)[A-Za-z@]/;
 const SHELL_RE = /\\(?:immediate\s*\\)?write18\b|\\ShellEscape\b|\\input\s*\{?\s*\|/;
+// LuaLaTeX runs Lua, and Lua opens any file by itself (`io.open`), whatever
+// kpathsea is told: no Lua in a hosted compile.
+const LUA_RE = /\\(?:directlua|latelua|luaexec|luadirect|luaescapestring)(?![A-Za-z@])|\\begin\s*\{\s*luacode\*?\s*\}/;
+// A file command spelled so that no scan can see it: its name assembled with
+// \csname, or the backslash / braces given to other characters (\catcode).
+const HIDDEN_RE = /\\csname[^\\]{0,60}(?:input|include|openin|openout|read|write|import|verbatim|lstinput|@@)[^\\]{0,60}\\endcsname|\\catcode\s*`\\?[^\s=]{1,3}\s*=?\s*(?:0|1|2)(?![0-9])|\\(?:scantokens|detokenize\s*\\expandafter|uppercase|lowercase)\s*\{[^{}]*(?:input|openin|include)/i;
 // Commands whose arguments are package/class NAMES, not paths (a name never
 // has a slash or a dot-dot, so only those are checked).
 const NAME_ONLY = new Set(['usepackage', 'RequirePackage', 'documentclass', 'LoadClass', 'includeonly']);
@@ -103,6 +109,8 @@ export function checkLatex(files, { shareRoot = null, cwd = null } = {}) {
     const text = stripComments(String((f && f.content) || ''));
     const name = String(path).split(/[\\/]/).pop();
     if (SHELL_RE.test(text)) found.push(`${name}: ejecutar programas (\\write18) no está permitido en una sesión compartida`);
+    if (LUA_RE.test(text)) found.push(`${name}: el código Lua (\\directlua, luacode) no está permitido en una sesión compartida: puede leer cualquier archivo`);
+    if (HIDDEN_RE.test(text)) found.push(`${name}: una orden de lectura de archivos escrita de forma encubierta (\\csname, \\catcode): en una sesión deben escribirse tal cual`);
     if (MACRO_INPUT.test(text)) found.push(`${name}: \\input seguido de una macro: en una sesión el nombre del archivo debe escribirse tal cual`);
     CMD_RE.lastIndex = 0;
     for (let m = CMD_RE.exec(text); m; m = CMD_RE.exec(text)) {

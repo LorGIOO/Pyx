@@ -26,6 +26,30 @@ describe('collab · LaTeX que lee fuera del proyecto', () => {
     ]) expect(latexEscapes(files(src)), src).not.toBe('');
   });
 
+  // What no path check can follow: Lua opening files by itself, and file
+  // commands whose name is assembled so the scan never sees them.
+  it('bloquea Lua y las órdenes de lectura encubiertas', () => {
+    for (const src of [
+      '\\directlua{local f = io.open("/etc/passwd"); tex.print(f:read("a"))}',
+      '\\latelua{os.execute("x")}',
+      '\\begin{luacode*}\nio.open("C:/x")\n\\end{luacode*}',
+      '\\csname @@input\\endcsname /etc/passwd',
+      '\\expandafter\\csname input\\endcsname{/etc/passwd}',
+      '\\csname openin\\endcsname5=/etc/passwd',
+      '\\catcode`\\|=0 |input{/etc/passwd}',
+      '\\catcode`\\!=0',
+      '\\uppercase{\\input{/ETC/x}}',
+    ]) expect(latexEscapes(files(src)), src).not.toBe('');
+    // …without getting in the way of ordinary documents.
+    for (const src of [
+      '\\catcode`\\@=11 \\makeatletter',
+      '\\csname mi@orden\\endcsname',
+      '\\uppercase{título}',
+      'Código de ejemplo: directlua no se usa aquí.',
+      '\\catcode`\\_=12',
+    ]) expect(latexEscapes(files(src)), src).toBe('');
+  });
+
   it('deja pasar un proyecto normal y lo comentado', () => {
     const ok = [
       '\\documentclass{article}',

@@ -2,6 +2,61 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Sin publicar] (rama `remote`)
+
+### Seguridad de la sesión compartida
+
+- **Con permiso «Solo LaTeX» se podía ejecutar Python en el equipo del
+  anfitrión.** Bastaba escribir una celda `%#python` (o `\py{}`, `\pyif`,
+  `\pynotebook`) en un `.tex`, `.sty` o `.txt` compartido: se daba por hecho
+  que en esos archivos nada se ejecuta, pero el compilador sí ejecuta las
+  celdas de cualquier archivo que las tenga. Ahora todo archivo de texto se
+  comprueba por lo que ejecutaría.
+- **Un solo mensaje podía tumbar el servidor de sesiones** y cortar las de
+  todo el mundo (una orden de control que no fuera un objeto, p. ej. `null`).
+  Ya no; ningún error al tratar un mensaje detiene el relé.
+- En una sesión se rechaza el código Lua (`\directlua`, `luacode`), que
+  puede leer cualquier archivo por su cuenta, y las órdenes de lectura
+  escritas de forma encubierta (`\csname input\endcsname`, `\catcode`).
+- El tope de 32 MB por documento vale también para quien tiene todos los
+  permisos, y un invitado no puede hacer que el anfitrión acumule en memoria
+  un mensaje sin fin.
+- La dirección del servidor tiene que ser `wss://` (solo `ws://localhost`
+  para pruebas).
+
+### Sesión compartida
+
+- Quien vuelve tras un corte de red antes de que el servidor note la
+  desconexión ya no tiene que ser aprobado otra vez ni aparece duplicado.
+- Montar el servidor de sesiones: `render.yaml` (Render) y `server/fly.toml`
+  (Fly.io) listos para usar, y `js/collab/default-relay.js` para que todos
+  los usuarios lo tengan ya puesto (`server/README.md`).
+
+### Actualizaciones con muchos usuarios
+
+- **«Buscar actualizaciones» fallaba para todos en un aula u oficina** con un
+  falso «sin conexión»: la API de GitHub solo admite 60 consultas por hora y
+  por dirección pública, que un grupo detrás del mismo router agota enseguida.
+  Una instalación estable lee ahora `pyx-update.json`, que cada versión
+  publica: una descarga corriente, sin ese límite. Si aun así GitHub rechaza
+  la consulta, el mensaje lo dice.
+- Comprobación cada dos horas (antes cada 30 minutos) y escalonada al
+  arrancar; una descarga que falla no se reintenta sin fin en segundo plano.
+- Un paquete ya descargado y comprobado no se vuelve a bajar. Un segundo clic
+  en «Buscar actualizaciones» no lanza dos instalaciones.
+- En Linux, el segundo usuario del mismo equipo no podía actualizar (la
+  descarga iba a `/tmp`, compartido): va a la caché de cada usuario.
+
+### Python
+
+- **El kernel de Python fallaba a veces al arrancar** («SyntaxError» en una
+  línea cualquiera, o «terminó al arrancar») cuando dos arranques coincidían:
+  uno leía el archivo del kernel a medio escribir por el otro. Ahora se
+  escribe aparte y se renombra, y si ya está intacto no se toca. En Linux
+  vive en la carpeta del usuario, no en `/tmp`.
+- `\py{}` rechaza los datos ausentes de pandas (`pd.NA`, `pd.NaT`) como ya
+  rechazaba NaN: no llegan al PDF como «<NA>».
+
 ## [2.0.3] — 2026-11-16 (pre-lanzamiento, rama `remote`)
 
 - **El instalador de Windows de la 2.0.2 lo bloqueaba el antivirus.** El

@@ -87,22 +87,12 @@ Las sesiones necesitan un pequeño servidor que reenvía los datos entre los par
 puede leer nada**: todo va cifrado de extremo a extremo y la clave viaja en el código de
 invitación, que el servidor nunca ve. Ningún ordenador de la sesión abre puertos.
 
-Para montarlo (cualquier servidor con Docker o Node 20+):
+Montarlo lleva unos minutos y se hace una sola vez: `server/README.md` explica las tres formas
+(Render, sin terminal; Fly.io; o un servidor propio con Docker). Su dirección empieza siempre por
+`wss://` (conexión cifrada); sin cifrar solo se admite `ws://localhost`, para probar en un equipo.
 
-```bash
-cd server
-docker build -t pyx-relay .
-docker run -d --restart=always -p 127.0.0.1:8787:8787 -e TRUST_PROXY=1 pyx-relay
-```
-
-y delante un proxy con certificado TLS, por ejemplo Caddy con `server/Caddyfile.example`
-(Caddy obtiene el certificado solo). La dirección para Pyx será `wss://tu-dominio`.
-
-Sin Docker: `npm install --omit=dev` en `server/` y `node relay.mjs` (variables `PORT`, `HOST`,
-`TLS_CERT`/`TLS_KEY` para servir TLS directamente, `TRUST_PROXY=1` detrás de un proxy).
-
-Para probar en un solo ordenador: `npm run relay` y la dirección `ws://localhost:8787`
-(sin cifrado TLS, solo se admite para `localhost`).
+Si la versión de Pyx que usas ya trae un servidor (`js/collab/default-relay.js`), el campo aparece
+relleno y no hay que tocar nada.
 
 ## Seguridad: qué protege y qué no
 
@@ -112,7 +102,7 @@ Para probar en un solo ordenador: `npm run relay` y la dirección `ws://localhos
 | Alguien sin el código se une | El código lleva una clave de 256 bits; sin ella no se puede ni pedir paso. |
 | Alguien con el código se une | El anfitrión acepta a cada persona; código de verificación de 6 cifras. |
 | El servidor lee o altera los documentos | Cifrado de extremo a extremo (AES-256-GCM, ECDH P-256, claves por persona y de grupo); mensajes repetidos o reordenados se rechazan. |
-| Un invitado «Solo LaTeX» cambia el Python | Su Pyx lo impide al teclear y el del anfitrión **lo comprueba otra vez** contra el texto real: si llega igualmente, lo deshace para todos antes de que nadie lo vea. |
+| Un invitado «Solo LaTeX» cambia el Python | Su Pyx lo impide al teclear y el del anfitrión **lo comprueba otra vez** contra el texto real: si llega igualmente, lo deshace para todos antes de que nadie lo vea. Vale para cualquier archivo del proyecto (`.pltx`, `.tex`, `.sty`, `.txt`…): tampoco puede añadir una celda a un `.tex`. |
 | Un invitado falsifica cambios en nombre de otro | Cada cambio lleva el identificador de su autor; el anfitrión rechaza los firmados con el de otra persona. |
 | Un LaTeX malicioso ejecuta programas o lee tus archivos | Durante la sesión el motor se lanza siempre sin `shell-escape`. Antes de compilar, Pyx comprueba que cada `\input`, `\includegraphics`, `\bibliography`, `\verbatiminput`… apunte dentro de la carpeta compartida (con `../` incluido) y rechaza los nombres de archivo hechos con macros. Si el proyecto no sale de la carpeta del documento raíz, TeX Live además se lanza en modo paranoico (sin rutas absolutas ni `..`). |
 | Se expulsa a alguien | Se desconecta y la clave de grupo cambia: no puede leer nada de lo que sigue. |

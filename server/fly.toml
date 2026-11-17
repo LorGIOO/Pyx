@@ -1,0 +1,30 @@
+# Despliegue del relé de las sesiones compartidas en Fly.io.
+#   cd server && fly launch --copy-config --no-deploy && fly deploy
+# La dirección para Pyx será wss://<app>.fly.dev (ver README.md).
+app = "pyx-relay"
+primary_region = "mad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8787"
+  TRUST_PROXY = "1"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

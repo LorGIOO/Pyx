@@ -34,9 +34,10 @@ import {
 import { baseName, dirOf, joinPath, relativeTo, samePath, normalizePath } from '../core/paths.js';
 import { utf8, fromUtf8 } from './bytes.js';
 import { startPresence, stopPresence } from './presence-tracker.js';
+import { validRelay } from './default-relay.js';
 import { startPointers, stopPointers } from './pointer-layer.js';
 
-export const DEFAULT_RELAY = 'wss://relay.pyx.example';
+export { DEFAULT_RELAY } from './default-relay.js';
 
 let host = null;   // HostSession
 let guest = null;  // GuestSession
@@ -292,7 +293,11 @@ export async function startHosting({ relay, name, perms, folder = null }) {
   if (host || guest) throw new Error('Ya hay una sesión en marcha.');
   const doc = activeDoc();
   if (!doc || doc.kind) throw new Error('Abre el documento que quieres compartir.');
-  if (!/^wss?:\/\//i.test(relay || '')) throw new Error('Escribe la dirección del servidor (wss://…).');
+  if (!relay) throw new Error('Escribe la dirección del servidor de sesiones (wss://…).');
+  // Never over an unencrypted connection to another machine: the content is
+  // end-to-end encrypted either way, but who talks to whom would be in the
+  // clear, and a network in between could cut or delay the session at will.
+  if (!validRelay(relay)) throw new Error('La dirección del servidor tiene que empezar por wss:// (conexión cifrada). Solo se admite ws:// para localhost.');
   collab.role = 'host';
   collab.phase = 'starting';
   collab.error = '';

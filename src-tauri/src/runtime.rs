@@ -137,11 +137,20 @@ pub fn tidy_data() {
         }
     }
     let current = crate::kernel::kernel_file_name();
-    if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
-        for e in entries.flatten() {
-            let n = e.file_name().to_string_lossy().to_string();
-            if n.starts_with("pyx_kernel_") && n.ends_with(".py") && n != current {
-                let _ = std::fs::remove_file(e.path());
+    // Kernel scripts of other versions, and what an interrupted write left:
+    // in the folder used now and in the temporary one older versions used.
+    let mut dirs = vec![crate::kernel::kernel_dir()];
+    if dirs[0] != std::env::temp_dir() {
+        dirs.push(std::env::temp_dir());
+    }
+    for dir in dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let n = e.file_name().to_string_lossy().to_string();
+                let stale = n.ends_with(".py") && n != current;
+                if n.starts_with("pyx_kernel_") && (stale || n.ends_with(".tmp")) {
+                    let _ = std::fs::remove_file(e.path());
+                }
             }
         }
     }

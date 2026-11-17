@@ -301,13 +301,67 @@ pub fn kernel_file_name() -> String {
     kernel_path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
 }
 
+/// The folder the kernel script is dropped in: one that belongs to THIS user.
+///
+/// The system's temporary folder is per user on Windows and macOS. On Linux
+/// `/tmp` is shared by everybody: the file had a predictable name there, so
+/// on a computer with several accounts the second person could not write it
+/// (it belonged to the first) and, worse, anyone could leave a file with that
+/// name for someone else's Pyx to run. There it goes in the user's cache.
+pub fn kernel_dir() -> std::path::PathBuf {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")));
+        if let Some(c) = cache {
+            return c.join("Pyx");
+        }
+    }
+    std::env::temp_dir()
+}
+
 fn kernel_path() -> std::path::PathBuf {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in KERNEL_PY.as_bytes() {
         h ^= *b as u64;
         h = h.wrapping_mul(0x1000_0000_01b3);
     }
-    std::env::temp_dir().join(format!("pyx_kernel_{h:016x}.py"))
+    kernel_dir().join(format!("pyx_kernel_{h:016x}.py"))
+}
+
+/// Put this version's kernel script on disk and return where it is.
+///
+/// It used to be rewritten in place at every start. Two kernels starting at
+/// the same moment (the app's and the viewer's, a restart crossing a
+/// pre-warm) meant one Python reading the file while the other start was
+/// half-way through writing it: "SyntaxError" at a random line, and no
+/// kernel. Now a file that already holds exactly this script is left alone,
+/// and otherwise it is written under another name and RENAMED into place —
+/// nobody can ever read half of it.
+fn ensure_kernel_file() -> Result<std::path::PathBuf, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let path = kernel_path();
+    let intact = |p: &std::path::Path| std::fs::read(p).map(|b| b == KERNEL_PY.as_bytes()).unwrap_or(false);
+    if intact(&path) {
+        return Ok(path);
+    }
+    let fail = |e: std::io::Error| format!("No se pudo escribir el kernel: {e}");
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(fail)?;
+    }
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("py.{}-{n}.tmp", std::process::id()));
+    std::fs::write(&tmp, KERNEL_PY).map_err(fail)?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        // Somebody else put the same script there first: that one is fine.
+        if !intact(&path) {
+            return Err(fail(e));
+        }
+    }
+    Ok(path)
 }
 
 fn spawn() -> Result<KernelProc, String> {
@@ -315,8 +369,7 @@ fn spawn() -> Result<KernelProc, String> {
         "No se encontró Python (elige el intérprete en la pestaña Python).".to_string()
     })?;
 
-    let path = kernel_path();
-    std::fs::write(&path, KERNEL_PY).map_err(|e| format!("No se pudo escribir el kernel: {e}"))?;
+    let path = ensure_kernel_file()?;
 
     let mut cmd = Command::new(&python);
     cmd.arg("-u") // unbuffered: responses arrive immediately
@@ -642,6 +695,34 @@ mod tests {
         assert_eq!(f.id, Some(serde_json::json!(7)));
         let ready: FrameId = serde_json::from_str("{\"type\": \"ready\", \"python\": \"3.13\"}").unwrap();
         assert_eq!(ready.id, None);
+    }
+
+    /// Many starts at once never see a half-written script.
+    #[test]
+    fn the_kernel_script_is_never_read_half_written() {
+        let path = kernel_path();
+        let _ = std::fs::remove_file(&path);
+        let threads: Vec<_> = (0..16)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..40 {
+                        let p = ensure_kernel_file().unwrap();
+                        assert_eq!(std::fs::read(&p).unwrap().len(), KERNEL_PY.len(), "a partial kernel file was visible");
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), KERNEL_PY.as_bytes());
+        // Nothing left behind.
+        let left = std::fs::read_dir(kernel_dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
+        assert_eq!(left, 0);
+        // A damaged file (a disk that filled up, an older bug) is replaced.
+        std::fs::write(&path, b"x = (").unwrap();
+        ensure_kernel_file().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), KERNEL_PY.as_bytes());
     }
 
     /// The real kernel, end to end: the response comes back as the kernel's

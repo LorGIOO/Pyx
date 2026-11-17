@@ -165,7 +165,11 @@ function ShareForm() {
         <input class="collab-input" value={collab.relay} placeholder="wss://relay.tu-dominio.com"
           onInput={(e) => { collab.relay = e.currentTarget.value; }} />
       </label>
-      <p class="collab-hint">El servidor solo reenvía datos cifrados: no puede leer tus documentos. Ver «Manual de usuario/colaboracion.md» para montar el tuyo.</p>
+      <p class="collab-hint">
+        {collab.relay.trim()
+          ? 'El servidor solo reenvía datos cifrados: no puede leer tus documentos.'
+          : 'Hace falta un servidor de sesiones: pide su dirección (wss://…) a quien administre el tuyo, o monta uno en unos minutos (carpeta «server» del proyecto). Solo reenvía datos cifrados: no puede leer tus documentos.'}
+      </p>
       <div class="collab-field"><span>Permiso para quien entre</span>
         <div class="collab-radios">
           <For each={PERM_OPTIONS}>

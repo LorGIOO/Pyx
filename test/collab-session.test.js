@@ -375,6 +375,52 @@ describe('collab · documentos grandes', () => {
   }, 20000);
 });
 
+describe('collab · mucha gente a la vez', () => {
+  // A whole work group in one document: everyone types at once, in the same
+  // lines and in different ones, with different rights. Every copy must end
+  // up identical, and nobody may have changed what they were not allowed to.
+  it('doce personas escribiendo a la vez acaban con el mismo texto', async () => {
+    const h = makeHost();
+    const invite = await h.host.start();
+    const hostDoc = await h.host.doc('main.pltx').then((d) => d.ydoc);
+    const people = [];
+    for (let i = 0; i < 12; i++) {
+      const full = i % 3 !== 0; // every third one may only write LaTeX
+      const g = await join(h, invite, `P${i}`, { python: full, latex: true });
+      people.push({ g, full, doc: await g.g.openDoc('main.pltx') });
+    }
+    for (let round = 0; round < 25; round++) {
+      people.forEach((p, i) => {
+        const t = p.doc.getText('t');
+        // In the prose (allowed for all): right after «El valor», found in
+        // each person's OWN copy as it is at that moment.
+        t.insert(t.toString().indexOf('El valor') + 'El valor'.length, `${i}`);
+        // LaTeX-only people also try to slip Python in: must be undone.
+        const cell = t.toString().indexOf('x = 2');
+        if (!p.full && round % 5 === 0 && cell >= 0) t.insert(cell, `mal${i} = 1\n`);
+      });
+      const ht = hostDoc.getText('t');
+      ht.insert(ht.length, '%h\n');
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await until(() => people.every((p) => text(p.doc) === text(hostDoc)), 20000);
+    const final = text(hostDoc);
+    expect(final).not.toMatch(/mal\d+ = 1/);
+    expect((final.match(/%h\n/g) || []).length).toBe(25);
+    // Everything typed by those with full rights arrived: 25 each. (What a
+    // LaTeX-only person sends in the same 16 ms packet as a forbidden change
+    // is undone with it — their own Pyx refuses such a change at the
+    // keyboard, so only a tampered client ever gets there.)
+    const seg = final.slice(final.indexOf('El valor'), final.indexOf(' es \\py'));
+    for (const d of ['2', '4', '5', '7', '8']) expect(seg.split(d).length - 1, `P${d}`).toBe(25);
+    expect(h.events.denied.every((d) => d.why === 'python' && /^P[0369]$/.test(d.who))).toBe(true);
+    expect(h.events.denied).toHaveLength(20);
+    expect(h.events.members.filter((m) => m.online)).toHaveLength(13);
+    await h.host.end();
+    await until(() => people.every((p) => p.g.ev.ended));
+  }, 60000);
+});
+
 describe('collab · el relé aguanta lo que le echen', () => {
   const open = (u) => new Promise((resolve, reject) => {
     const ws = new WebSocket(u);

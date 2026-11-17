@@ -2,6 +2,7 @@
 // panel, status bar). The fast-changing part — where each person's mouse
 // and caret are — lives in collab/presence-store.js instead.
 import { createMutable } from 'solid-js/store';
+import { DEFAULT_RELAY } from '../../collab/default-relay.js';
 
 const STORE_KEY = 'pyx.collab';
 
@@ -47,7 +48,7 @@ export const collab = createMutable({
   tab: 'share',        // 'share' | 'join'
   // Remembered between sessions (this machine only).
   name: typeof prefs.name === 'string' ? prefs.name : '',
-  relay: typeof prefs.relay === 'string' && prefs.relay ? prefs.relay : sameOriginRelay(),
+  relay: typeof prefs.relay === 'string' && prefs.relay ? prefs.relay : (sameOriginRelay() || DEFAULT_RELAY),
   defaultPerms: prefs.defaultPerms && typeof prefs.defaultPerms === 'object'
     ? { python: !!prefs.defaultPerms.python, latex: prefs.defaultPerms.latex !== false }
     : { python: false, latex: true },

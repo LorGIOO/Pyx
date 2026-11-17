@@ -1,0 +1,14 @@
+# Despliegue del relé de las sesiones compartidas en Render (render.com).
+# En Render: New → Blueprint → elegir este repositorio. No hace falta nada más.
+# La dirección para Pyx será wss://<nombre>.onrender.com (ver server/README.md).
+services:
+  - type: web
+    name: pyx-relay
+    runtime: docker
+    rootDir: server
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"

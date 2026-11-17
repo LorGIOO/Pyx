@@ -125,7 +125,7 @@ describe.skipIf(!python)('archivos vinculados: dependencias, ámbitos y tablas',
     expect(v['"%.2f" % 2.5'].value).toBe('2.50');
   });
 
-  it('prec son decimales en un número, una tabla de pandas o un array', async () => {
+  it.skipIf(!hasPandas)('prec son decimales en un número, una tabla de pandas o un array', async () => {
     await send({ code: 'import pandas as pd\nimport numpy as np\ndf = pd.DataFrame({"a": [41.25, 0.0]})\narr = np.array([12.345])', reset: true });
     const v = await evals(['tex(2.345, prec=1)', 'tex(df, prec=1)', 'tex(arr, prec=1)']);
     expect(v['tex(2.345, prec=1)'].value).toBe('2.3');

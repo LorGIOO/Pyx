@@ -227,36 +227,48 @@
 .sym-btn:hover { background: var(--theme-hover); border-color: var(--theme-cell-border); color: var(--theme-accent); }
 
 /* Archivos — VSCode-style explorer tree */
-.file-tree { outline: none; min-height: 60px; }
-.ft-actions {
-  display: flex; gap: 4px; justify-content: flex-end;
-  padding: 2px 8px 4px;
-  border-bottom: 1px solid var(--theme-border);
-  margin-bottom: 2px;
+/* Explorer — VS Code's tree: 22px rows, 8px indent with guides, codicon
+   chevrons, a section header with the folder name and its actions. */
+.file-tree { outline: none; min-height: 60px; font-size: 13px; user-select: none; }
+.ft-head {
+  display: flex; align-items: center; gap: 2px; height: 22px; padding: 0 4px 0 2px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+  color: var(--theme-text); cursor: pointer;
 }
-.ft-actions button {
-  height: 20px; padding: 0 6px;
-  border: 1px solid transparent; background: transparent;
-  color: var(--theme-text-secondary); font-size: 11px; cursor: default;
+.ft-head-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ft-head-acts { display: flex; gap: 0; opacity: 0; transition: opacity .1s; }
+.file-tree:hover .ft-head-acts, .file-tree:focus-within .ft-head-acts { opacity: 1; }
+.ft-act {
+  width: 22px; height: 22px; padding: 3px; border: 0; border-radius: 5px; background: none;
+  color: var(--theme-text); cursor: pointer; display: inline-flex;
 }
-.ft-actions button:hover { background: var(--theme-hover); border-color: var(--theme-border); color: var(--theme-text); }
+.ft-act:hover { background: var(--theme-hover); }
+.ft-act svg { width: 16px; height: 16px; }
 .ft-row {
-  display: flex; align-items: center; gap: 4px;
-  height: 22px; padding-right: 8px;
-  cursor: default; white-space: nowrap; overflow: hidden;
-  border: 1px solid transparent;
+  position: relative; display: flex; align-items: center; gap: 4px; height: 22px; padding-right: 8px;
+  cursor: pointer; white-space: nowrap; border: 1px solid transparent; color: var(--theme-text);
 }
 .ft-row:hover { background: var(--theme-hover); }
-.ft-row.selected { background: var(--theme-ribbon-btn-active-bg); border-color: var(--theme-accent); }
-.ft-arrow {
-  width: 12px; flex-shrink: 0; text-align: center;
-  font-size: 9px; color: var(--theme-text-secondary);
-  transition: transform 0.1s;
-}
+.ft-row.active { background: var(--theme-ribbon-btn-active-bg); }
+.file-tree:focus .ft-row.selected, .file-tree:focus-within .ft-row.selected { border-color: var(--theme-accent); }
+.ft-row.selected { background: var(--theme-ribbon-btn-active-bg); }
+.ft-row.modified .ft-name { color: var(--theme-accent); }
+.ft-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: transparent; }
+.file-tree:hover .ft-guide { background: var(--theme-border); }
+.ft-arrow { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; color: var(--theme-text); transition: transform .1s; }
+.ft-arrow svg { width: 16px; height: 16px; }
 .ft-arrow.open { transform: rotate(90deg); }
+.ft-arrow.leaf { visibility: hidden; }
 .ft-icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; }
 .ft-icon svg { width: 16px; height: 16px; }
-.ft-name { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.ft-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.ft-badge { font-size: 10px; color: var(--theme-accent); margin-left: auto; }
+.side-empty-actions { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; }
+.side-empty-actions p { margin: 0 0 4px; color: var(--theme-text-secondary); font-size: 12.5px; line-height: 1.45; }
+.side-empty-actions button {
+  height: 28px; border: 0; border-radius: 4px; background: var(--theme-accent); color: #fff; font-size: 13px; cursor: pointer;
+}
+.side-empty-actions button:hover { background: var(--theme-accent-hover); }
 .ft-input {
   flex: 1; min-width: 40px;
   height: 18px; padding: 0 4px;
@@ -942,44 +954,55 @@
   background: transparent; cursor: default;
 }
 .log-copy:hover { color: var(--theme-text) !important; border-color: var(--theme-accent) !important; }
-/* Problems view of the log panel (clickable errors/warnings → jump to line). */
-.log-tabs { display: flex; gap: 2px; }
+/* Problems view — VS Code's panel: UPPERCASE tabs underlined when active,
+   problems grouped by file (foldable, with a count), codicon severities, the
+   message, its source and [Ln N] dimmed, 22px rows. */
+.log-tabs { display: flex; gap: 0; align-self: stretch; }
 .log-tabs button {
-  font-size: 11px; font-weight: 600; padding: 1px 8px;
-  border: 1px solid transparent !important; cursor: default;
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 400; letter-spacing: .04em; text-transform: uppercase;
+  padding: 0 10px; height: 100%;
+  border: 0 !important; border-bottom: 1px solid transparent !important; cursor: pointer;
   color: var(--theme-text-secondary) !important;
 }
-.log-tabs button.active { color: var(--theme-text) !important; border-bottom: 2px solid var(--theme-accent) !important; }
+.log-tabs button.active { color: var(--theme-text) !important; border-bottom-color: var(--theme-accent) !important; }
 .log-tabs button:hover { color: var(--theme-text) !important; }
+.log-panel-header { min-height: 35px; padding-top: 0; padding-bottom: 0; }
 .log-badge {
-  margin-left: 5px; font-size: 10px; padding: 0 5px; border-radius: 8px;
-  background: var(--theme-accent); color: #fff;
+  margin-left: 6px; font-size: 11px; line-height: 18px; min-width: 18px; text-align: center;
+  padding: 0 4px; border-radius: 11px; letter-spacing: 0;
+  background: var(--theme-text-secondary); color: var(--theme-surface);
 }
 .log-status { margin-left: auto; margin-right: 8px; font-weight: 400; color: var(--theme-text-secondary); }
-.log-problems { flex: 1; overflow: auto; }
-.log-empty { padding: 18px; text-align: center; color: var(--theme-text-secondary); font-size: 12px; }
+.log-problems { flex: 1; overflow: auto; padding: 2px 0; font-size: 13px; }
+.log-empty { padding: 8px 20px; color: var(--theme-text-secondary); font-size: 13px; }
+.log-group-head {
+  display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 4px;
+  cursor: pointer; color: var(--theme-text);
+}
+.log-group-head:hover { background: var(--theme-hover); }
+.log-chev { width: 16px; height: 16px; display: inline-flex; transition: transform .1s; }
+.log-chev svg { width: 16px; height: 16px; }
+.log-chev.open { transform: rotate(90deg); }
+.log-group-name { font-weight: 400; }
+.log-group-dir { color: var(--theme-text-secondary); font-size: 12px; margin-left: 4px; }
+.log-group-head .log-badge { margin-left: 8px; }
 .log-item {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 3px 10px; font-size: 12px;
-  border-bottom: 1px solid var(--theme-border);
+  display: flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 10px 0 40px; font-size: 13px;
 }
-.log-item.clickable { cursor: default; }
+.log-item.clickable { cursor: pointer; }
 .log-item.clickable:hover { background: var(--theme-hover); }
-.log-sev { flex: 0 0 auto; width: 14px; text-align: center; font-weight: 700; }
-.log-item.error .log-sev { color: #e0654a; }
-.log-item.warning .log-sev { color: #d9a528; }
-.log-item.badbox .log-sev { color: #7f9bd0; }
-.log-file {
-  flex: 0 0 auto; max-width: 160px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px; color: var(--theme-text-secondary);
-}
-.log-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); }
-.log-line {
-  flex: 0 0 auto; font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px; color: var(--theme-accent);
-}
+.log-sev { flex: 0 0 auto; width: 16px; height: 16px; display: inline-flex; }
+.log-sev svg { width: 16px; height: 16px; }
+.log-item.error .log-sev { color: #e51400; }
+.log-item.warning .log-sev { color: #bf8803; }
+.log-item.badbox .log-sev { color: #1a85ff; }
+[data-theme="dark"] .log-item.error .log-sev, [data-theme="blue"] .log-item.error .log-sev { color: #f14c4c; }
+[data-theme="dark"] .log-item.warning .log-sev, [data-theme="blue"] .log-item.warning .log-sev { color: #cca700; }
+[data-theme="dark"] .log-item.badbox .log-sev, [data-theme="blue"] .log-item.badbox .log-sev { color: #3794ff; }
+.log-msg { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-text); }
+.log-src, .log-line { flex: 0 0 auto; color: var(--theme-text-secondary); font-size: 12px; }
 
 /* In-app terminal (pip install, etc.) — bottom panel in the editor pane. */
 .terminal-panel {

@@ -11,8 +11,10 @@
 //!
 //! So every project gets a working directory OUTSIDE the project, under the
 //! OS cache folder, keyed by the root document's path. The engine writes
-//! everything there; on save it is packed into the `.pltx` and on open it is
-//! restored, so the working state survives without ever being visible.
+//! everything there, and it lasts only as long as Pyx runs: closing Pyx
+//! deletes every working directory (`purge_all`), and the next start deletes
+//! whatever a session that did not end cleanly left (`purge_stale`). Nothing
+//! LaTeX writes stays on the computer for good.
 //!
 //! What stays in the user's folder is exactly what they put there: sources,
 //! images, `.sty` packages — and the `.pltx` itself.
@@ -40,12 +42,6 @@ fn cache_root() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")));
 
     base.unwrap_or_else(std::env::temp_dir).join("Pyx").join("build")
-}
-
-/// The folder that holds every project's working directory.
-pub fn cache_root_dir() -> Option<PathBuf> {
-    let r = cache_root();
-    r.is_dir().then_some(r)
 }
 
 /// Is `dir` one of the working directories (or inside one)?
@@ -161,6 +157,60 @@ pub fn is_busy(dir: &Path) -> bool {
     BUSY.lock().map(|v| v.contains(&k)).unwrap_or(false)
 }
 
+/// Delete every working directory, except one an engine is writing into.
+/// Called when Pyx closes: the aux files, logs and PDFs of a session belong
+/// to that session only.
+pub fn purge_all() {
+    purge_all_in(&cache_root());
+}
+
+fn purge_all_in(root: &Path) {
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() && !is_busy(&p) {
+                let _ = std::fs::remove_dir_all(&p);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(root); // only if it is empty
+}
+
+/// At start: what a previous session left (it was killed, the computer went
+/// off). The folder is RENAMED away first — instant, so a compile that starts
+/// right after cannot have its fresh working directory deleted under it —
+/// and the copy is deleted in the background.
+pub fn purge_stale() {
+    purge_stale_in(&cache_root());
+}
+
+fn purge_stale_in(root: &Path) {
+    if !root.is_dir() {
+        return;
+    }
+    let trash = root.with_file_name(format!("build-old-{}", std::process::id()));
+    if std::fs::rename(root, &trash).is_ok() {
+        let doomed = trash.clone();
+        std::thread::spawn(move || {
+            let _ = std::fs::remove_dir_all(&doomed);
+        });
+    }
+    // Leftovers of an earlier purge that could not finish.
+    if let Some(parent) = root.parent() {
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for e in entries.flatten() {
+                let n = e.file_name().to_string_lossy().to_string();
+                if n.starts_with("build-old-") && e.path() != trash {
+                    let p = e.path();
+                    std::thread::spawn(move || {
+                        let _ = std::fs::remove_dir_all(&p);
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// Create (if needed) and return the project's working directory.
 pub fn ensure_build_dir(doc_path: &str) -> Result<PathBuf, String> {
     let d = build_dir(doc_path);
@@ -192,5 +242,58 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>, depth: u32
         } else if let Ok(rel) = p.strip_prefix(root) {
             out.push((rel.to_string_lossy().replace('\\', "/"), p));
         }
+    }
+}
+
+#[cfg(test)]
+mod purge_tests {
+    use super::*;
+
+    fn tree(base: &Path) -> PathBuf {
+        let root = base.join("build");
+        for p in ["informe-1/informe.aux", "informe-1/informe.log", "memoria-2/build/x.toc"] {
+            let f = root.join(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, "x").unwrap();
+        }
+        root
+    }
+
+    /// Closing Pyx leaves no working directory behind — except one an engine
+    /// is still writing into.
+    #[test]
+    fn closing_deletes_every_working_directory() {
+        let base = std::env::temp_dir().join(format!("pyx-purge-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = tree(&base);
+        let busy = root.join("memoria-2");
+        let guard = mark_busy(&busy);
+        purge_all_in(&root);
+        assert!(!root.join("informe-1").exists());
+        assert!(busy.exists());
+        drop(guard);
+        purge_all_in(&root);
+        assert!(!root.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// At start, what an earlier session left is moved away at once and
+    /// deleted in the background: the folder is free immediately.
+    #[test]
+    fn starting_clears_what_a_crashed_session_left() {
+        let base = std::env::temp_dir().join(format!("pyx-purge-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = tree(&base);
+        purge_stale_in(&root);
+        assert!(!root.exists());
+        for _ in 0..100 {
+            let left = std::fs::read_dir(&base).map(|r| r.count()).unwrap_or(0);
+            if left == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

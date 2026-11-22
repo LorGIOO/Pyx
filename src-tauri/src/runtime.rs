@@ -102,40 +102,10 @@ pub fn migrate_old_data() {
 pub fn migrate_old_data() {}
 
 /// Remove what nothing will use again, once per start (in the background):
-///   - the working directory of every project not compiled for 30 days —
-///     the next compile of that project simply makes it again;
-///   - in the others, the viewers' PDF copies of the last session and the
-///     .xdv intermediates;
-///   - the kernel scripts earlier versions of Pyx left in the temp folder
-///     (each version writes its own, named after its contents).
+/// the kernel scripts earlier versions of Pyx left (each version writes its
+/// own, named after its contents). The LaTeX working directories are emptied
+/// at start and at exit instead (workspace::purge_stale / purge_all).
 pub fn tidy_data() {
-    let month = std::time::Duration::from_secs(30 * 24 * 3600);
-    if let Some(root) = crate::workspace::cache_root_dir() {
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            for e in entries.flatten() {
-                let path = e.path();
-                if !path.is_dir() || crate::workspace::is_busy(&path) {
-                    continue;
-                }
-                let age = newest_mtime(&path).and_then(|t| t.elapsed().ok());
-                if age.is_some_and(|a| a > month) {
-                    let _ = std::fs::remove_dir_all(&path);
-                    continue;
-                }
-                // The viewers' copies of the PDF belong to the session that
-                // made them: at start nothing reads them any more. And the
-                // .xdv intermediates of xelatex are never read back.
-                let _ = std::fs::remove_dir_all(path.join(crate::latex::VIEW_DIR));
-                if let Ok(files) = std::fs::read_dir(&path) {
-                    for f in files.flatten() {
-                        if f.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("xdv")) {
-                            let _ = std::fs::remove_file(f.path());
-                        }
-                    }
-                }
-            }
-        }
-    }
     let current = crate::kernel::kernel_file_name();
     // Kernel scripts of other versions, and what an interrupted write left:
     // in the folder used now and in the temporary one older versions used.
@@ -154,19 +124,6 @@ pub fn tidy_data() {
             }
         }
     }
-}
-
-/// The most recent modification time of anything directly inside `dir`.
-fn newest_mtime(dir: &Path) -> Option<std::time::SystemTime> {
-    let mut best = std::fs::metadata(dir).and_then(|m| m.modified()).ok();
-    for e in std::fs::read_dir(dir).ok()?.flatten() {
-        if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
-            if best.map_or(true, |b| t > b) {
-                best = Some(t);
-            }
-        }
-    }
-    best
 }
 
 const EXE: &str = if cfg!(windows) { ".exe" } else { "" };

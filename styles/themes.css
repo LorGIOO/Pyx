@@ -7,6 +7,11 @@
 /* ---------- Light (default) ---------- */
 :root,
 [data-theme="light"] {
+  /* Suggest widget (VS Code Light+) */
+  --sg-bg: #f8f8f8; --sg-border: #c8c8c8; --sg-text: #1e1e1e; --sg-shadow: rgba(0,0,0,.16);
+  --sg-hover: #e8e8e8; --sg-sel-bg: #0060c0; --sg-sel-text: #ffffff; --sg-sel-outline: #0060c0;
+  --sg-match: #0066bf; --sg-sel-match: #9dddff;
+  --sg-method: #652d90; --sg-var: #007acc; --sg-class: #d67e00; --sg-module: #424242; --sg-fg: #424242;
   --theme-bg: #f3f3f3;
   --theme-surface: #ffffff;
   --theme-border: #d0d0d0;
@@ -161,6 +166,11 @@
 
 /* ---------- Dark ---------- */
 [data-theme="dark"] {
+  /* Suggest widget (VS Code Dark+) */
+  --sg-bg: #252526; --sg-border: #454545; --sg-text: #cccccc; --sg-shadow: rgba(0,0,0,.36);
+  --sg-hover: #2a2d2e; --sg-sel-bg: #04395e; --sg-sel-text: #ffffff; --sg-sel-outline: #007fd4;
+  --sg-match: #2aaaff; --sg-sel-match: #2aaaff;
+  --sg-method: #b180d7; --sg-var: #75beff; --sg-class: #ee9d28; --sg-module: #c5c5c5; --sg-fg: #c5c5c5;
   --theme-bg: #1e1e1e;
   --theme-surface: #252526;
   --theme-border: #3c3c3c;
@@ -322,6 +332,11 @@
 
 /* ---------- Blue ---------- */
 [data-theme="blue"] {
+  /* Suggest widget (VS Code Dark+) */
+  --sg-bg: #252526; --sg-border: #454545; --sg-text: #cccccc; --sg-shadow: rgba(0,0,0,.36);
+  --sg-hover: #2a2d2e; --sg-sel-bg: #04395e; --sg-sel-text: #ffffff; --sg-sel-outline: #007fd4;
+  --sg-match: #2aaaff; --sg-sel-match: #2aaaff;
+  --sg-method: #b180d7; --sg-var: #75beff; --sg-class: #ee9d28; --sg-module: #c5c5c5; --sg-fg: #c5c5c5;
   --theme-bg: #0d1b2a;
   --theme-surface: #1b263b;
   --theme-border: #2c4a6b;

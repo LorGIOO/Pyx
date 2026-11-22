@@ -1434,7 +1434,10 @@ pub fn run() {
             // Data that earlier versions kept in the program folder moves to
             // the data folder, before anything reads it (runtime.rs).
             runtime::migrate_old_data();
-            // Old working directories and old kernel scripts, off the main thread.
+            // What a session that did not end cleanly left in the working
+            // directories (aux files, logs, PDFs): gone before anything compiles.
+            workspace::purge_stale();
+            // Old kernel scripts, off the main thread.
             std::thread::spawn(runtime::tidy_data);
             // The version in the window's own title: the taskbar and Alt+Tab
             // say which Pyx is running, not only the title bar drawn inside.
@@ -1511,6 +1514,8 @@ pub fn run() {
                         if let Some(v) = window.app_handle().get_webview_window("pdf-viewer") {
                             let _ = v.close();
                         }
+                        // The session's LaTeX working files go with it.
+                        workspace::purge_all();
                     }
                     // Tell the main window so it can bring its own pane back.
                     "pdf-viewer" => {

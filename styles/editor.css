@@ -88,49 +88,101 @@
 .editor-host .cm-lx-picturekw { color: var(--lx-picturekw); }
 .editor-host .cm-lx-py { color: var(--lx-py); font-weight: 700; }
 
-/* ---- autocomplete dropdown: theme-aware, VSCode-style ---- */
+/* ---- autocomplete: VS Code's suggest widget ----
+   Same anatomy: a codicon-style symbol per kind in VS Code's symbol colours
+   (methods purple, variables and properties blue, classes orange), 22px rows,
+   the matched letters bold and blue, the detail right-aligned and dimmed, the
+   documentation in a side panel, and VS Code's selection colours. */
 .cm-tooltip {
-  background: var(--theme-surface) !important;
-  border: 1px solid var(--theme-border) !important;
-  color: var(--theme-text);
+  background: var(--sg-bg) !important;
+  border: 1px solid var(--sg-border) !important;
+  color: var(--sg-text);
+  border-radius: 3px;
+  box-shadow: 0 0 8px 2px var(--sg-shadow);
 }
+.cm-tooltip.cm-tooltip-autocomplete { padding: 0; }
 .cm-tooltip.cm-tooltip-autocomplete > ul {
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
-  max-height: 260px;
+  font-family: inherit;
+  font-size: 13px;
+  max-height: 264px; /* 12 rows, like VS Code */
+  min-width: 300px;
+  max-width: 560px;
 }
 .cm-tooltip.cm-tooltip-autocomplete > ul > li {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px 2px 4px;
-  color: var(--theme-text);
+  height: 22px;
+  line-height: 22px;
+  padding: 0 8px 0 6px;
+  color: var(--sg-text);
+  cursor: pointer;
 }
+.cm-tooltip.cm-tooltip-autocomplete > ul > li:hover { background: var(--sg-hover); }
 .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: var(--theme-accent) !important;
-  color: #fff !important;
+  background: var(--sg-sel-bg) !important;
+  color: var(--sg-sel-text) !important;
+  outline: 1px solid var(--sg-sel-outline);
+  outline-offset: -1px;
 }
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionMatchedText {
   text-decoration: none;
   font-weight: 700;
-  color: var(--theme-accent);
+  color: var(--sg-match);
 }
-.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText { color: #fff; }
-/* VSCode-style kind icons (letter badges, colored per kind) */
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText { color: var(--sg-sel-match); }
+.cm-completionLabel { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionDetail {
+  margin-left: auto !important;
+  padding-left: 16px;
+  font-style: normal !important;
+  font-size: 12px;
+  opacity: .72;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
 .cm-completionIcon {
   width: 16px;
-  font-size: 11px;
-  font-weight: 700;
-  opacity: 1;
-  text-align: center;
+  height: 16px;
+  flex: none;
+  padding: 0 !important;
+  margin: 0 !important;
+  opacity: 1 !important;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: 16px; mask-size: 16px;
+  background-color: var(--sg-fg);
 }
-.cm-completionIcon::after { content: '·'; }
-.cm-completionIcon-keyword::after { content: 'K'; color: #c586c0; }
-.cm-completionIcon-function::after { content: 'ƒ'; color: #dcdcaa; }
-.cm-completionIcon-class::after { content: 'E'; color: #4ec9b0; }
-.cm-completionIcon-variable::after { content: 'V'; color: #9cdcfe; }
-.cm-completionIcon-constant::after { content: 'C'; color: #569cd6; }
-.cm-completionIcon-text::after { content: 'T'; color: #8a919c; }
+.cm-completionIcon::after { content: none !important; }
+.cm-completionIcon-function { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M8%201.5%2014%204.8v6.4L8%2014.5%202%2011.2V4.8zM3%205.6v5l4.5%202.5v-5zm5.5%202.5v5L13%2010.6v-5zM3.6%204.9%208%207.3l4.4-2.4L8%202.6z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M8%201.5%2014%204.8v6.4L8%2014.5%202%2011.2V4.8zM3%205.6v5l4.5%202.5v-5zm5.5%202.5v5L13%2010.6v-5zM3.6%204.9%208%207.3l4.4-2.4L8%202.6z%22/%3E%3C/svg%3E"); background-color: var(--sg-method); }
+.cm-completionIcon-method { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M8%201.5%2014%204.8v6.4L8%2014.5%202%2011.2V4.8zM3%205.6v5l4.5%202.5v-5zm5.5%202.5v5L13%2010.6v-5zM3.6%204.9%208%207.3l4.4-2.4L8%202.6z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M8%201.5%2014%204.8v6.4L8%2014.5%202%2011.2V4.8zM3%205.6v5l4.5%202.5v-5zm5.5%202.5v5L13%2010.6v-5zM3.6%204.9%208%207.3l4.4-2.4L8%202.6z%22/%3E%3C/svg%3E"); background-color: var(--sg-method); }
+.cm-completionIcon-variable { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); background-color: var(--sg-var); }
+.cm-completionIcon-instance { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); background-color: var(--sg-var); }
+.cm-completionIcon-statement { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); background-color: var(--sg-var); }
+.cm-completionIcon-param { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h2v1H3v6h1v1H2zm12%200h-2v1h1v6h-1v1h2zM5.5%206.5h5v3h-5zm1%201v1h3v-1z%22/%3E%3C/svg%3E"); background-color: var(--sg-var); }
+.cm-completionIcon-class { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h5v4H2zm1%201v2h3V4zm6%204h5v4H9zm1%201v2h3V9zM4.5%207v3H9v1H3.5V7zM7%204.5h3.5V8h-1V5.5H7z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h5v4H2zm1%201v2h3V4zm6%204h5v4H9zm1%201v2h3V9zM4.5%207v3H9v1H3.5V7zM7%204.5h3.5V8h-1V5.5H7z%22/%3E%3C/svg%3E"); background-color: var(--sg-class); }
+.cm-completionIcon-type { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h5v4H2zm1%201v2h3V4zm6%204h5v4H9zm1%201v2h3V9zM4.5%207v3H9v1H3.5V7zM7%204.5h3.5V8h-1V5.5H7z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h5v4H2zm1%201v2h3V4zm6%204h5v4H9zm1%201v2h3V9zM4.5%207v3H9v1H3.5V7zM7%204.5h3.5V8h-1V5.5H7z%22/%3E%3C/svg%3E"); background-color: var(--sg-class); }
+.cm-completionIcon-enum { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h5v4H2zm1%201v2h3V4zm6%204h5v4H9zm1%201v2h3V9zM4.5%207v3H9v1H3.5V7zM7%204.5h3.5V8h-1V5.5H7z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h5v4H2zm1%201v2h3V4zm6%204h5v4H9zm1%201v2h3V9zM4.5%207v3H9v1H3.5V7zM7%204.5h3.5V8h-1V5.5H7z%22/%3E%3C/svg%3E"); background-color: var(--sg-class); }
+.cm-completionIcon-module { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M5.5%202.5c-1.6%200-2%20.7-2%202.1v1.6c0%20.8-.4%201.3-1.4%201.3v1c1%200%201.4.5%201.4%201.3v1.6c0%201.4.4%202.1%202%202.1v-1c-.8%200-1-.3-1-1.1V9.9c0-.9-.3-1.6-1-1.9.7-.3%201-1%201-1.9V4.6c0-.8.2-1.1%201-1.1zm5%200c1.6%200%202%20.7%202%202.1v1.6c0%20.8.4%201.3%201.4%201.3v1c-1%200-1.4.5-1.4%201.3v1.6c0%201.4-.4%202.1-2%202.1v-1c.8%200%201-.3%201-1.1V9.9c0-.9.3-1.6%201-1.9-.7-.3-1-1-1-1.9V4.6c0-.8-.2-1.1-1-1.1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M5.5%202.5c-1.6%200-2%20.7-2%202.1v1.6c0%20.8-.4%201.3-1.4%201.3v1c1%200%201.4.5%201.4%201.3v1.6c0%201.4.4%202.1%202%202.1v-1c-.8%200-1-.3-1-1.1V9.9c0-.9-.3-1.6-1-1.9.7-.3%201-1%201-1.9V4.6c0-.8.2-1.1%201-1.1zm5%200c1.6%200%202%20.7%202%202.1v1.6c0%20.8.4%201.3%201.4%201.3v1c-1%200-1.4.5-1.4%201.3v1.6c0%201.4-.4%202.1-2%202.1v-1c.8%200%201-.3%201-1.1V9.9c0-.9.3-1.6%201-1.9-.7-.3-1-1-1-1.9V4.6c0-.8-.2-1.1-1-1.1z%22/%3E%3C/svg%3E"); background-color: var(--sg-module); }
+.cm-completionIcon-namespace { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M5.5%202.5c-1.6%200-2%20.7-2%202.1v1.6c0%20.8-.4%201.3-1.4%201.3v1c1%200%201.4.5%201.4%201.3v1.6c0%201.4.4%202.1%202%202.1v-1c-.8%200-1-.3-1-1.1V9.9c0-.9-.3-1.6-1-1.9.7-.3%201-1%201-1.9V4.6c0-.8.2-1.1%201-1.1zm5%200c1.6%200%202%20.7%202%202.1v1.6c0%20.8.4%201.3%201.4%201.3v1c-1%200-1.4.5-1.4%201.3v1.6c0%201.4-.4%202.1-2%202.1v-1c.8%200%201-.3%201-1.1V9.9c0-.9.3-1.6%201-1.9-.7-.3-1-1-1-1.9V4.6c0-.8-.2-1.1-1-1.1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M5.5%202.5c-1.6%200-2%20.7-2%202.1v1.6c0%20.8-.4%201.3-1.4%201.3v1c1%200%201.4.5%201.4%201.3v1.6c0%201.4.4%202.1%202%202.1v-1c-.8%200-1-.3-1-1.1V9.9c0-.9-.3-1.6-1-1.9.7-.3%201-1%201-1.9V4.6c0-.8.2-1.1%201-1.1zm5%200c1.6%200%202%20.7%202%202.1v1.6c0%20.8.4%201.3%201.4%201.3v1c-1%200-1.4.5-1.4%201.3v1.6c0%201.4-.4%202.1-2%202.1v-1c.8%200%201-.3%201-1.1V9.9c0-.9.3-1.6%201-1.9-.7-.3-1-1-1-1.9V4.6c0-.8-.2-1.1-1-1.1z%22/%3E%3C/svg%3E"); background-color: var(--sg-module); }
+.cm-completionIcon-property { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M10.8%201.6a3.6%203.6%200%200%200-3.4%204.7L1.9%2011.8a1.4%201.4%200%200%200%202%202l5.5-5.5a3.6%203.6%200%200%200%204.7-4.4l-2%202-1.7-.4-.4-1.7%202-2a3.6%203.6%200%200%200-1.2-.2z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M10.8%201.6a3.6%203.6%200%200%200-3.4%204.7L1.9%2011.8a1.4%201.4%200%200%200%202%202l5.5-5.5a3.6%203.6%200%200%200%204.7-4.4l-2%202-1.7-.4-.4-1.7%202-2a3.6%203.6%200%200%200-1.2-.2z%22/%3E%3C/svg%3E"); background-color: var(--sg-var); }
+.cm-completionIcon-field { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M10.8%201.6a3.6%203.6%200%200%200-3.4%204.7L1.9%2011.8a1.4%201.4%200%200%200%202%202l5.5-5.5a3.6%203.6%200%200%200%204.7-4.4l-2%202-1.7-.4-.4-1.7%202-2a3.6%203.6%200%200%200-1.2-.2z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M10.8%201.6a3.6%203.6%200%200%200-3.4%204.7L1.9%2011.8a1.4%201.4%200%200%200%202%202l5.5-5.5a3.6%203.6%200%200%200%204.7-4.4l-2%202-1.7-.4-.4-1.7%202-2a3.6%203.6%200%200%200-1.2-.2z%22/%3E%3C/svg%3E"); background-color: var(--sg-var); }
+.cm-completionIcon-keyword { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h5v1H2zm7%200h5v1H9zM2%207.5h3v1H2zm5%200h7v1H7zM2%2011h7v1H2zm9%200h3v1h-3z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%204h5v1H2zm7%200h5v1H9zM2%207.5h3v1H2zm5%200h7v1H7zM2%2011h7v1H2zm9%200h3v1h-3z%22/%3E%3C/svg%3E"); background-color: var(--sg-fg); }
+.cm-completionIcon-constant { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h12v10H2zm1%201v8h10V4zm2%202h6v1H5zm0%203h6v1H5z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%203h12v10H2zm1%201v8h10V4zm2%202h6v1H5zm0%203h6v1H5z%22/%3E%3C/svg%3E"); background-color: var(--sg-fg); }
+.cm-completionIcon-text { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M3.4%2011%205.3%205h1l1.9%206h-1l-.5-1.6H4.9L4.4%2011zm1.8-2.6h1.6l-.8-2.6zM9%205h1v2.3c.3-.4.8-.6%201.3-.6%201.1%200%201.8.9%201.8%202.2S12.4%2011%2011.3%2011c-.5%200-1-.2-1.3-.6v.6H9zm2.1%202.6c-.6%200-1.1.5-1.1%201.3s.5%201.2%201.1%201.2%201-.5%201-1.2-.4-1.3-1-1.3z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M3.4%2011%205.3%205h1l1.9%206h-1l-.5-1.6H4.9L4.4%2011zm1.8-2.6h1.6l-.8-2.6zM9%205h1v2.3c.3-.4.8-.6%201.3-.6%201.1%200%201.8.9%201.8%202.2S12.4%2011%2011.3%2011c-.5%200-1-.2-1.3-.6v.6H9zm2.1%202.6c-.6%200-1.1.5-1.1%201.3s.5%201.2%201.1%201.2%201-.5%201-1.2-.4-1.3-1-1.3z%22/%3E%3C/svg%3E"); background-color: var(--sg-fg); }
+.cm-completionIcon-path { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M1.5%203h5l1.5%201.5h6.5V13h-13z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M1.5%203h5l1.5%201.5h6.5V13h-13z%22/%3E%3C/svg%3E"); background-color: var(--sg-fg); }
+.cm-completionIcon-snippet { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%202h3v1H3v2H2zm9%200h3v3h-1V3h-2zM2%2011h1v2h2v1H2zm11%200h1v3h-3v-1h2zM6%202h4v1H6zm0%2011h4v1H6zM2%206h1v4H2zm11%200h1v4h-1z%22/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%202h3v1H3v2H2zm9%200h3v3h-1V3h-2zM2%2011h1v2h2v1H2zm11%200h1v3h-3v-1h2zM6%202h4v1H6zm0%2011h4v1H6zM2%206h1v4H2zm11%200h1v4h-1z%22/%3E%3C/svg%3E"); background-color: var(--sg-fg); }
+/* The documentation beside the list (VS Code's "read more" panel). */
+.cm-tooltip.cm-completionInfo {
+  padding: 6px 10px !important;
+  max-width: 420px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: var(--sg-bg) !important;
+}
 
 /* ---- minimal VSCode-style search panel (custom createPanel) ---- */
 .editor-host .cm-panels.cm-panels-top {

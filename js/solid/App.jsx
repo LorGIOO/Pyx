@@ -17,6 +17,7 @@ import CollabDialog, { CollabOverlay } from './components/CollabDialog.jsx';
 import { FEATURES } from '../core/features.js';
 import { t } from '../core/i18n.js';
 import { openDocument } from './stores/docStore.js';
+import { projectFolder, openProjectFolder } from './stores/projectStore.js';
 
 export default function App() {
   // Drag the divider to resize editor vs. preview.
@@ -58,7 +59,9 @@ export default function App() {
       <div class="content">
         <Show
           when={state.documents.length > 0}
-          fallback={
+          fallback={<>
+            {/* An open project folder keeps its explorer even with no document open. */}
+            <Show when={projectFolder()}><SidePanel /></Show>
             <div class="placeholder">
               {/* The Pyx mark. Painted in currentColor so it follows the
                   theme, light and dark, instead of the fixed grey it ships
@@ -72,7 +75,7 @@ export default function App() {
                   fill="currentColor" stroke="currentColor" />
               </svg>
               <h2>{t('No hay ningún documento abierto', 'No document open')}</h2>
-              <p>{t('Crea un documento nuevo o abre un archivo .tex para empezar.', 'Create a new document or open a .tex file to start.')}</p>
+              <p>{t('Crea un documento nuevo, abre un archivo .pltx o .tex, o abre la carpeta de tu proyecto.', 'Create a new document, open a .pltx or .tex file, or open your project folder.')}</p>
               <div class="hint-keys">
                 <span><kbd>Ctrl</kbd> + <kbd>N</kbd> {t('nuevo', 'new')}</span>
                 <span><kbd>Ctrl</kbd> + <kbd>O</kbd> {t('abrir', 'open')}</span>
@@ -84,9 +87,12 @@ export default function App() {
                 <button class="ctl-btn" onClick={() => openDocument()}>
                   {t('Abrir', 'Open')}
                 </button>
+                <button class="ctl-btn" onClick={() => openProjectFolder()}>
+                  {t('Abrir carpeta', 'Open folder')}
+                </button>
               </div>
             </div>
-          }
+          </>}
         >
           <Show when={!state.viewerMaximized}>
             <div class="keep-mounted" classList={{ 'is-hidden': state.sidePanelHidden || state.zenMode }}><SidePanel /></div>

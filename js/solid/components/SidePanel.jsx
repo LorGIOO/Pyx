@@ -7,6 +7,7 @@ import { gotoLine, insertSnippet } from '../../editor/commands.js';
 import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
+import { projectFolder, openProjectFolder } from '../stores/projectStore.js';
 import ProjectSearch from './ProjectSearch.jsx';
 import CollabPanel from './CollabPanel.jsx';
 import { FEATURES } from '../../core/features.js';
@@ -32,7 +33,7 @@ const TABS = [
   { id: 'structure', label: 'Estructura', icon: I.structure },
   { id: 'toc', label: 'TOC', icon: I.toc },
   { id: 'symbols', label: 'Símbolos', icon: I.symbols },
-  { id: 'files', label: 'Archivos', icon: I.files },
+  { id: 'files', label: 'Explorador', icon: I.files },
   { id: 'search', label: 'Buscar en el proyecto', icon: I.search },
   { id: 'collab', label: 'Sesión compartida', icon: I.collab },
 ].filter((t) => t.id !== 'collab' || FEATURES.collab);
@@ -55,7 +56,8 @@ export default function SidePanel() {
 
   // toc / todos / includes are recomputed off the typing path by the store (one
   // scheduled pass), so the panel just reads them.
-  const rootDir = createMemo(() => dirOf(activeDoc()?.path));
+  // An open project folder wins; otherwise the active document's folder.
+  const rootDir = createMemo(() => projectFolder() || dirOf(activeDoc()?.path));
   // The section that contains the CURSOR (TeXstudio highlights it in the tree).
   const activeLine = createMemo(() => {
     const path = crumbPath(toc(), state.cursor.line);
@@ -195,7 +197,11 @@ export default function SidePanel() {
 
             {/* Archivos: VSCode-style explorer of the document's folder */}
             <Show when={tab() === 'files'}>
-              <Show when={rootDir()} fallback={<div class="side-empty">Guarda el documento para ver su carpeta.</div>}>
+              <Show when={rootDir()} fallback={
+                <div class="side-empty-actions">
+                  <p>No hay ninguna carpeta abierta. Abre la carpeta de tu proyecto para ver aquí todos sus archivos y carpetas.</p>
+                  <button onClick={() => openProjectFolder()}>Abrir carpeta</button>
+                </div>}>
                 <FileTree root={rootDir()} />
               </Show>
             </Show>

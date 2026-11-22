@@ -143,6 +143,15 @@ function Pane(props) {
   );
 }
 
+// VS Code's codicons for the problems list.
+const CHEVRON = '<svg viewBox="0 0 16 16"><path d="M5.7 13.7 5 13l4.6-5L5 3.1l.7-.7L11 8z" fill="currentColor"/></svg>';
+const SEV_ICON = {
+  error: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="m5.6 5.6 4.8 4.8m0-4.8-4.8 4.8" stroke="currentColor" stroke-width="1.1"/></svg>',
+  warning: '<svg viewBox="0 0 16 16"><path d="M8 1.8 14.8 14H1.2z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M8 6v4.2M8 11.4v1.2" stroke="currentColor" stroke-width="1.2"/></svg>',
+  badbox: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M8 7v4.6M8 4.6v1.2" stroke="currentColor" stroke-width="1.2"/></svg>',
+};
+SEV_ICON.info = SEV_ICON.badbox;
+
 // Short display name for a problem's source file (TeXstudio shows it too).
 const fileBase = (f) => (f ? String(f).split(/[\\/]/).pop() : '');
 
@@ -171,13 +180,29 @@ export default function EditorPane() {
     : state.lastCompileOk === true ? t(' · correcto', ' · succeeded')
     : '';
   const [logView, setLogView] = createSignal('problems'); // 'problems' | 'raw'
+  // Problems grouped by file, VS Code's way (errors first inside each group).
+  const [foldedGroups, setFoldedGroups] = createSignal(new Set());
+  const toggleGroup = (k) => setFoldedGroups((s0) => { const n = new Set(s0); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const problemGroups = createMemo(() => {
+    const rank = { error: 0, warning: 1, badbox: 2 };
+    const groups = new Map();
+    for (const p of problems()) {
+      const key = p.file || '';
+      if (!groups.has(key)) {
+        const parts = String(p.file || '').split(/[\\/]/);
+        groups.set(key, { key, file: p.file, dir: parts.length > 1 ? parts.slice(-2, -1)[0] : '', items: [] });
+      }
+      groups.get(key).items.push(p);
+    }
+    for (const g of groups.values()) g.items.sort((a, b) => (rank[a.severity] ?? 3) - (rank[b.severity] ?? 3));
+    return [...groups.values()];
+  });
   // The problems of the last compile are parsed once, in problemsStore.js,
   // and shared with the compile LED and the status bar.
   // The same problems underlined on their lines in the editor (TeXstudio's
   // log markers): the linter reads them, and a new log re-lints every pane.
   setProblemsSource(problems);
   createEffect(on(problems, () => forEachEditorView((v) => forceLinting(v)), { defer: true }));
-  const sevIcon = (s) => (s === 'error' ? '✕' : s === 'badbox' ? '▭' : '!');
 
   // VSCode-style breadcrumbs: the section path containing the cursor, from the
   // shared TOC (parsed once by the store, not re-parsed here). Walking the TOC
@@ -230,19 +255,33 @@ export default function EditorPane() {
             <div class="log-problems">
               <Show when={problems().length}
                 fallback={<div class="log-empty">{state.lastLog ? t('✓ Sin errores ni avisos detectados.', '✓ No errors or warnings detected.') : t('Compila el documento para ver los problemas.', 'Compile the document to see the problems.')}</div>}>
-                <For each={problems()}>
-                  {(p) => (
-                    // A problem's line is a line of ITS file, so the click
-                    // opens that file first (gotoProblem). It used to jump to
-                    // that line number in whatever document was in front.
-                    <div class={`log-item ${p.severity}`} classList={{ clickable: !!p.line }}
-                      title={p.line ? t(`Ir a la línea ${p.line} · clic derecho para copiar`, `Go to line ${p.line} · right-click to copy`) : t('Clic derecho para copiar', 'Right-click to copy')}
-                      onClick={() => p.line && gotoProblem(p)}
-                      onContextMenu={(e) => { e.preventDefault(); copyText(problemText(p)); }}>
-                      <span class="log-sev">{sevIcon(p.severity)}</span>
-                      <Show when={p.file}><span class="log-file">{fileBase(p.file)}</span></Show>
-                      <span class="log-msg">{p.message}</span>
-                      <Show when={p.line}><span class="log-line">L{p.line}</span></Show>
+                <For each={problemGroups()}>
+                  {(g) => (
+                    <div class="log-group">
+                      {/* VS Code groups the problems by file, foldable, with a count. */}
+                      <div class="log-group-head" onClick={() => toggleGroup(g.key)} title={g.file || ''}>
+                        <span class={`log-chev${foldedGroups().has(g.key) ? '' : ' open'}`} innerHTML={CHEVRON} />
+                        <span class="log-group-name">{g.file ? fileBase(g.file) : t('Documento', 'Document')}</span>
+                        <Show when={g.dir}><span class="log-group-dir">{g.dir}</span></Show>
+                        <span class="log-badge">{g.items.length}</span>
+                      </div>
+                      <Show when={!foldedGroups().has(g.key)}>
+                        <For each={g.items}>
+                          {(p) => (
+                            // A problem's line is a line of ITS file, so the click
+                            // opens that file first (gotoProblem).
+                            <div class={`log-item ${p.severity}`} classList={{ clickable: !!p.line }}
+                              title={p.line ? t(`Ir a la línea ${p.line} · clic derecho para copiar`, `Go to line ${p.line} · right-click to copy`) : t('Clic derecho para copiar', 'Right-click to copy')}
+                              onClick={() => p.line && gotoProblem(p)}
+                              onContextMenu={(e) => { e.preventDefault(); copyText(problemText(p)); }}>
+                              <span class="log-sev" innerHTML={SEV_ICON[p.severity] || SEV_ICON.info} />
+                              <span class="log-msg">{p.message}</span>
+                              <span class="log-src">LaTeX</span>
+                              <Show when={p.line}><span class="log-line">[{t('Ln', 'Ln')} {p.line}]</span></Show>
+                            </div>
+                          )}
+                        </For>
+                      </Show>
                     </div>
                   )}
                 </For>

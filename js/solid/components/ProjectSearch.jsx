@@ -16,8 +16,11 @@ import {
   searchTexts, replaceEdits, replaceInBytes, queryRegExp,
 } from '../../editor/project-search.js';
 import { openPath } from '../stores/docStore.js';
+import { projectFolder } from '../stores/projectStore.js';
 
 async function projectRoot() {
+  // An open project folder is the project.
+  if (projectFolder()) return projectFolder();
   try {
     const m = await import('../../compile/compiler.js');
     const r = await m.activeRootDir();

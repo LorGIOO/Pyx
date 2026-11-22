@@ -1,12 +1,13 @@
-import { createSignal, createEffect, For, Show } from 'solid-js';
-import { state } from '../../core/state.js';
+import { createSignal, createEffect, createMemo, For, Show, onMount, onCleanup } from 'solid-js';
+import { state, activeDoc } from '../../core/state.js';
 import {
   readDir, renamePath, removePath, trashPath, createFile, createDir,
   readBinaryFile, revealInExplorer, openExternal, askDialog, messageDialog, fileStamps,
 } from '../../core/platform.js';
 import { openTarget, looksBinary } from '../../core/file-kind.js';
 import { openPath, openImageTab, pathRenamed, pathRemoved } from '../stores/docStore.js';
-import { dirOf, joinPath } from '../../core/paths.js';
+import { dirOf, joinPath, baseName } from '../../core/paths.js';
+import { openProjectFolder, closeProjectFolder, projectFolder } from '../stores/projectStore.js';
 import { loadPdf } from '../../pdf/preview.js';
 import { showContextMenu } from './ContextMenu.jsx';
 import { icons } from './ribbon/icons.js';
@@ -23,8 +24,25 @@ const FI = {
   img: `<svg viewBox="0 0 16 16"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1" fill="#9068b0"/><circle cx="5.4" cy="6.2" r="1.2" fill="#ffe9a8"/><path d="m3.2 12 3.4-3.6 2.4 2.4 1.8-1.8 2.4 3z" fill="#d9c7ea"/></svg>`,
   cad: `<svg viewBox="0 0 16 16"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5z" fill="none" stroke="#d35400" stroke-width="1.5"/><path d="M8 1.8V8m0 0L2 5m6 3 6-3" fill="none" stroke="#d35400" stroke-width="1.2"/></svg>`,
   code: `<svg viewBox="0 0 16 16"><path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5l3.5 3.5-3.5 3.5" fill="none" stroke="#519aba" stroke-width="1.6"/></svg>`,
+  sheet: `<svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#1d7044"/><path d="M2 6h12M2 10h12M6 2v12" stroke="#e8f5ec" stroke-width="1"/></svg>`,
+  md: `<svg viewBox="0 0 16 16"><rect x="1" y="3.5" width="14" height="9" rx="1.5" fill="none" stroke="#519aba" stroke-width="1.3"/><path d="M3.5 10.5v-5l2 2.4 2-2.4v5M10.5 5.5v4.6m-1.6-1.6 1.6 1.7 1.6-1.7" fill="none" stroke="#519aba" stroke-width="1.2"/></svg>`,
+  json: `<svg viewBox="0 0 16 16"><path d="M5.5 2.5c-1.5 0-2 .6-2 2v1.6c0 .9-.5 1.4-1.5 1.4v1c1 0 1.5.5 1.5 1.4v1.6c0 1.4.5 2 2 2M10.5 2.5c1.5 0 2 .6 2 2v1.6c0 .9.5 1.4 1.5 1.4v1c-1 0-1.5.5-1.5 1.4v1.6c0 1.4-.5 2-2 2" fill="none" stroke="#cbcb41" stroke-width="1.3"/></svg>`,
+  bib: `<svg viewBox="0 0 16 16"><path d="M3 2.5h8.5l1.5 1.5v9.5H3z" fill="none" stroke="#c0843b" stroke-width="1.2"/><path d="M5 5.5h6M5 8h6M5 10.5h4" stroke="#c0843b" stroke-width="1.1"/></svg>`,
   text: `<svg viewBox="0 0 16 16"><path d="M3.5 1.5h6.5l2.5 2.5v10.5h-9z" fill="none" stroke="#8a99a8" stroke-width="1.2"/><path d="M5.5 6.5h5M5.5 9h5M5.5 11.5h3.5" stroke="#8a99a8" stroke-width="1.1"/></svg>`,
 };
+
+/* ---- VS Code's explorer actions (codicons, 16px) ---- */
+const CI = {
+  chevron: '<svg viewBox="0 0 16 16"><path d="M5.7 13.7 5 13l4.6-5L5 3.1l.7-.7L11 8z" fill="currentColor"/></svg>',
+  newFile: '<svg viewBox="0 0 16 16"><path d="M9.5 1.1 13.9 5.5v3h-1V6H9V2H4v12h4v1H3V1h6.5zM10 2.4V5h2.6zM13 10h1v2h2v1h-2v2h-1v-2h-2v-1h2z" fill="currentColor"/></svg>',
+  newFolder: '<svg viewBox="0 0 16 16"><path d="M14.5 3H7.7l-1-1H1.5l-.5.5v11l.5.5H8v-1H2V6h12v2h1V3.5zM2 5V3h4.3l1 1H14v1zm12 5h1v2h2v1h-2v2h-1v-2h-2v-1h2z" fill="currentColor"/></svg>',
+  refresh: '<svg viewBox="0 0 16 16"><path d="M5.6 3.8A5 5 0 1 1 3 8H2a6 6 0 1 0 2.2-4.6V1.5h-1v3.5l.5.5h3.5v-1z" fill="currentColor"/></svg>',
+  collapse: '<svg viewBox="0 0 16 16"><path d="M9 9H4v1h5zM7 12V7H6v5z" fill="currentColor" transform="rotate(45 6.5 9.5)"/><path d="M5 3h8.5l.5.5V12h-1V4H5zM2.5 5h8l.5.5v8l-.5.5h-8l-.5-.5v-8zM3 13h7V6H3z" fill="currentColor"/></svg>',
+};
+
+// What VS Code hides by default (files.exclude), plus Python's caches.
+const HIDDEN = new Set(['.git', '.svn', '.hg', '.DS_Store', 'Thumbs.db', '__pycache__', '.ipynb_checkpoints']);
+const byKind = (a, b) => (a.is_dir !== b.is_dir ? (a.is_dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tif', 'tiff']);
 const CAD_EXT = new Set(['dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', '3dm']);
@@ -42,6 +60,10 @@ function iconFor(item) {
   if (e === 'pdf') return FI.pdf;
   if (IMG_EXT.has(e)) return FI.img;
   if (CAD_EXT.has(e)) return FI.cad;
+  if (e === 'xlsx' || e === 'xlsm' || e === 'xls' || e === 'csv' || e === 'ods') return FI.sheet;
+  if (e === 'md') return FI.md;
+  if (e === 'json') return FI.json;
+  if (e === 'bib') return FI.bib;
   if (CODE_EXT.has(e)) return FI.code;
   return FI.text;
 }
@@ -56,13 +78,43 @@ export default function FileTree(props) {
 
   const load = async (dir) => {
     try {
-      const items = await readDir(dir);
+      const items = (await readDir(dir)).filter((x) => !HIDDEN.has(x.name)).sort(byKind);
       setEntries((m) => { const n = new Map(m); n.set(dir, items); return n; });
     } catch (_) { /* unreadable */ }
   };
   const refresh = (dir) => load(dir);
 
   createEffect(() => { if (props.root) load(props.root); });
+  const [folded, setFolded] = createSignal(false); // the root section itself
+  const collapseAll = () => setExpanded(new Set());
+  const refreshAll = () => { load(props.root); for (const d of expanded()) load(d); };
+
+  // The files on disk change behind Pyx's back (Explorer, Excel, a compile
+  // writing figures): coming back to the window refreshes what is shown.
+  onMount(() => {
+    const onFocus = () => refreshAll();
+    window.addEventListener('focus', onFocus);
+    onCleanup(() => window.removeEventListener('focus', onFocus));
+  });
+
+  // The active document is highlighted, and its folders open to show it.
+  const key = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+  const activePath = createMemo(() => key(activeDoc()?.path));
+  createEffect(() => {
+    const a = activeDoc()?.path;
+    const root = props.root;
+    if (!a || !root || !key(a).startsWith(key(root) + '/')) return;
+    const chain = [];
+    for (let d = dirOf(a); d && key(d).length > key(root).length; d = dirOf(d)) chain.push(d);
+    if (!chain.length) return;
+    setExpanded((s0) => {
+      const n = new Set(s0);
+      for (const d of chain) { if (!n.has(d)) { n.add(d); if (!entries().get(d)) load(d); } }
+      return n;
+    });
+  });
+  // Unsaved changes in an open tab show on the file, as in VS Code.
+  const modified = createMemo(() => new Set(state.documents.filter((d) => d.modified && d.path).map((d) => key(d.path))));
 
   const toggleDir = (path) => {
     setExpanded((s) => {
@@ -222,31 +274,40 @@ export default function FileTree(props) {
     />
   );
 
+  const INDENT = 8; // px per level, VS Code's workbench.tree.indent
+  const Guides = (p) => (
+    <For each={Array.from({ length: p.depth })}>
+      {(_, k) => <span class="ft-guide" style={{ left: 12 + k() * INDENT + 'px' }} />}
+    </For>
+  );
   const Node = (p) => {
     const item = p.item;
     const isOpen = () => expanded().has(item.path);
+    const isActive = () => !item.is_dir && key(item.path) === activePath();
+    const isModified = () => !item.is_dir && modified().has(key(item.path));
     return (
       <>
         <div
-          class={`ft-row${selected() === item.path ? ' selected' : ''}`}
-          style={{ 'padding-left': 6 + p.depth * 14 + 'px' }}
+          class={`ft-row${selected() === item.path ? ' selected' : ''}${isActive() ? ' active' : ''}${isModified() ? ' modified' : ''}`}
+          style={{ 'padding-left': 4 + p.depth * INDENT + 'px' }}
           onClick={() => { setSelected(item.path); if (item.is_dir) toggleDir(item.path); else openFile(item); }}
-          onContextMenu={(e) => nodeMenu(e, item)}
+          onContextMenu={(e) => { e.stopPropagation(); setSelected(item.path); nodeMenu(e, item); }}
           title={item.path}
         >
-          <Show when={item.is_dir} fallback={<span class="ft-arrow"></span>}>
-            <span class={`ft-arrow${isOpen() ? ' open' : ''}`}>▸</span>
-          </Show>
+          <Guides depth={p.depth} />
+          <span class={`ft-arrow${item.is_dir ? '' : ' leaf'}${isOpen() ? ' open' : ''}`} innerHTML={item.is_dir ? CI.chevron : ''} />
           <span class="ft-icon" innerHTML={item.is_dir ? FI.folder(isOpen()) : iconFor(item)}></span>
           <Show when={renaming() === item.path}
             fallback={<span class="ft-name">{item.name}</span>}>
             <InlineInput value={item.name} commit={(v) => commitRename(item, v)} cancel={() => setRenaming(null)} />
           </Show>
+          <Show when={isModified()}><span class="ft-badge" title="Cambios sin guardar">●</span></Show>
         </div>
         <Show when={item.is_dir && isOpen()}>
           <Show when={creating() && creating().dir === item.path}>
-            <div class="ft-row" style={{ 'padding-left': 6 + (p.depth + 1) * 14 + 'px' }}>
-              <span class="ft-arrow"></span>
+            <div class="ft-row" style={{ 'padding-left': 4 + (p.depth + 1) * INDENT + 'px' }}>
+              <Guides depth={p.depth + 1} />
+              <span class="ft-arrow leaf"></span>
               <span class="ft-icon" innerHTML={creating().isDir ? FI.folder(false) : FI.text}></span>
               <InlineInput commit={commitCreate} cancel={() => setCreating(null)} />
             </div>
@@ -259,23 +320,46 @@ export default function FileTree(props) {
     );
   };
 
+  const act = (icon, title, fn) => (
+    <button class="ft-act" title={title} innerHTML={icon} onClick={(e) => { e.stopPropagation(); fn(); }} />
+  );
+  const isProject = () => !!projectFolder() && key(projectFolder()) === key(props.root);
+  const headMenu = (e) => {
+    e.stopPropagation();
+    showContextMenu(e, [
+      { label: 'Nuevo archivo…', icon: icons.newFile, onClick: () => { setFolded(false); setCreating({ dir: props.root, isDir: false }); } },
+      { label: 'Nueva carpeta…', icon: icons.newFolder, onClick: () => { setFolded(false); setCreating({ dir: props.root, isDir: true }); } },
+      { label: 'Mostrar en el Explorador', icon: icons.folder, onClick: () => revealInExplorer(props.root) },
+      { separator: true },
+      { label: 'Abrir otra carpeta…', icon: icons.open, onClick: () => openProjectFolder() },
+      ...(isProject() ? [{ label: 'Cerrar carpeta', icon: icons.clear, onClick: () => closeProjectFolder() }] : []),
+    ]);
+  };
+
   return (
     <div class="file-tree" tabindex="0" onKeyDown={onKey} onContextMenu={bgMenu} ref={rootEl}>
-      <div class="ft-actions">
-        <button title="Nuevo archivo" onClick={() => setCreating({ dir: props.root, isDir: false })}>+📄</button>
-        <button title="Nueva carpeta" onClick={() => setCreating({ dir: props.root, isDir: true })}>+📁</button>
-        <button title="Actualizar" onClick={() => refresh(props.root)}>⟳</button>
+      <div class="ft-head" onClick={() => setFolded(!folded())} onContextMenu={headMenu} title={props.root}>
+        <span class={`ft-arrow${folded() ? '' : ' open'}`} innerHTML={CI.chevron} />
+        <span class="ft-head-name">{baseName(props.root) || props.root}</span>
+        <span class="ft-head-acts">
+          {act(CI.newFile, 'Nuevo archivo…', () => { setFolded(false); setCreating({ dir: props.root, isDir: false }); })}
+          {act(CI.newFolder, 'Nueva carpeta…', () => { setFolded(false); setCreating({ dir: props.root, isDir: true }); })}
+          {act(CI.refresh, 'Actualizar el explorador', refreshAll)}
+          {act(CI.collapse, 'Contraer las carpetas', collapseAll)}
+        </span>
       </div>
-      <Show when={creating() && creating().dir === props.root}>
-        <div class="ft-row" style={{ 'padding-left': '6px' }}>
-          <span class="ft-arrow"></span>
-          <span class="ft-icon" innerHTML={creating().isDir ? FI.folder(false) : FI.text}></span>
-          <InlineInput commit={commitCreate} cancel={() => setCreating(null)} />
-        </div>
+      <Show when={!folded()}>
+        <Show when={creating() && creating().dir === props.root}>
+          <div class="ft-row" style={{ 'padding-left': '4px' }}>
+            <span class="ft-arrow leaf"></span>
+            <span class="ft-icon" innerHTML={creating().isDir ? FI.folder(false) : FI.text}></span>
+            <InlineInput commit={commitCreate} cancel={() => setCreating(null)} />
+          </div>
+        </Show>
+        <For each={entries().get(props.root) || []}>
+          {(item) => <Node item={item} depth={0} />}
+        </For>
       </Show>
-      <For each={entries().get(props.root) || []}>
-        {(item) => <Node item={item} depth={0} />}
-      </For>
     </div>
   );
 }

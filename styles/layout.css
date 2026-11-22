@@ -524,12 +524,12 @@
 /* Canvas + text layer wrapper: GPU-stretched during zoom, crisp after settle. */
 .pdf-page-content { position: relative; will-change: transform; }
 
-/* Contrast / night-mode: soft GRAY folio with light text (not pure black, so
-   it's easy on the eyes). A partial invert maps white paper to a dark gray
-   (~#292929) and black text to a light gray (~#d6d6d6) instead of harsh B/W. */
+/* Contrast / night-mode: dark folio (#1e1e1e) with light text (#e6e6e6). */
 .preview-scroll.pdf-invert { background: #3a3a3a; }
-.preview-scroll.pdf-invert .pdf-page { background: #2b2b2b; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.5); }
-.preview-scroll.pdf-invert .pdf-page canvas { filter: invert(0.84) hue-rotate(180deg); }
+.preview-scroll.pdf-invert .pdf-page { background: #1e1e1e; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.5); }
+/* Only black and white are repainted (js/pdf/dark-filter.js): colours, plots
+   and photos keep their colours. */
+.preview-scroll.pdf-invert .pdf-page canvas { filter: url(#pyx-pdf-dark); }
 
 .pdf-textlayer {
   position: absolute;

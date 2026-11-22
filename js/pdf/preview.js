@@ -43,6 +43,9 @@ import { baseName } from '../core/paths.js';
 import { buildPathToSource, sourceOfBuild } from '../compile/build-maps.js';
 import { loupeGeometry } from './loupe-geometry.js';
 import { destroyPdf } from './pdf-release.js';
+import { ensureDarkFilter } from './dark-filter.js';
+
+ensureDarkFilter();
 import { setAnnotDoc, buildAnnotLayer, markupFromSelection } from './annotate.js';
 import { general } from '../solid/stores/settingsStore.js';
 import {

@@ -13,7 +13,7 @@ import {
   tableAddRow, tableAddColumn, tableDeleteRow, tableDeleteColumn, tableToggleHline,
   tableSetColumnAlign, insertTable,
 } from './latex-table.js';
-import { buildToSrcLine, srcToBuildLine } from '../compile/latex-bridge.js';
+import { buildToSrcLine, srcToBuildLine, findPyExprs, findPyIfExprs } from '../compile/latex-bridge.js';
 import { lineMapFor, sourceToBuildPath } from '../compile/build-maps.js';
 import { envEnter, envTab } from './latex-env.js';
 import { cleanPaste, freshCellIds } from './paste-table.js';
@@ -218,6 +218,40 @@ export function toggleLineComment(view) {
   const toLine = state.doc.lineAt(sel.to).number;
   const cells = parseCells(state);
   const ccFor = (ln) => (cells.some((c) => ln > c.headerLine && ln < c.endLine) ? '#' : '%');
+
+  // A selection INSIDE one line (a word, a phrase) comments only that, not the
+  // whole line. LaTeX has no inline comment — `%` runs to the end of the line —
+  // so what follows the selection moves to the next line: the `%` also eats
+  // that line break, and the page reads exactly as before minus the selection.
+  // Pressing Ctrl+T again on `%palabra` uncomments it.
+  if (!sel.empty && fromLine === toLine && state.selection.ranges.length === 1) {
+    const line = state.doc.line(fromLine);
+    const cc = ccFor(fromLine);
+    const before = state.doc.sliceString(line.from, sel.from);
+    const after = state.doc.sliceString(sel.to, line.to);
+    const picked = state.doc.sliceString(sel.from, sel.to);
+    if (before.trim() || after.trim()) {
+      const m = picked.match(new RegExp('^\\s*' + cc + ' ?'));
+      if (m && cc === '%' && !/\\$/.test(before)) {
+        v.dispatch({ changes: { from: sel.from, to: sel.from + m[0].length, insert: picked.match(/^\s*/)[0] }, userEvent: 'comment' });
+        v.focus();
+        return true;
+      }
+      // In Python a line break mid-statement is not harmless: there, a
+      // selection with code after it still comments the whole line.
+      if (cc === '%' || !after.trim()) {
+        const changes = [{ from: sel.from, insert: cc }];
+        if (after.trim()) changes.push({ from: sel.to, insert: '\n' });
+        v.dispatch({
+          changes,
+          selection: { anchor: sel.from, head: sel.to + 1 },
+          userEvent: 'comment',
+        });
+        v.focus();
+        return true;
+      }
+    }
+  }
 
   const rows = [];
   let anyContent = false, allCommented = true;
@@ -517,10 +551,38 @@ export function wrapInEnvironment(env) {
   v.focus();
 }
 
+/**
+ * The range a formatting command (bold, italic, colour, size…) applies to.
+ *
+ * A \py{…} is a value of the text like any word, so formatting it must wrap
+ * the WHOLE command: with the caret inside `\py{x}` (or a selection that cuts
+ * through one), Bold used to insert `\textbf{}` into the Python expression
+ * and break it. The same for the condition of a \pyif; its two texts are
+ * ordinary LaTeX and are formatted as such.
+ */
+export function formatRange(state, sel = state.selection.main) {
+  let { from, to } = sel;
+  const first = state.doc.lineAt(from), last = state.doc.lineAt(to);
+  const base = first.from;
+  const text = state.doc.sliceString(base, last.to);
+  const spans = findPyExprs(text).map((e) => [e.start, e.end]);
+  for (const e of findPyIfExprs(text)) spans.push([e.start, e.thenAt != null ? e.thenAt - 1 : e.end, e.end]);
+  for (const [s0, inner, e0] of spans.map((x) => (x.length === 2 ? [x[0], x[1], x[1]] : x))) {
+    const s = base + s0, cut = base + inner, e = base + e0;
+    // caret or an end of the selection inside the command (\pyif: inside its condition)
+    const inside = (p) => p > s && p < cut;
+    if (inside(from) || inside(to) || (from === to && from === s)) {
+      from = Math.min(from, s);
+      to = Math.max(to, e);
+    }
+  }
+  return { from, to };
+}
+
 export function wrap(before, after = '') {
   const v = getView();
   if (!v) return;
-  const sel = v.state.selection.main;
+  const sel = formatRange(v.state);
   const selected = v.state.sliceDoc(sel.from, sel.to);
   v.dispatch({
     changes: { from: sel.from, to: sel.to, insert: before + selected + after },

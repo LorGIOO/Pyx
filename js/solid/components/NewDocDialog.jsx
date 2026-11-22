@@ -12,30 +12,11 @@ const [open, setOpen] = createSignal(false);
 export const openNewDoc = () => { closeDialogs(); setOpen(true); };
 registerDialog(open, () => setOpen(false));
 
-const pltxTemplate = () =>
-  '\\documentclass{article}\n' +
-  '\\begin{document}\n\n' +
-  '%#python\n' +
-  'import math\n' +
-  'r = 2.0\n' +
-  'area = math.pi * r**2\n' +
-  '%#end\n\n' +
-  t(
-    'El área del círculo de radio \\py{r} es \\py{round(area, 2)}.\n',
-    'The area of the circle of radius \\py{r} is \\py{round(area, 2)}.\n',
-  ) +
-  '\n\\end{document}\n';
-
-const texTemplate = () =>
-  '\\documentclass{article}\n' +
-  '\\begin{document}\n\n' +
-  t('Escribe aquí tu documento.\n', 'Write your document here.\n') +
-  '\n\\end{document}\n';
-
+// A new document starts EMPTY: no example text to delete first.
 function create(kind) {
   setOpen(false);
-  if (kind === 'pltx') newDocument(pltxTemplate(), t('sin-título.pltx', 'untitled.pltx'));
-  else newDocument(texTemplate(), t('sin-título.tex', 'untitled.tex'));
+  if (kind === 'pltx') newDocument('', t('sin-título.pltx', 'untitled.pltx'));
+  else newDocument('', t('sin-título.tex', 'untitled.tex'));
 }
 
 function useDrag() {

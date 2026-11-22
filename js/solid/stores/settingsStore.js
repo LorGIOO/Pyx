@@ -314,7 +314,14 @@ export function applyGeneral() {
       + `var(--theme-border) calc(${x} - 1px) ${x},transparent ${x});`
       + 'background-repeat:no-repeat}\n';
   }
-  generalStyleEl().textContent = css;
+  const el = generalStyleEl();
+  const changed = el.textContent !== css;
+  el.textContent = css;
+  // The editor's font size, family and line height live in this stylesheet,
+  // which CodeMirror cannot see change: until something made it measure again
+  // (a scroll), the line numbers stayed at the old line positions — hundreds of
+  // pixels off after a Ctrl+wheel zoom, cut and overlapping. Tell the editors.
+  if (changed && typeof window !== 'undefined') window.dispatchEvent(new Event('pyx:editor-metrics'));
   // Python palette: themes.css defines the alternative set under
   // html[data-py-palette="2026"]; the classic one is the plain default.
   try {

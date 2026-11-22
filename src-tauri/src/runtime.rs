@@ -379,6 +379,12 @@ pub fn setup_python(app: Say, packages: &[String]) -> Result<String, String> {
     }
     let py = env_python().ok_or("No se creó el entorno de Python.")?;
     let mut pkgs: Vec<String> = DEFAULT_PACKAGES.iter().map(|s| s.to_string()).collect();
+    // pyx.datos() reads a workbook OPEN in Excel live (unsaved changes
+    // included) through Excel's COM interface; without pywin32 it reads the
+    // saved file.
+    if cfg!(windows) {
+        pkgs.push("pywin32".to_string());
+    }
     for p in packages {
         if !pkgs.contains(p) {
             pkgs.push(p.clone());

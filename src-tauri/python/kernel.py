@@ -1079,13 +1079,380 @@ def _need(module_name, who):
         )
 
 
+# ---------------------------------------------------------------------------
+# pyx.datos(): cells of an Excel workbook or a CSV, called from the document.
+#
+#     \py{datos("datos.xlsx", "E4")}            one cell
+#     \py{datos("datos.xlsx", "E4:E8")}         a column (a row, a table)
+#     \py{datos("datos.xlsx", "E4:E8").T}       the column as a row
+#     libro = datos("datos.xlsx")               the whole workbook:
+#     \py{libro["Cargas!B2:D5"]}                any sheet, any range
+#
+# The range is a list (sum(), max(), a loop work as usual) that PRINTS as the
+# body of a LaTeX table: a row as `a & b & c`, a column as one row per value,
+# a table as rows. Nothing has to be typed by hand and it is always current:
+#   - every compile evaluates \py{} again and the file is re-read when its
+#     date or size changed (a cell that reads it re-runs, like any file read);
+#   - on Windows, a workbook OPEN in Excel is read from Excel itself, unsaved
+#     changes included (needs pywin32, which Pyx's own Python brings); closed,
+#     the saved file is read — the values Excel saved, formulas included.
+# ---------------------------------------------------------------------------
+_DATOS_CACHE = {}  # abspath -> ((mtime_ns, size), {sheet: {(row, col): value}}, [sheet names])
+
+
+def _col_num(letters):
+    n = 0
+    for ch in letters.upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+
+def _col_name(n):
+    s = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _parse_ref(ref):
+    """'Hoja 2!B2:D5' -> ('Hoja 2', (2, 2), (5, 4)); 'E4' -> (None, (4, 5), (4, 5)).
+    Whole columns and rows work too: 'B:B', '3:3'."""
+    import re as _re
+    sheet = None
+    ref = str(ref).strip()
+    if "!" in ref:
+        sheet, ref = ref.rsplit("!", 1)
+        sheet = sheet.strip().strip("'")
+    ref = ref.replace("$", "").upper()
+    m = _re.fullmatch(r"([A-Z]+)?(\d+)?(?::([A-Z]+)?(\d+)?)?", ref)
+    if not m or not ref:
+        raise ValueError("Referencia no válida: %r (se escribe como en Excel: E4, E4:F8, Hoja2!B2:D5)" % ref)
+    c1, r1, c2, r2 = m.groups()
+    if ":" not in ref:
+        if not (c1 and r1):
+            raise ValueError("Una celda lleva columna y fila: %r (por ejemplo E4)" % ref)
+        a = (int(r1), _col_num(c1))
+        return sheet, a, a
+    return sheet, (int(r1) if r1 else None, _col_num(c1) if c1 else None), \
+        (int(r2) if r2 else None, _col_num(c2) if c2 else None)
+
+
+def _num(text, decimal_comma):
+    t = text.strip()
+    if not t:
+        return None
+    s = t.replace(" ", "").replace(" ", "")
+    if decimal_comma:
+        s = s.replace(".", "").replace(",", ".") if "," in s else s
+    try:
+        return int(s) if s.lstrip("+-").isdigit() else float(s)
+    except ValueError:
+        return t
+
+
+def _read_csv_cells(path):
+    import csv as _csv
+    raw = None
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            with open(path, encoding=enc, newline="") as f:
+                raw = f.read()
+            break
+        except UnicodeDecodeError:
+            continue
+    sample = raw[:20000]
+    try:
+        dialect = _csv.Sniffer().sniff(sample, delimiters=";,\t|")
+        delim = dialect.delimiter
+    except _csv.Error:
+        delim = ";" if sample.count(";") > sample.count(",") else ","
+    # The Spanish Excel writes `;` between fields and `,` as the decimal mark.
+    comma = delim != ","
+    cells = {}
+    for r, row in enumerate(_csv.reader(raw.splitlines(), delimiter=delim), 1):
+        for c, v in enumerate(row, 1):
+            val = _num(v, comma)
+            if val is not None:
+                cells[(r, c)] = val
+    return {"": cells}, [""]
+
+
+def _read_xlsx_cells(path):
+    try:
+        import openpyxl
+    except ImportError:
+        raise ImportError("Para leer .xlsx hace falta openpyxl (pip install openpyxl; el Python de Pyx ya lo trae).")
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    sheets, names = {}, []
+    for ws in wb.worksheets:
+        cells = {}
+        for row in ws.iter_rows():
+            for cell in row:
+                v = getattr(cell, "value", None)
+                if v is not None:
+                    cells[(cell.row, cell.column)] = v
+        sheets[ws.title] = cells
+        names.append(ws.title)
+    wb.close()
+    return sheets, names
+
+
+def _read_xls_cells(path):
+    try:
+        import xlrd
+    except ImportError:
+        raise ImportError("Para leer .xls (formato antiguo) hace falta xlrd: pip install xlrd. O guárdalo como .xlsx.")
+    book = xlrd.open_workbook(path)
+    sheets, names = {}, []
+    for sh in book.sheets():
+        cells = {}
+        for r in range(sh.nrows):
+            for c in range(sh.ncols):
+                v = sh.cell_value(r, c)
+                if v != "":
+                    cells[(r + 1, c + 1)] = int(v) if isinstance(v, float) and v.is_integer() else v
+        sheets[sh.name] = cells
+        names.append(sh.name)
+    return sheets, names
+
+
+def _excel_live(path):
+    """The workbook open in Excel right now (Windows), or None."""
+    if os.name != "nt":
+        return None
+    try:
+        import win32com.client  # pywin32
+    except Exception:
+        return None
+    try:
+        app = win32com.client.GetActiveObject("Excel.Application")
+    except Exception:
+        return None  # Excel is not running: never start it
+    want = os.path.normcase(os.path.abspath(path))
+    try:
+        for wb in app.Workbooks:
+            if os.path.normcase(str(wb.FullName)) == want:
+                return wb
+    except Exception:
+        return None
+    return None
+
+
+class Texto(str):
+    """A text cell of a sheet: a normal str that \\py{} escapes for LaTeX
+    (the sheet holds plain text, not LaTeX)."""
+    __slots__ = ()
+
+
+def _cellv(v):
+    return Texto(v) if isinstance(v, str) and not isinstance(v, Texto) else v
+
+
+class Rango(list):
+    """Cells of a sheet. A list of values (a row or a column) or of rows (a
+    table). Prints as the body of a LaTeX table; `.T` turns a column into a
+    row and back (a table is transposed)."""
+
+    def __init__(self, values, orient):
+        super().__init__(values)
+        self.orient = orient  # "fila", "columna" or "tabla"
+
+    @property
+    def T(self):
+        if self.orient == "fila":
+            return Rango(list(self), "columna")
+        if self.orient == "columna":
+            return Rango(list(self), "fila")
+        return Rango([list(r) for r in zip(*self)], "tabla")
+
+    transponer = T
+
+    @property
+    def fila(self):
+        return self if self.orient != "columna" else self.T
+
+    @property
+    def columna(self):
+        return self if self.orient != "fila" else self.T
+
+    def redondear(self, n=2):
+        r = lambda v: round(v, n) if isinstance(v, float) else v
+        if self.orient == "tabla":
+            return Rango([[r(v) for v in row] for row in self], "tabla")
+        return Rango([r(v) for v in self], self.orient)
+
+    def lista(self):
+        return [list(r) for r in self] if self.orient == "tabla" else list(self)
+
+    @property
+    def df(self):
+        import pandas as pd
+        if self.orient == "tabla":
+            return pd.DataFrame(self.lista())
+        return pd.Series(list(self))
+
+    def _txt(self, v):
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return _texesc_text(v)
+        if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
+            return str(int(v))
+        try:
+            return _fmt(v)
+        except Exception:
+            return str(v)
+
+    def __str__(self):
+        t = self._txt
+        if self.orient == "fila":
+            return " & ".join(t(v) for v in self)
+        if self.orient == "columna":
+            return " \\\\\n".join(t(v) for v in self) + " \\\\"
+        return "\n".join(" & ".join(t(v) for v in row) + " \\\\" for row in self)
+
+    def __repr__(self):
+        return "Rango(%s, %s)" % (self.orient, list.__repr__(self))
+
+
+class Libro:
+    """A workbook (or CSV) opened with datos(ruta). libro["E4"],
+    libro["E4:F8"], libro["Hoja2!B2:D5"]; libro.hojas lists the sheets."""
+
+    def __init__(self, ruta, hoja=None):
+        self.ruta = ruta
+        self.hoja = hoja
+
+    @property
+    def hojas(self):
+        return _datos_load(self.ruta)[1]
+
+    def __getitem__(self, ref):
+        return _datos_get(self.ruta, ref, self.hoja)
+
+    def __call__(self, ref, hoja=None):
+        return _datos_get(self.ruta, ref, hoja or self.hoja)
+
+    def __repr__(self):
+        return "<Libro %s>" % os.path.basename(self.ruta)
+
+
+def _datos_path(ruta):
+    p = os.fspath(ruta)
+    if not os.path.isabs(p):
+        p = os.path.join(os.getcwd(), p)
+        if not os.path.exists(p):
+            try:
+                found = _home_path(ruta, "r")
+                if found:
+                    p = found
+            except Exception:
+                pass
+    if not os.path.exists(p):
+        raise FileNotFoundError("No existe %s (las rutas son relativas a la carpeta del documento principal)." % ruta)
+    return os.path.abspath(p)
+
+
+def _datos_load(ruta):
+    p = _datos_path(ruta)
+    try:
+        _note_read(p)  # a cell that reads it re-runs when the file changes
+    except Exception:
+        pass
+    st = os.stat(p)
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _DATOS_CACHE.get(p)
+    if hit and hit[0] == stamp:
+        return hit[1], hit[2]
+    ext = os.path.splitext(p)[1].lower()
+    if ext in (".csv", ".txt", ".tsv"):
+        sheets, names = _read_csv_cells(p)
+    elif ext == ".xls":
+        sheets, names = _read_xls_cells(p)
+    else:
+        sheets, names = _read_xlsx_cells(p)
+    _DATOS_CACHE[p] = (stamp, sheets, names)
+    return sheets, names
+
+
+def _datos_get(ruta, ref, hoja=None):
+    sheet, (r1, c1), (r2, c2) = _parse_ref(ref)
+    sheet = sheet or hoja
+    p = _datos_path(ruta)
+    live = _excel_live(p) if os.path.splitext(p)[1].lower() in (".xlsx", ".xlsm", ".xls") else None
+    if live is not None:
+        try:
+            ws = live.Worksheets(sheet) if sheet else live.Worksheets(1)
+            used = ws.UsedRange
+            last_r = used.Row + used.Rows.Count - 1
+            last_c = used.Column + used.Columns.Count - 1
+            rr1, cc1 = r1 or 1, c1 or 1
+            rr2, cc2 = r2 or last_r, c2 or last_c
+            val = ws.Range(ws.Cells(rr1, cc1), ws.Cells(rr2, cc2)).Value
+            if not isinstance(val, tuple):
+                val = ((val,),)
+            grid = {(rr1 + i, cc1 + j): v for i, row in enumerate(val) for j, v in enumerate(row) if v is not None}
+            grid = {k: (int(v) if isinstance(v, float) and v.is_integer() else v) for k, v in grid.items()}
+            return _shape(grid, rr1, cc1, rr2, cc2)
+        except Exception:
+            pass  # fall back to the saved file
+    sheets, names = _datos_load(ruta)
+    if sheet:
+        if sheet not in sheets:
+            raise KeyError("No hay ninguna hoja %r en %s. Hojas: %s" % (sheet, os.path.basename(p), ", ".join(names)))
+        cells = sheets[sheet]
+    else:
+        cells = sheets[names[0]] if names else {}
+    if r1 is None or c1 is None or r2 is None or c2 is None:
+        rows = [k[0] for k in cells] or [1]
+        cols = [k[1] for k in cells] or [1]
+        r1, r2 = r1 or 1, r2 or max(rows)
+        c1, c2 = c1 or 1, c2 or max(cols)
+    return _shape(cells, r1, c1, r2, c2)
+
+
+def _shape(cells, r1, c1, r2, c2):
+    r1, r2 = min(r1, r2), max(r1, r2)
+    c1, c2 = min(c1, c2), max(c1, c2)
+    if r1 == r2 and c1 == c2:
+        return _cellv(cells.get((r1, c1)))
+    if r1 == r2:
+        return Rango([cells.get((r1, c)) for c in range(c1, c2 + 1)], "fila")
+    if c1 == c2:
+        return Rango([cells.get((r, c1)) for r in range(r1, r2 + 1)], "columna")
+    return Rango([[cells.get((r, c)) for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)], "tabla")
+
+
+def datos(ruta, rango=None, hoja=None):
+    """Values of an Excel workbook (.xlsx, .xlsm, .xls) or a CSV, by their
+    Excel address.
+
+        datos("datos.xlsx", "E4")          -> the value of E4
+        datos("datos.xlsx", "E4:E8")       -> a column (Rango); .T makes it a row
+        datos("datos.xlsx", "B2:D5")       -> a table (rows)
+        datos("datos.xlsx", "Hoja2!E4")    -> another sheet (or hoja="Hoja2")
+        libro = datos("datos.xlsx")        -> libro["E4"], libro["Hoja2!B2:D5"]
+
+    A range prints as the body of a LaTeX table and works as a list. The file
+    is read again whenever it changes; on Windows a workbook open in Excel is
+    read from Excel, unsaved changes included. A CSV is addressed the way Excel
+    shows it (row 1 = the first line)."""
+    if rango is None:
+        return Libro(ruta, hoja)
+    return _datos_get(ruta, rango, hoja)
+
+
 def _build_pyx_module():
     """The `pyx` module: figure/table helpers for the LaTeX bridge, plus the
     display wrappers Jupyter keeps in `IPython.display`."""
     mod = types.ModuleType("pyx")
     mod.__doc__ = (
         "Ayudantes de Pyx para el puente LaTeX <-> Python.\n\n"
-        "    from pyx import figure, figtex, tabletex, tex, texesc\n"
+        "    from pyx import figure, figtex, tabletex, tex, texesc, datos\n"
         "    from pyx import display, HTML, Markdown, Image, Audio, Video\n"
     )
 
@@ -1274,13 +1641,16 @@ def _build_pyx_module():
     mod.tabletex = tabletex
     mod.tex = tex
     mod.texesc = texesc
+    mod.datos = datos
+    mod.Rango = Rango
+    mod.Libro = Libro
     mod.display = _display
     mod.HTML = HTML
     mod.Markdown = Markdown
     mod.Image = Image
     mod.Audio = Audio
     mod.Video = Video
-    mod.__all__ = ["figure", "figtex", "tabletex", "tex", "texesc", "display",
+    mod.__all__ = ["figure", "figtex", "tabletex", "tex", "texesc", "datos", "display",
                    "HTML", "Markdown", "Image", "Audio", "Video"]
     return mod
 
@@ -2535,6 +2905,10 @@ def _fmt(value):
     _pd = sys.modules.get("pandas")
     if _pd is not None and isinstance(value, (_pd.DataFrame, _pd.Series)):
         return _df_tabular(value)
+    # pyx.datos(): a range prints as the body of a LaTeX table, and a text
+    # cell is the sheet's plain text ("I+D & Co"), escaped — not LaTeX.
+    if isinstance(value, (Rango, Texto)):
+        return str(value) if isinstance(value, Rango) else _texesc_text(str(value))
     if isinstance(value, str):
         # A str is the user's own LaTeX and goes in as is — except an
         # unescaped `%` on a one-line value: TeX would take it for a comment
@@ -3308,7 +3682,7 @@ def _scoped(expr, scopes):
     return code, g
 
 
-_PYX_HELPER_NAMES = ("tex", "texesc", "tabletex", "figtex", "figure")
+_PYX_HELPER_NAMES = ("tex", "texesc", "tabletex", "figtex", "figure", "datos")
 
 
 def _pyx_helpers_for(code):

@@ -460,7 +460,7 @@ export default function PreviewPane() {
         <Btn icon={ic.draw} title="Anotar / dibujar sobre el PDF" active={annotBarOpen()}
           disabled={!hasPdf()}
           onClick={() => { const o = !annotBarOpen(); setAnnotBarOpen(o); setAnnotTool(o ? 'pen' : ''); }} />
-        <Btn icon={ic.contrast} title="Contraste — folio gris (modo noche)" active={invert()} onClick={() => setInvert(!invert())} />
+        <Btn icon={ic.contrast} title="Modo noche — folio oscuro; los colores y las imágenes se conservan" active={invert()} onClick={() => setInvert(!invert())} />
         <Btn icon={ic.max} title="Ampliar visor (ocultar el editor)" active={state.viewerMaximized}
           onClick={() => (state.viewerMaximized = !state.viewerMaximized)} />
         <Btn icon={ic.detach} title="Sacar el visor de Pyx a una ventana auxiliar" disabled={!hasPdf()} onClick={detachViewer} />

@@ -41,7 +41,7 @@ import { collabHooks } from '../collab/hooks.js';
 import { remoteCarets } from '../collab/carets.js';
 import { cellsExtension, selectCellOrAll, refreshCells } from './cells.js';
 import {
-  toggleLineComment, smartEnter, smartTab, moveCellOrLineUp, moveCellOrLineDown,
+  toggleLineComment, formatRange, smartEnter, smartTab, moveCellOrLineUp, moveCellOrLineDown,
 } from './commands.js';
 import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from './bookmarks.js';
 import { calcCompletions, pyBraceTrigger } from './autocomplete.js';
@@ -73,10 +73,11 @@ function latexWrap(view, before, after) {
   const sel = view.state.selection.main;
   const ln = view.state.doc.lineAt(sel.head).number;
   if (cellAtLine(parseCellsFor(view.state), ln)) return false;
-  const text = view.state.sliceDoc(sel.from, sel.to);
+  const rng = formatRange(view.state);
+  const text = view.state.sliceDoc(rng.from, rng.to);
   view.dispatch({
-    changes: { from: sel.from, to: sel.to, insert: before + text + after },
-    selection: { anchor: sel.from + before.length, head: sel.from + before.length + text.length },
+    changes: { from: rng.from, to: rng.to, insert: before + text + after },
+    selection: { anchor: rng.from + before.length, head: rng.from + before.length + text.length },
   });
   return true;
 }
@@ -225,6 +226,13 @@ export function setChangeHandler(fn) {
 
 /* ---------- panes ---------- */
 const paneViews = new Map(); // paneId -> EditorView
+// Font size / family / line height changed (Configuración or Ctrl+wheel):
+// measure every editor again now, so the gutters follow at once.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pyx:editor-metrics', () => {
+    for (const vw of paneViews.values()) { try { vw.requestMeasure(); } catch (_) {} }
+  });
+}
 const paneDocs = new Map();  // paneId -> docId whose state the view holds
 const docStates = new Map(); // docId -> EditorState (canonical when unmounted)
 

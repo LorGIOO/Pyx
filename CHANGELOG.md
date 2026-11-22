@@ -65,6 +65,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
 ### Corregido
 
+- El instalador de Windows ya no lleva archivos comprimidos dentro (los
+  proyectos de ejemplo van como carpetas) y Pyx ya no prueba a escribir junto
+  a su ejecutable: son las dos cosas nuevas de la 2.2.0 que las heurísticas
+  de algunos antivirus (Kaspersky) toman por un troyano, con el aviso «Windows
+  no tiene acceso al dispositivo, ruta de acceso o archivo especificado».
+  Cada publicación pasa ahora por Microsoft Defender y, si está configurado,
+  por VirusTotal y la firma de SignPath antes de salir.
 - Al hacer zoom en el editor (Ctrl+rueda) o cambiar la letra, los números de
   línea se quedaban desalineados y cortados hasta desplazarse.
 

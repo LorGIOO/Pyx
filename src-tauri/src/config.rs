@@ -12,9 +12,9 @@
 //!   macros.json                 the user's macros
 //!   symbols.json                the user's own symbols for the symbol panel
 //!
-//! Where: a `config` folder NEXT TO THE EXECUTABLE when that folder can be
-//! written — the per-user Windows install (%LOCALAPPDATA%\Pyx) can — so the
-//! settings sit in the app's own folder. Otherwise (an install under Program
+//! Where: the `config` folder NEXT TO THE EXECUTABLE that the Windows
+//! installer creates (per-user install, %LOCALAPPDATA%\Pyx), so the settings
+//! sit in the app's own folder. Otherwise (an install under Program
 //! Files, /usr/bin on Linux) the user's settings folder:
 //!
 //!   Windows  %APPDATA%\Pyx
@@ -41,7 +41,13 @@ pub fn user_dir() -> PathBuf {
     base.unwrap_or_else(std::env::temp_dir).join("Pyx")
 }
 
-/// `<folder of the executable>/config`, when it can be written.
+/// `<folder of the executable>/config`, when the installer made it.
+///
+/// The Windows installer (per-user, in %LOCALAPPDATA%\Pyx, which the user
+/// can write) creates that folder (nsis-hooks.nsh). Pyx never probes the
+/// program folder by writing into it: writing next to one's own executable is
+/// what antivirus heuristics watch for. An install without the folder (the
+/// MSI under Program Files, Linux packages in /usr) uses the user folder.
 fn app_dir() -> Option<PathBuf> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
     DIR.get_or_init(|| {
@@ -50,11 +56,7 @@ fn app_dir() -> Option<PathBuf> {
         }
         let exe = std::env::current_exe().ok()?;
         let dir = exe.parent()?.join("config");
-        std::fs::create_dir_all(&dir).ok()?;
-        let probe = dir.join(".pyx-write-test");
-        std::fs::write(&probe, b"ok").ok()?;
-        let _ = std::fs::remove_file(&probe);
-        Some(dir)
+        dir.is_dir().then_some(dir)
     })
     .clone()
 }

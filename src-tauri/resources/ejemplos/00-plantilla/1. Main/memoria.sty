@@ -1,0 +1,72 @@
+% memoria.sty — estilo de ejemplo para documentos de Pyx.
+% Todo el aspecto del documento vive aquí: el documento principal solo dice
+% \usepackage{memoria}. Cambia colores, márgenes o la portada en este archivo.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{memoria}[2026/11/17 Estilo de ejemplo de Pyx]
+
+% ---------- idioma y letra (xelatex, el motor de Pyx por defecto) ----------
+\RequirePackage{iftex}
+\ifPDFTeX
+  \RequirePackage[T1]{fontenc}
+  \RequirePackage[utf8]{inputenc}
+  \RequirePackage{lmodern}
+\else
+  \RequirePackage{fontspec}
+\fi
+\RequirePackage[spanish,es-noshorthands,es-tabla]{babel}
+
+% ---------- página ----------
+\RequirePackage[a4paper, top=2.6cm, bottom=2.6cm, left=2.5cm, right=2.5cm, headheight=14pt]{geometry}
+\RequirePackage{fancyhdr}
+\RequirePackage{xcolor}
+\definecolor{pyxazul}{HTML}{007ACC}
+\definecolor{pyxgris}{HTML}{6B7280}
+\definecolor{cumple}{HTML}{1A7F37}
+\definecolor{nocumple}{HTML}{CF222E}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{pyxgris}\@titulocorto}
+\fancyhead[R]{\small\color{pyxgris}\leftmark}
+\fancyfoot[C]{\small\color{pyxgris}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---------- matemáticas, unidades, tablas y figuras ----------
+\RequirePackage{amsmath, amssymb}
+\RequirePackage{siunitx}
+\sisetup{output-decimal-marker={,}, group-separator={\,}, per-mode=symbol}
+\RequirePackage{booktabs, array, tabularx}
+\RequirePackage{graphicx}
+\RequirePackage{float}
+\RequirePackage[font=small, labelfont=bf]{caption}
+\RequirePackage{placeins}
+\RequirePackage{titlesec}
+\titleformat{\section}{\normalfont\Large\bfseries\color{pyxazul}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{0.8em}{}
+\RequirePackage[hidelinks]{hyperref}
+
+% ---------- utilidades para los resultados ----------
+% \cumple / \nocumple: la conclusión de una comprobación, en color.
+\RequirePackage{xspace}
+\newcommand{\cumple}{\textcolor{cumple}{\textbf{CUMPLE}}\xspace}
+\newcommand{\nocumple}{\textcolor{nocumple}{\textbf{NO CUMPLE}}\xspace}
+% Un recuadro para destacar un resultado.
+\newcommand{\resultado}[1]{\par\medskip\noindent\fcolorbox{pyxazul}{pyxazul!6}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{#1}}\par\medskip}
+
+% ---------- portada ----------
+\newcommand{\@titulocorto}{}
+\newcommand{\titulocorto}[1]{\renewcommand{\@titulocorto}{#1}}
+% \portada{Título}{Subtítulo}{Autor}{Fecha}
+\newcommand{\portada}[4]{%
+  \begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\color{pyxazul}\rule{\linewidth}{1.2pt}}\par\vspace{1cm}
+    {\Huge\bfseries #1\par}\vspace{0.6cm}
+    {\Large\color{pyxgris} #2\par}\vspace{1cm}
+    {\color{pyxazul}\rule{\linewidth}{1.2pt}}\par
+    \vfill
+    {\large #3\par}\vspace{0.3cm}
+    {\color{pyxgris} #4\par}
+    \vspace*{1cm}
+  \end{titlepage}}
+\endinput

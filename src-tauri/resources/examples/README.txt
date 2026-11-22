@@ -1,6 +1,6 @@
 Pyx example projects (fictitious data).
 
-Unzip one wherever you like, open in Pyx the main file its README.md names
+Copy one folder wherever you like, open in Pyx the main file its README.md names
 and press «Compile & view» (Ctrl+Shift+B).
 
   00-template                          empty template with a .sty and chapters

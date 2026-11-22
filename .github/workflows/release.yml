@@ -109,6 +109,83 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+      # ---- Windows: firma y antivirus, antes de que nadie lo descargue ----
+      #
+      # «Windows no tiene acceso al dispositivo, ruta de acceso o archivo» al
+      # abrir el instalador es un antivirus (Kaspersky, en las 1.8.0 y 2.2.0)
+      # que bloquea un .exe SIN FIRMAR que su heurística no reconoce. Dos
+      # defensas:
+      #
+      # 1. Firma con SignPath (gratuita para software libre: ver
+      #    https://lorgioo.github.io/Pyx-web/firma/). Se activa sola en cuanto
+      #    existan el secreto SIGNPATH_API_TOKEN y la variable
+      #    SIGNPATH_ORGANIZATION_ID; sin ellos se salta.
+      - name: Preparar la firma (Windows)
+        id: firma
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          ORG: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ORG" ]; then echo "on=true" >> "$GITHUB_OUTPUT"
+          else echo "::warning::Instaladores de Windows SIN FIRMAR: falta SIGNPATH_API_TOKEN / SIGNPATH_ORGANIZATION_ID."; fi
+
+      - name: Subir los instaladores sin firmar (para SignPath)
+        id: sinfirmar
+        if: steps.firma.outputs.on == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-sin-firmar
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+
+      - name: Firmar con SignPath
+        if: steps.firma.outputs.on == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'Pyx' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.sinfirmar.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: firmados
+
+      - name: Publicar los instaladores firmados
+        if: steps.firma.outputs.on == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -l firmados
+          find firmados -type f \( -name '*-setup.exe' -o -name '*.msi' \) -exec cp {} src-tauri/target/release/bundle/ \;
+          for f in firmados/*-setup.exe firmados/*.msi firmados/**/*-setup.exe firmados/**/*.msi; do
+            [ -f "$f" ] && gh release upload "$RELEASE_TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber
+          done
+
+      # 2. Antivirus: Microsoft Defender (el del propio runner, con firmas
+      #    recién actualizadas) analiza el programa y los dos instaladores.
+      #    Si encuentra algo, este paso falla, la release no se publica y el
+      #    aviso dice qué archivo y qué amenaza.
+      - name: Analizar con Microsoft Defender (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $mp = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) { Write-Host "::warning::Defender no está en este runner: análisis saltado."; exit 0 }
+          & $mp -SignatureUpdate | Out-Host
+          $files = @(Get-ChildItem src-tauri/target/release/pyx.exe, src-tauri/target/release/bundle/nsis/*-setup.exe, src-tauri/target/release/bundle/msi/*.msi -ErrorAction SilentlyContinue)
+          $bad = @()
+          foreach ($f in $files) {
+            & $mp -Scan -ScanType 3 -File $f.FullName -DisableRemediation | Out-Host
+            if ($LASTEXITCODE -eq 2) { $bad += $f.Name }
+            else { Write-Host "Limpio: $($f.Name)" }
+          }
+          if ($bad.Count) { Write-Host "::error::Defender detecta una amenaza en: $($bad -join ', ')"; exit 1 }
+
   # La release se crea en BORRADOR para que nadie descargue una versión a la
   # que todavía le falta la mitad de los instaladores: los tres runners tardan
   # cosas distintas y suben al mismo borrador. Cuando los tres han terminado
@@ -179,6 +256,36 @@ jobs:
             '{version: $version, assets: $assets}' > pyx-update.json
           cat pyx-update.json
           gh release upload "$RELEASE_TAG" pyx-update.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      # 3. VirusTotal: los instaladores de Windows, analizados por unos 70
+      #    antivirus, Kaspersky entre ellos. Con el secreto VT_API_KEY (una
+      #    cuenta gratuita de virustotal.com basta) la release NO se publica
+      #    si Kaspersky, Microsoft, ESET, Bitdefender, Avast, AVG, Norton,
+      #    McAfee o más de dos motores los marcan; queda en borrador.
+      - name: Analizar con VirusTotal
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VT: ${{ secrets.VT_API_KEY }}
+        run: |
+          if [ -z "$VT" ]; then echo "::warning::Sin VT_API_KEY: VirusTotal saltado."; exit 0; fi
+          mkdir -p vt
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir vt --pattern '*_x64-setup.exe' --pattern '*.msi' --clobber
+          fail=0
+          for f in vt/*; do
+            url=$(curl -s -H "x-apikey: $VT" https://www.virustotal.com/api/v3/files/upload_url | jq -r '.data // empty')
+            [ -z "$url" ] && url=https://www.virustotal.com/api/v3/files
+            id=$(curl -s -H "x-apikey: $VT" -F "file=@$f" "$url" | jq -r '.data.id')
+            for i in $(seq 1 60); do
+              r=$(curl -s -H "x-apikey: $VT" "https://www.virustotal.com/api/v3/analyses/$id")
+              [ "$(jq -r '.data.attributes.status' <<<"$r")" = completed ] && break
+              sleep 20
+            done
+            n=$(jq '[.data.attributes.results[] | select(.category=="malicious" or .category=="suspicious")] | length' <<<"$r")
+            big=$(jq -r '[.data.attributes.results | to_entries[] | select(.value.category=="malicious" or .value.category=="suspicious") | select(.key|test("Kaspersky|Microsoft|ESET|BitDefender|Avast|AVG|Symantec|McAfee";"i")) | "\(.key): \(.value.result)"] | join("; ")' <<<"$r")
+            echo "$(basename "$f"): $n detecciones ${big:+— $big}"
+            if [ -n "$big" ] || [ "$n" -gt 2 ]; then echo "::error::VirusTotal: $(basename "$f") marcado ($n). $big"; fail=1; fi
+          done
+          exit $fail
 
       # Solo lo que ya está en main es la versión «latest», la que ofrece
       # «Buscar actualizaciones» a todos los usuarios (update.rs lee

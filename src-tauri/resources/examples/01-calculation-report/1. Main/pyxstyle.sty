@@ -1,0 +1,72 @@
+% pyxstyle.sty — example style for Pyx documents.
+% The whole look of the document lives here: the main document only says
+% \usepackage{pyxstyle}. Change colours, margins or the cover in this file.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{pyxstyle}[2026/11/22 Pyx example style]
+
+% ---------- language and fonts (xelatex, Pyx's default engine) ----------
+\RequirePackage{iftex}
+\ifPDFTeX
+  \RequirePackage[T1]{fontenc}
+  \RequirePackage[utf8]{inputenc}
+  \RequirePackage{lmodern}
+\else
+  \RequirePackage{fontspec}
+\fi
+\RequirePackage[english]{babel}
+
+% ---------- page ----------
+\RequirePackage[a4paper, top=2.6cm, bottom=2.6cm, left=2.5cm, right=2.5cm, headheight=14pt]{geometry}
+\RequirePackage{fancyhdr}
+\RequirePackage{xcolor}
+\definecolor{pyxblue}{HTML}{007ACC}
+\definecolor{pyxgrey}{HTML}{6B7280}
+\definecolor{pass}{HTML}{1A7F37}
+\definecolor{fail}{HTML}{CF222E}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{pyxgrey}\@shorttitle}
+\fancyhead[R]{\small\color{pyxgrey}\leftmark}
+\fancyfoot[C]{\small\color{pyxgrey}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---------- maths, units, tables and figures ----------
+\RequirePackage{amsmath, amssymb}
+\RequirePackage{siunitx}
+\sisetup{group-separator={\,}, per-mode=symbol}
+\RequirePackage{booktabs, array, tabularx}
+\RequirePackage{graphicx}
+\RequirePackage{float}
+\RequirePackage[font=small, labelfont=bf]{caption}
+\RequirePackage{placeins}
+\RequirePackage{titlesec}
+\titleformat{\section}{\normalfont\Large\bfseries\color{pyxblue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{0.8em}{}
+\RequirePackage[hidelinks]{hyperref}
+
+% ---------- helpers for results ----------
+% \pass / \fail: the conclusion of a check, in colour.
+\RequirePackage{xspace}
+\newcommand{\pass}{\textcolor{pass}{\textbf{PASSES}}\xspace}
+\newcommand{\fail}{\textcolor{fail}{\textbf{FAILS}}\xspace}
+% A box to highlight a result.
+\newcommand{\result}[1]{\par\medskip\noindent\fcolorbox{pyxblue}{pyxblue!6}{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{#1}}\par\medskip}
+
+% ---------- cover ----------
+\newcommand{\@shorttitle}{}
+\newcommand{\shorttitle}[1]{\renewcommand{\@shorttitle}{#1}}
+% \cover{Title}{Subtitle}{Author}{Date}
+\newcommand{\cover}[4]{%
+  \begin{titlepage}
+    \centering
+    \vspace*{4cm}
+    {\color{pyxblue}\rule{\linewidth}{1.2pt}}\par\vspace{1cm}
+    {\Huge\bfseries #1\par}\vspace{0.6cm}
+    {\Large\color{pyxgrey} #2\par}\vspace{1cm}
+    {\color{pyxblue}\rule{\linewidth}{1.2pt}}\par
+    \vfill
+    {\large #3\par}\vspace{0.3cm}
+    {\color{pyxgrey} #4\par}
+    \vspace*{1cm}
+  \end{titlepage}}
+\endinput

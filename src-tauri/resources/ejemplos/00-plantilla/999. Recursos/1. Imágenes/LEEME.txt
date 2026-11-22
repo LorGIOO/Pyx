@@ -1,0 +1,3 @@
+Pon aquí las imágenes del proyecto. Desde el documento principal se llaman así:
+  \includegraphics[width=0.8\linewidth]{../999. Recursos/1. Imágenes/foto.png}
+Pegar una imagen en el editor (Ctrl+V) también la guarda en el proyecto.

@@ -1,6 +1,6 @@
 Proyectos de ejemplo de Pyx (datos ficticios).
 
-Descomprime uno donde quieras, abre en Pyx el archivo principal que indica
+Copia la carpeta de uno donde quieras, abre en Pyx el archivo principal que indica
 su LEEME.md y pulsa «Compilar y ver» (Ctrl+Mayús+B).
 
   00-plantilla                         plantilla vacía con .sty y capítulos

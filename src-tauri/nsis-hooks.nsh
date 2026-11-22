@@ -17,6 +17,10 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; Pyx's own files (config.json, theme.css, templates…) live here
+  ; (src-tauri/src/config.rs). Made by the installer so that Pyx never has to
+  ; test whether it can write next to its own executable.
+  CreateDirectory "$INSTDIR\config"
   !insertmacro PyxSetIcon ".pltx"
   !insertmacro PyxSetIcon ".tex"
   ; Ask Explorer to refresh its icon cache so the new icons show immediately.

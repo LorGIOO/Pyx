@@ -46,6 +46,7 @@ import {
 import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from './bookmarks.js';
 import { calcCompletions, pyBraceTrigger } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
+import { cellGhost } from './cell-ghost.js';
 import { pyLint } from './py-lint.js';
 import { latexLint } from './latex-lint-ext.js';
 import { latexExtras } from './latex-extras.js';
@@ -155,7 +156,7 @@ function editorOptions() {
   // Live "ghost" values shown after each \py{…} (Mathcad/MATLAB-style). It
   // lives here so switching it off in Configuración drops the decorations at
   // once: the plugin recomputes only on edits, never on a plain settings read.
-  if (gv('pyGhost') !== false) ext.push(pyGhost);
+  if (gv('pyGhost') !== false) ext.push(pyGhost, cellGhost);
   // "Zoom con Ctrl + rueda" is NOT an editor extension: main.jsx swallows every
   // Ctrl+wheel in the capture phase (WebView2 would otherwise zoom the whole
   // interface), and CodeMirror ignores any event already defaultPrevented. The

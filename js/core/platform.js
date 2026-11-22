@@ -154,22 +154,47 @@ export async function openJsonDialog() {
   const r = await dialog.open({ multiple: false, filters: [{ name: t('Configuración de Pyx', 'Pyx settings'), extensions: ['json'] }] });
   return typeof r === 'string' ? r : null;
 }
-export async function messageDialog(message, opts) {
-  if (!isTauri()) { alert(message); return; }
+/* Messages and questions go through Pyx's own dialog (AppDialog.jsx), in the
+ * app's style, once it is on screen; before that (the very first instants)
+ * through the system's. */
+const appDlg = () => import('../solid/components/AppDialog.jsx');
+async function viaApp(o) {
+  try {
+    const m = await appDlg();
+    if (m.appDialogReady()) return { ok: true, v: await m.showAppDialog(o) };
+  } catch (_) { /* not available: the system's */ }
+  return { ok: false };
+}
+const KIND = (k) => (k === 'error' ? 'error' : k === 'warning' ? 'warning' : 'info');
+
+export async function messageDialog(message, opts = {}) {
+  const r = await viaApp({ title: opts.title, message: String(message), kind: KIND(opts.kind), buttons: [{ id: 'ok', label: opts.okLabel || t('Aceptar', 'OK'), primary: true }], cancelId: 'ok' });
+  if (r.ok) return undefined;
+  if (!isTauri()) { alert(message); return undefined; }
   return dialog.message(message, opts);
 }
-/** Native yes/no. `window.confirm` is blocked in some WebView2 configurations
- *  and looks like a web page when it isn't — closing an unsaved document is a
- *  destructive choice and deserves the platform's own dialog. */
+/** Yes/no. Answers true only for the OK button: Escape or the X is «no». */
 export async function askDialog(message, opts = {}) {
+  const r = await viaApp({
+    title: opts.title, message: String(message), kind: KIND(opts.kind || 'warning'),
+    buttons: [{ id: 'no', label: opts.cancelLabel || t('Cancelar', 'Cancel') }, { id: 'yes', label: opts.okLabel || t('Aceptar', 'OK'), primary: true }],
+    cancelId: 'no',
+  });
+  if (r.ok) return r.v === 'yes';
   if (!isTauri()) return window.confirm(message);
   return dialog.ask(message, { kind: 'warning', ...opts });
 }
-/** Native three-way choice — «Guardar / No guardar / Cancelar». Answers
- *  'yes' | 'no' | 'cancel'; closing the dialog (Esc, its X) is 'cancel', and
- *  so is any answer that is not recognised: the caller is about to close or
- *  replace unsaved work, so doubt must never read as consent. */
+/** Three-way choice — «Guardar / No guardar / Cancelar». Answers
+ *  'yes' | 'no' | 'cancel'; closing the dialog (Esc, its X) is 'cancel': the
+ *  caller is about to close or replace unsaved work, so doubt must never read
+ *  as consent. */
 export async function choiceDialog(message, { title, kind = 'warning', yes = t('Sí', 'Yes'), no = t('No', 'No'), cancel = t('Cancelar', 'Cancel') } = {}) {
+  const r = await viaApp({
+    title, message: String(message), kind: KIND(kind),
+    buttons: [{ id: 'cancel', label: cancel }, { id: 'no', label: no }, { id: 'yes', label: yes, primary: true }],
+    cancelId: 'cancel',
+  });
+  if (r.ok) return r.v === 'yes' || r.v === 'no' ? r.v : 'cancel';
   if (!isTauri()) return window.confirm(message) ? 'yes' : 'cancel';
   // The plugin answers with the LABEL of a custom button (or the stock
   // 'Yes' / 'No' / 'Cancel' where the platform ignores custom texts).
@@ -177,6 +202,17 @@ export async function choiceDialog(message, { title, kind = 'warning', yes = t('
   if (res === yes || res === 'Yes') return 'yes';
   if (res === no || res === 'No') return 'no';
   return 'cancel';
+}
+/** A line of text (an environment's name…); null when cancelled. */
+export async function promptDialog(message, { title, value = '', placeholder = '', okLabel } = {}) {
+  const r = await viaApp({
+    title: title || 'Pyx', message: String(message || ''), input: { value, placeholder },
+    buttons: [{ id: 'cancel', label: t('Cancelar', 'Cancel') }, { id: 'ok', label: okLabel || t('Aceptar', 'OK'), primary: true }],
+    cancelId: 'cancel',
+  });
+  if (r.ok) return r.v.id === 'ok' ? r.v.value : null;
+  const v = window.prompt(message, value);
+  return v == null ? null : v;
 }
 
 /* ---------- File system ----------
@@ -323,6 +359,8 @@ export const readDir = (path) => invoke('read_dir', { path });
 export const sheetValues = (path, sheet, refs) => invoke('sheet_values', { path, sheet, refs });
 // The sheet names of a workbook, in order (a CSV has a single unnamed one).
 export const sheetNames = (path) => invoke('sheet_names', { path });
+// Ctrl+click on a \celda: the workbook in Excel, on that sheet and cell.
+export const openExcelAt = (path, sheet, cell) => invoke('open_excel_at', { path, sheet: sheet || '', cell: cell || '' });
 // Tell the Rust side the UI language (its messages reach the problems panel).
 export const setUiLang = (lang) => (isTauri() ? invoke('set_ui_lang', { lang }).catch(() => {}) : Promise.resolve());
 // Every source file under a folder, with its text (.pltx: its document source).

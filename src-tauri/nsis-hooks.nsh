@@ -26,3 +26,10 @@
   ; Ask Explorer to refresh its icon cache so the new icons show immediately.
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 !macroend
+
+; Pyx renames its desktop shortcut to «Pyx <version>.lnk» (lib.rs): the
+; uninstaller only knows «Pyx.lnk», so the versioned one goes here.
+!macro NSIS_HOOK_POSTUNINSTALL
+  Delete "$DESKTOP\Pyx ${VERSION}.lnk"
+  Delete "$DESKTOP\Pyx.lnk"
+!macroend

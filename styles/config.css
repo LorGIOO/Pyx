@@ -423,3 +423,18 @@
 .insfile-modal { width: min(640px, calc(100vw - 32px)); }
 .insfile-kind { font-weight: 600; color: var(--theme-text); }
 .wz-link { border: none; background: none; padding: 0; color: var(--theme-accent); cursor: pointer; text-decoration: underline; font: inherit; }
+
+/* Pyx's own message / question / input dialog (AppDialog.jsx) */
+.app-dialog-overlay { z-index: 15000; }
+.app-dialog { width: min(480px, calc(100vw - 32px)); height: auto !important; min-height: 0 !important; max-height: calc(100vh - 64px); }
+.app-dialog-body { display: flex; gap: 14px; align-items: flex-start; padding: 18px 20px 8px; }
+.app-dialog-ico { flex: 0 0 26px; width: 26px; height: 26px; margin-top: 1px; }
+.app-dialog-ico svg { width: 26px; height: 26px; }
+.app-dialog-ico.info { color: var(--theme-accent); }
+.app-dialog-ico.warning { color: #d18616; }
+.app-dialog-ico.error { color: #e5484d; }
+.app-dialog-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.app-dialog-msg { margin: 0; white-space: pre-wrap; line-height: 1.5; font-size: 13px; color: var(--theme-text); overflow-wrap: anywhere; }
+.app-dialog-input { width: 100%; box-sizing: border-box; height: 28px; padding: 0 8px; }
+.app-dialog-foot { gap: 8px; }
+.app-dialog-foot button.danger { color: #e5484d; }

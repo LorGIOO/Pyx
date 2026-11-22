@@ -70,7 +70,7 @@ export default function ImageViewerPane(props) {
     try {
       const buf = await (await fetch(props.src)).arrayBuffer();
       await writeBinaryFile(dest, new Uint8Array(buf));
-    } catch (e) { alert(String((e && e.message) || e)); }
+    } catch (e) { import('../../../core/platform.js').then((m) => m.messageDialog(String((e && e.message) || e), { kind: 'error' })); }
   };
 
   return (

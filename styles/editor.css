@@ -323,3 +323,9 @@
   line-height: 1.4;
 }
 
+
+/* \celda: its value from the workbook; a problem in amber */
+.editor-host .cm-cell-ghost { color: #2e8b57; opacity: .75; }
+[data-theme="dark"] .editor-host .cm-cell-ghost { color: #6fcf97; }
+.editor-host .cm-cell-ghost-bad { color: #c27c0e; opacity: .9; font-style: italic; pointer-events: auto; cursor: help; }
+[data-theme="dark"] .editor-host .cm-cell-ghost-bad { color: #e0a84a; }

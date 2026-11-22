@@ -2,6 +2,32 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [2.2.1] — 2026-11-23
+
+### Añadido
+
+- **El valor de cada `\celda` se ve en el editor**, junto al comando (como el
+  de un `\py{}`), leído del libro sin compilar; si no se puede leer, dice por
+  qué en el mismo sitio.
+- **Ctrl+clic en `\celda{D18}`** abre el libro en Excel en esa hoja y celda (si
+  ya está abierto, va a la celda); en `\hoja{…}`, abre el libro.
+- El acceso directo del escritorio se llama **«Pyx 2.2.1»**: la versión, a
+  simple vista.
+
+### Corregido
+
+- `\celda` en una **celda combinada** lee el valor de la combinación; las
+  **fórmulas sin resultado guardado** (libros escritos por otros programas) se
+  calculan (sumas, promedios, redondeos, operaciones…); se leen las celdas sin
+  dirección en el XML. Una celda vacía avisa en Problemas.
+- **Modo noche del PDF**: las letras negras salen blancas y limpias. El halo
+  violeta eran los bordes de colores del suavizado de texto de Windows
+  (ClearType); ahora el texto se dibuja sin él en modo noche.
+- Los cuadros de diálogo (nombre de un entorno, avisos, preguntas) tienen el
+  estilo de Pyx, no el del navegador o el del sistema.
+- Autocompletado en inglés: la descripción de cada comando y entorno
+  (`\section`…) y los textos de las plantillas (`title`, `caption`…).
+
 ## [2.2.0] — 2026-11-22
 
 ### Añadido

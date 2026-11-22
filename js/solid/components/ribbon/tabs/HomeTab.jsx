@@ -4,6 +4,7 @@ import RibbonDropdown from '../RibbonDropdown.jsx';
 import { icons } from '../icons.js';
 import { state } from '../../../../core/state.js';
 import { t } from '../../../../core/i18n.js';
+import { promptDialog } from '../../../../core/platform.js';
 import {
   openFind, clip, wrap, changeCase, wrapInEnvironment,
   tblAddRow, tblAddCol, tblDelRow, tblDelCol, tblHline, tblAlign,
@@ -47,10 +48,11 @@ const WRAP_ENVS = () => [
   { label: 'verbatim', sym: '𝚝', env: 'verbatim' },
   { label: t('Otro…', 'Other…'), sym: '…', env: '__ask__' },
 ];
-const onWrapEnv = (it) => {
+const onWrapEnv = async (it) => {
   let env = it.env;
   if (env === '__ask__') {
-    env = (window.prompt(t('Nombre del entorno:', 'Environment name:')) || '').trim();
+    env = ((await promptDialog(t('Nombre del entorno (por ejemplo, theorem o tcolorbox):', 'Environment name (for instance theorem or tcolorbox):'),
+      { title: t('Envolver en un entorno', 'Wrap in an environment'), placeholder: 'theorem', okLabel: t('Envolver', 'Wrap') })) || '').trim();
   }
   if (env) wrapInEnvironment(env);
 };

@@ -235,6 +235,78 @@ async fn sheet_values(path: String, sheet: Option<String>, refs: Vec<String>) ->
     tauri::async_runtime::spawn_blocking(move || sheets::values(&path, sheet, &refs)).await.map_err(|e| e.to_string())?
 }
 
+/// Ctrl+click on a \\celda{D18}: the workbook in Excel, on that sheet and
+/// cell. A workbook already open in Excel is brought forward and moved there;
+/// otherwise Excel opens it. Without Excel (or off Windows) the file opens in
+/// whatever program the system has for it.
+#[tauri::command]
+async fn open_excel_at(path: String, sheet: String, cell: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        {
+            // Excel's own automation (the same as a macro would use). The
+            // values travel in environment variables, never inside the script.
+            const SCRIPT: &str = "$ErrorActionPreference='Stop';\
+                $p=[IO.Path]::GetFullPath($env:PYX_XL_PATH); $s=$env:PYX_XL_SHEET; $c=$env:PYX_XL_CELL;\
+                $xl=$null; try { $xl=[Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application') } catch {}\
+                $wb=$null; if ($xl) { foreach ($w in $xl.Workbooks) { if ($w.FullName -ieq $p) { $wb=$w } } }\
+                if (-not $wb) { if (-not $xl) { $xl=New-Object -ComObject Excel.Application }; $wb=$xl.Workbooks.Open($p) }\
+                $xl.Visible=$true; $xl.WindowState=-4137;\
+                $ws=$wb.ActiveSheet; if ($s) { $ws=$wb.Worksheets.Item($s) }; $ws.Activate();\
+                if ($c) { try { $r=$ws.Range($c) } catch { $r=$wb.Names.Item($c).RefersToRange }; $xl.Goto($r, $true); $r.Select() | Out-Null }";
+            let mut cmd = std::process::Command::new("powershell");
+            cmd.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", SCRIPT])
+                .env("PYX_XL_PATH", path.replace('/', "\\"))
+                .env("PYX_XL_SHEET", &sheet)
+                .env("PYX_XL_CELL", cell.replace('$', ""));
+            quiet(&mut cmd);
+            let ok = cmd.output().map(|o| o.status.success()).unwrap_or(false);
+            if !ok {
+                // No Excel: the file in its usual program, at least.
+                return open_external(path);
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (&sheet, &cell);
+            open_external(path)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The desktop shortcut the installer made is «Pyx.lnk» (Tauri names it after
+/// the product, and the product name cannot carry the version without each
+/// version installing into a folder of its own). Renamed here to «Pyx 2.2.1»,
+/// so the version is seen at a glance; one left by an older version
+/// («Pyx 2.2.0.lnk») is renamed too. Only shortcuts called exactly that.
+#[cfg(windows)]
+fn versioned_desktop_shortcut(desk: &std::path::Path) {
+    let want = format!("Pyx {}.lnk", env!("CARGO_PKG_VERSION"));
+    let Ok(list) = std::fs::read_dir(desk) else { return };
+    let ours = |n: &str| {
+        n == "Pyx.lnk"
+            || n.strip_prefix("Pyx ").and_then(|r| r.strip_suffix(".lnk")).is_some_and(|v| {
+                let parts: Vec<&str> = v.split('.').collect();
+                parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+            })
+    };
+    let target = desk.join(&want);
+    for e in list.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name == want || !ours(&name) {
+            continue;
+        }
+        if target.exists() {
+            let _ = std::fs::remove_file(e.path());
+        } else {
+            let _ = std::fs::rename(e.path(), &target);
+        }
+    }
+}
+
 /// The sheets of a workbook, for the «Insertar archivo» dialog (sheets.rs).
 #[tauri::command]
 async fn sheet_names(path: String) -> Result<Vec<String>, String> {
@@ -1506,6 +1578,11 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title(&format!("Pyx {}", env!("CARGO_PKG_VERSION")));
             }
+            // …and on the desktop: its shortcut is called «Pyx 2.2.1».
+            #[cfg(windows)]
+            if let Ok(desk) = app.path().desktop_dir() {
+                std::thread::spawn(move || versioned_desktop_shortcut(&desk));
+            }
             // Cold start: the document the OS launched us with.
             emit_open(&app.handle(), documents_in(std::env::args()));
             Ok(())
@@ -1522,6 +1599,7 @@ pub fn run() {
             config_read,
             sheet_values,
             sheet_names,
+            open_excel_at,
             set_ui_lang,
             config_write,
             config_path,

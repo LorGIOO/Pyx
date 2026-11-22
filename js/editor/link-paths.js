@@ -6,12 +6,20 @@
 import { StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, ViewPlugin } from '@codemirror/view';
 import { state as appState } from '../core/state.js';
-import { pathExists, readBinaryFile, openExternal } from '../core/platform.js';
+import { pathExists, readBinaryFile, openExternal, openExcelAt } from '../core/platform.js';
+import { findSheetCommands } from '../compile/sheets.js';
+
+/** The \\hoja in force at `pos` (the last one before it in this document). */
+export function sheetLinkBefore(view, pos) {
+  let link = null;
+  for (const c of findSheetCommands(view.state.doc.sliceString(0, pos))) if (c.kind === 'hoja') link = { path: c.arg, sheet: c.opt };
+  return link;
+}
 import { dirOf, joinPath, baseName } from '../core/paths.js';
 import { resolveLinkPath } from './notebooks.js';
 
 const FILE_CMD =
-  /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting|pynotebook|pyfile)\s*(?:\[[^\]]*\])?\{([^{}]+)\}/g;
+  /\\(input|include|includegraphics|includepdf|bibliography|addbibresource|lstinputlisting|pynotebook|pyfile|hoja|celda)\s*(?:\[([^\]]*)\])?\{([^{}]+)\}/g;
 
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 
@@ -21,17 +29,33 @@ function findPathAt(view, pos) {
   FILE_CMD.lastIndex = 0;
   let m;
   while ((m = FILE_CMD.exec(line.text))) {
-    const from = line.from + m.index + m[0].length - 1 - m[2].length;
-    const to = from + m[2].length;
-    if (pos >= from && pos <= to) return { from, to, path: m[2], cmd: m[1] };
+    const from = line.from + m.index + m[0].length - 1 - m[3].length;
+    const to = from + m[3].length;
+    if (pos >= from && pos <= to) return { from, to, path: m[3], cmd: m[1], opt: m[2] || '', at: line.from + m.index };
     if (line.from + m.index > pos) break;
   }
   return null;
 }
 
-async function openHit(hit) {
+async function openHit(hit, view) {
   const doc = appState.documents[appState.activeIndex];
   const base = doc && doc.path ? dirOf(doc.path) : null;
+  // \hoja{libro.xlsx} / \celda{D18}: the workbook in Excel, on the cell
+  // (paths of \hoja are relative to the main document, as for the compile).
+  if (hit.cmd === 'hoja' || hit.cmd === 'celda') {
+    const link = hit.cmd === 'hoja' ? { path: hit.path, sheet: hit.opt } : sheetLinkBefore(view, hit.at);
+    if (!link || !link.path) return;
+    let root = base;
+    try { root = (await (await import('../compile/compiler.js')).activeRootDir()) || base; } catch (_) { /* keep base */ }
+    const p = /^([a-zA-Z]:[\\/]|\/)/.test(link.path) ? link.path : (root ? joinPath(root, link.path) : null);
+    if (!p || !(await pathExists(p))) return;
+    let cell = hit.cmd === 'celda' ? hit.path.trim() : '';
+    let sheet = link.sheet || '';
+    const bang = cell.lastIndexOf('!');
+    if (bang > 0) { sheet = cell.slice(0, bang).replace(/^'|'$/g, ''); cell = cell.slice(bang + 1); }
+    openExcelAt(p, sheet, cell).catch(() => openExternal(p));
+    return;
+  }
   // Forward slashes are what LaTeX sources use and what every OS accepts,
   // Windows included. Rewriting them to backslashes made Ctrl+click on an
   // \input a Windows-only feature — on macOS and Linux the path never resolved.
@@ -147,7 +171,7 @@ export const pathLinks = [
       const hit = findPathAt(view, pos);
       if (hit) {
         e.preventDefault();
-        openHit(hit);
+        openHit(hit, view);
         return true;
       }
       // Ctrl+click anywhere ELSE = forward search (TeXstudio both ways), with

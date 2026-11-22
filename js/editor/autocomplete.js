@@ -5,7 +5,24 @@
 import { snippetCompletion, snippet, startCompletion } from '@codemirror/autocomplete';
 import { EditorView } from '@codemirror/view';
 import { insertEnvSkeleton, envIsClosed } from './latex-env.js';
-import LATEX_DATA from '../data/latex-completions.json';
+import LATEX_DATA_ES from '../data/latex-completions.json';
+import LATEX_EN from '../data/latex-completions-en.json';
+import { lang } from '../core/i18n.js';
+
+/* The catalogue in the UI language: descriptions and the placeholders of
+   the snippets (${1:título} -> ${1:title}) translated for English. */
+const enRow = (row) => row.map((x, i) => {
+  if (typeof x !== 'string') return x;
+  if (i === 3) return LATEX_EN.desc[x] || x;
+  if (i === 0) return x;
+  return x.replace(/\$\{(\d+):([^}]*)\}/g, (m, n, ph) => `\${${n}:${LATEX_EN.ph[ph] || ph}}`);
+});
+const LATEX_EN_DATA = {
+  commands: LATEX_DATA_ES.commands.map(enRow),
+  environments: LATEX_DATA_ES.environments.map(enRow),
+};
+const LATEX = () => (lang() === 'en' ? LATEX_EN_DATA : LATEX_DATA_ES);
+const LATEX_DATA = new Proxy({}, { get: (_, k) => LATEX()[k] });
 import { parseCells } from './cell-parse.js';
 import { analyzePython } from './py-deps.js';
 import { kernelComplete, linkedNames } from './cell-runner.js';
@@ -128,14 +145,14 @@ function latexOptions() {
   const text = allOpenText();
   // The very same text as last time (allOpenText hands back the same string
   // while nothing changed): nothing to scan.
-  if (latexCache.text === text) return latexCache.opts;
+  if (latexCache.text === text && latexCache.lang === lang()) return latexCache.opts;
   const loaded = loadedPackages(text);
   const user = userCommands(text);
   const sig = [...loaded].join(',') + '|' + [...user].map(([k, v]) => k + v).join(',');
-  if (latexCache.sig === sig) { latexCache.text = text; return latexCache.opts; }
+  if (latexCache.sig === sig && latexCache.lang === lang()) { latexCache.text = text; return latexCache.opts; }
   const known = new Set(LATEX_DATA.commands.map((c) => c[0]));
   const opts = [
-    beginGeneric,
+    { ...beginGeneric, detail: t('entorno personalizado (escribe el nombre)', 'custom environment (type the name)') },
     ...LATEX_DATA.commands.map((c) => commandOption(c, loaded)),
     ...LATEX_DATA.environments.map((e) => envOption(e, loaded)),
   ];
@@ -145,7 +162,7 @@ function latexOptions() {
     const info = { label: '\\' + name, type: n ? 'function' : 'keyword', detail: t('definido en el documento', 'defined in the document'), boost: 10 };
     opts.push(n ? snippetCompletion('\\' + name + args, info) : info);
   }
-  latexCache = { text, sig, opts };
+  latexCache = { text, sig, opts, lang: lang() };
   return opts;
 }
 
@@ -157,22 +174,33 @@ const pyFunc = (name, detail) =>
 // VSCode/Jupyter-style code snippets: accepting one drops a ready-to-fill
 // template — Tab through the ${ } holes — so you don't have to remember Python
 // syntax to write a loop, a function or a try/except.
-const PY_SNIPPETS = [
-  snippetCompletion('for ${item} in ${iterable}:\n\t${}', { label: 'for', detail: 'bucle for', type: 'keyword', boost: 50 }),
-  snippetCompletion('for ${i} in range(${n}):\n\t${}', { label: 'forrange', detail: 'for i in range(n)', type: 'keyword', boost: 48 }),
-  snippetCompletion('while ${condicion}:\n\t${}', { label: 'while', detail: 'bucle while', type: 'keyword', boost: 50 }),
-  snippetCompletion('if ${condicion}:\n\t${}', { label: 'if', detail: t('condición', 'condition'), type: 'keyword', boost: 50 }),
-  snippetCompletion('if ${condicion}:\n\t${}\nelse:\n\t', { label: 'ifelse', detail: 'si … si no', type: 'keyword', boost: 48 }),
-  snippetCompletion('elif ${condicion}:\n\t${}', { label: 'elif', detail: 'si no, si …', type: 'keyword', boost: 47 }),
-  snippetCompletion('def ${nombre}(${args}):\n\t${}', { label: 'def', detail: t('definir función', 'define a function'), type: 'keyword', boost: 50 }),
-  snippetCompletion('class ${Nombre}:\n\tdef __init__(self, ${args}):\n\t\t${}', { label: 'class', detail: 'definir clase', type: 'keyword', boost: 48 }),
-  snippetCompletion('with ${expr} as ${nombre}:\n\t${}', { label: 'with', detail: t('gestor de contexto', 'context manager'), type: 'keyword', boost: 47 }),
-  snippetCompletion('try:\n\t${}\nexcept ${Exception} as e:\n\t', { label: 'try', detail: 'try / except', type: 'keyword', boost: 47 }),
-  snippetCompletion('import ${modulo}', { label: 'import', detail: 'importar', type: 'keyword', boost: 46 }),
-  snippetCompletion('from ${modulo} import ${nombre}', { label: 'from', detail: 'from … import', type: 'keyword', boost: 46 }),
-  snippetCompletion('lambda ${x}: ${expr}', { label: 'lambda', detail: t('función anónima', 'anonymous function'), type: 'keyword', boost: 40 }),
-  pyFunc('print', 'imprimir'),
-];
+const PY_SNIPPETS_OF = () => {
+  const en = lang() === 'en';
+  const c = en ? 'condition' : 'condicion';
+  const n = en ? 'name' : 'nombre';
+  const m = en ? 'module' : 'modulo';
+  return [
+    snippetCompletion('for ${item} in ${iterable}:\n\t${}', { label: 'for', detail: t('bucle for', 'for loop'), type: 'keyword', boost: 50 }),
+    snippetCompletion('for ${i} in range(${n}):\n\t${}', { label: 'forrange', detail: 'for i in range(n)', type: 'keyword', boost: 48 }),
+    snippetCompletion(`while \${${c}}:\n\t\${}`, { label: 'while', detail: t('bucle while', 'while loop'), type: 'keyword', boost: 50 }),
+    snippetCompletion(`if \${${c}}:\n\t\${}`, { label: 'if', detail: t('condición', 'condition'), type: 'keyword', boost: 50 }),
+    snippetCompletion(`if \${${c}}:\n\t\${}\nelse:\n\t`, { label: 'ifelse', detail: t('si … si no', 'if … else'), type: 'keyword', boost: 48 }),
+    snippetCompletion(`elif \${${c}}:\n\t\${}`, { label: 'elif', detail: t('si no, si …', 'else if …'), type: 'keyword', boost: 47 }),
+    snippetCompletion(`def \${${n}}(\${args}):\n\t\${}`, { label: 'def', detail: t('definir función', 'define a function'), type: 'keyword', boost: 50 }),
+    snippetCompletion(`class \${${en ? 'Name' : 'Nombre'}}:\n\tdef __init__(self, \${args}):\n\t\t\${}`, { label: 'class', detail: t('definir clase', 'define a class'), type: 'keyword', boost: 48 }),
+    snippetCompletion(`with \${expr} as \${${n}}:\n\t\${}`, { label: 'with', detail: t('gestor de contexto', 'context manager'), type: 'keyword', boost: 47 }),
+    snippetCompletion('try:\n\t${}\nexcept ${Exception} as e:\n\t', { label: 'try', detail: 'try / except', type: 'keyword', boost: 47 }),
+    snippetCompletion(`import \${${m}}`, { label: 'import', detail: t('importar', 'import'), type: 'keyword', boost: 46 }),
+    snippetCompletion(`from \${${m}} import \${${n}}`, { label: 'from', detail: 'from … import', type: 'keyword', boost: 46 }),
+    snippetCompletion('lambda ${x}: ${expr}', { label: 'lambda', detail: t('función anónima', 'anonymous function'), type: 'keyword', boost: 40 }),
+    pyFunc('print', t('imprimir', 'print')),
+  ];
+};
+let pySnip = { lang: null, list: [] };
+const PY_SNIPPETS_NOW = () => {
+  if (pySnip.lang !== lang()) pySnip = { lang: lang(), list: PY_SNIPPETS_OF() };
+  return pySnip.list;
+};
 // Without a kernel (or while it is busy): keywords, builtins and the names
 // the document's cells define. With one, jedi answers instead (see below).
 const PY_KEYWORDS = ['as', 'else', 'except', 'finally', 'return', 'yield', 'in', 'is', 'not', 'and',
@@ -318,7 +346,7 @@ function envNames() {
   while ((m = re.exec(text))) set.add(m[1]);
   return [...set];
 }
-const ENV_ROWS = new Map(LATEX_DATA.environments.map((e) => [e[0], e]));
+const ENV_ROWS = { get: (k) => LATEX_DATA.environments.find((e) => e[0] === k) };
 // The editor auto-closes the brace; if a `}` follows the cursor, consume it so
 // the completion doesn't leave a double `}`.
 function consumeBrace(view, to) {
@@ -380,10 +408,10 @@ const freeEnvOption = {
   apply: (view, c, from, to) => view.dispatch({ changes: { from, to, insert: '' }, selection: { anchor: from } }),
 };
 function beginEnvOptions() {
-  return [freeEnvOption, ...envNames().map((e) => ({ label: e, type: 'class', apply: beginApply(e) }))];
+  return [{ ...freeEnvOption, detail: t('escribir el nombre', 'type the name') }, ...envNames().map((e) => ({ label: e, type: 'class', apply: beginApply(e) }))];
 }
 function endEnvOptions() {
-  return [freeEnvOption, ...envNames().map((e) => ({ label: e, type: 'class', apply: endApply(e) }))];
+  return [{ ...freeEnvOption, detail: t('escribir el nombre', 'type the name') }, ...envNames().map((e) => ({ label: e, type: 'class', apply: endApply(e) }))];
 }
 
 /* ---------- Python: real completion (jedi) ---------- */
@@ -446,12 +474,12 @@ async function pythonCompletions(context) {
     const first = res.items[0];
     const typed = Math.max(0, first.name.length - first.complete.length);
     const options = res.items.map(jediOption);
-    if (!afterDot && !inString) options.push(...PY_SNIPPETS);
+    if (!afterDot && !inString) options.push(...PY_SNIPPETS_NOW());
     return { from: pos - typed, options, validFor: inString ? undefined : /^\w*$/ };
   }
   if (afterDot || inString) return null; // nothing reliable to say about attributes
   if (!word) return null;
-  const opts = [...PY_SNIPPETS, ...pyStatic];
+  const opts = [...PY_SNIPPETS_NOW(), ...pyStatic];
   const seen = new Set(opts.map((o) => o.label));
   for (const n of docDefinedNames(state)) if (!seen.has(n)) { seen.add(n); opts.push({ label: n, type: 'variable', boost: 30 }); }
   return { from: word.from, options: opts, validFor: /^\w*$/ };

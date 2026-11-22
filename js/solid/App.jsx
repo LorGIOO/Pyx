@@ -11,6 +11,7 @@ import ConfigDialog from './components/ConfigDialog.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Wizards from './components/Wizards.jsx';
 import InsertFileDialog from './components/InsertFileDialog.jsx';
+import AppDialog from './components/AppDialog.jsx';
 import NewDocDialog, { openNewDoc } from './components/NewDocDialog.jsx';
 import SetupDialog from './components/SetupDialog.jsx';
 import MacrosDialog from './components/MacrosDialog.jsx';
@@ -121,6 +122,7 @@ export default function App() {
       <ContextMenu />
       <Wizards />
       <InsertFileDialog />
+      <AppDialog />
       <NewDocDialog />
       <SetupDialog />
       <MacrosDialog />

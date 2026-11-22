@@ -258,6 +258,10 @@ export function resolveSheets(text, inherited, valueOf) {
           at = c.end + w.closeLen;
           continue;
         }
+        // An empty cell writes nothing: say so, instead of a silent gap.
+        if (v.grid && grid.every((row) => row.every((x) => x == null || x === ''))) {
+          problems.push({ at: out.length, message: `\\celda{${r.ref}}: ${t('la celda está vacía en el libro (¿una celda combinada o una fórmula sin resultado guardado?)', 'the cell is empty in the workbook (a merged cell, or a formula with no saved result?)')}` });
+        }
         out += v.grid ? gridTeX(grid, o.transpose, o) : v.tex;
       } else problems.push({ at: out.length, message: `\\celda{${r.ref}}: ${(v && v.error) || t('sin valor', 'no value')}` });
     }

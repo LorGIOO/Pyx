@@ -51,8 +51,9 @@ import { general } from '../solid/stores/settingsStore.js';
 import {
   getScale, setScale, getFitMode, setFitMode,
   setNumPages, setCurrentPage, setPreviewFile, setHasPdf, tool, setLastArea, pdfVersion, setPdfVersion,
-  setLoadError, setSearchProgress, annotTool,
+  setLoadError, setSearchProgress, annotTool, invert,
 } from '../solid/stores/previewStore.js';
+import { createRoot, createEffect, on } from 'solid-js';
 import { t } from '../core/i18n.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -126,6 +127,12 @@ function parseOnce(bytes) {
     data: bytes,
     worker: sharedWorker(),
     disableWorkerRendering: !workerRendering,
+    // Night mode: glyphs are drawn as paths, not with the PDF's fonts through
+    // the canvas's text engine. On Windows that engine smooths text with
+    // ClearType (red and blue fringes on every letter of an opaque canvas);
+    // the night filter keeps colours, so the fringes became a violet halo on
+    // dark paper. Paths are smoothed in grey: black letters turn white, clean.
+    disableFontFace: invert(),
     // Never compile code out of a PDF: in a shared session the PDF comes
     // from another machine (and the CSP forbids eval anyway).
     isEvalSupported: false,
@@ -2026,3 +2033,8 @@ function drawLoupe(e) {
   }
   paintLoupe();
 }
+
+// Night mode on or off: the PDF is loaded again (see disableFontFace above).
+createRoot(() => createEffect(on(invert, () => {
+  if (currentPath) loadPdf(currentPath).catch(() => {});
+}, { defer: true })));

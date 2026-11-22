@@ -2600,6 +2600,7 @@ name = "pyx"
 version = "2.1.0"
 dependencies = [
  "flate2",
+ "quick-xml",
  "serde",
  "serde_json",
  "sha2",

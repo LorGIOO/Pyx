@@ -685,7 +685,7 @@ const MISSING_FILE_GUARDS = [
   String.raw`\@ifundefined{verbatim@input}{}{\@ifundefined{Pyx@verbatim@input}{\let\Pyx@verbatim@input\verbatim@input\def\verbatim@input#1#2{\IfFileExists{#2}{\Pyx@verbatim@input{#1}{#2}}{\endgroup\Pyx@missing{#2}}}}{}}`,
 ];
 
-export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, floatBarrier = false }) {
+export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, usesSheets = false, floatBarrier = false }) {
   const guards = [];
   const seen = new Set();
   // A \py{} can expand to an \includegraphics — `figtex()` in the kernel
@@ -724,6 +724,12 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender,
     // (its values are already in Python): the command itself prints nothing.
     guards.push('\\providecommand\\pynotebook[1]{}');
     guards.push('\\providecommand\\pyfile[1]{}');
+  }
+  if (usesSheets) {
+    // \hoja[sheet]{book} links a workbook (it prints nothing); a \celda that
+    // could not be read prints nothing either (Pyx reports why).
+    guards.push('\\providecommand\\hoja[2][]{}');
+    guards.push('\\providecommand\\celda[2][]{}');
   }
   if (floatBarrier) {
     // Figures and tables stay in the section they were written in. LaTeX

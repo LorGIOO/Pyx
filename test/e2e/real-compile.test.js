@@ -150,6 +150,41 @@ vi.mock('../../js/core/platform.js', async (orig) => ({
   kernelInterrupt: async () => {},
   kernelExec,
   messageDialog: async () => {},
+  // \celda: the Rust reader (sheets.rs) is not here; the same values, read
+  // with Python's csv / openpyxl.
+  sheetValues: async (file, sheet, refs) => JSON.parse(py(`
+import csv, json, re, sys
+path, sheet, refs = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+def num(t, comma):
+    t = t.strip()
+    if not t: return None
+    s = t.replace(".", "").replace(",", ".") if comma and "," in t else t
+    try: return float(s)
+    except ValueError: return t
+if path.lower().endswith((".csv", ".txt")):
+    raw = open(path, encoding="utf-8-sig").read()
+    d = ";" if raw.count(";") >= raw.count(",") else ","
+    g = {(r, c): num(v, d != ",") for r, row in enumerate(csv.reader(raw.splitlines(), delimiter=d), 1) for c, v in enumerate(row, 1)}
+else:
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb[sheet] if sheet else wb.worksheets[0]
+    g = {(c.row, c.column): c.value for row in ws.iter_rows() for c in row if c.value is not None}
+def pos(a):
+    m = re.fullmatch(r"([A-Za-z]+)(\\d+)", a.strip().replace("$", ""))
+    col = 0
+    for ch in m.group(1).upper(): col = col * 26 + ord(ch) - 64
+    return int(m.group(2)), col
+out = []
+for r in refs:
+    try:
+        a, _, b = r.partition(":")
+        (r1, c1), (r2, c2) = pos(a), pos(b or a)
+        out.append({"ok": True, "error": "", "grid": [[g.get((i, j)) for j in range(c1, c2 + 1)] for i in range(r1, r2 + 1)]})
+    except Exception as e:
+        out.append({"ok": False, "error": str(e), "grid": []})
+print(json.dumps(out))
+`, file, sheet || '', JSON.stringify(refs))),
 }));
 let rootText = '';
 vi.mock('../../js/editor/setup.js', async (orig) => ({

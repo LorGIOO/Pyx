@@ -6,6 +6,7 @@ mod synctex;
 mod update;
 mod workspace;
 mod config;
+mod sheets;
 
 use kernel::KernelState;
 use tauri::{Emitter, Manager};
@@ -226,6 +227,12 @@ async fn build_dir(path: String) -> Result<String, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Values of an Excel workbook or a CSV for \\celda (sheets.rs).
+#[tauri::command]
+async fn sheet_values(path: String, sheet: Option<String>, refs: Vec<String>) -> Result<Vec<sheets::Cells>, String> {
+    tauri::async_runtime::spawn_blocking(move || sheets::values(&path, sheet, &refs)).await.map_err(|e| e.to_string())?
 }
 
 /// The settings file (config.rs): its text, or null when there is none.
@@ -1477,6 +1484,7 @@ pub fn run() {
             collab_restrict,
             build_dir,
             config_read,
+            sheet_values,
             config_write,
             config_path,
             copy_file,

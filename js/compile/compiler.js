@@ -5,8 +5,9 @@ import { state, activeDoc } from '../core/state.js';
 import { getDocContent, getViewOfDoc } from '../editor/setup.js';
 import {
   writeTextFile, readTextFile, readDir, pathExists, compileLatex, emitToWindow,
-  pltxRead, fileStamps, buildDirFor, createDir, compileCancel, readSources,
+  pltxRead, fileStamps, buildDirFor, createDir, compileCancel, readSources, sheetValues,
 } from '../core/platform.js';
+import { sheetRequests, resolveSheets, gridTeX, requestKey } from './sheets.js';
 import { relativeTo, normalizePath, samePath } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
@@ -626,6 +627,8 @@ function analyzeFile(path, content) {
     // macro to exist, in case the environment showing it fails to load.
     usesPy: content.indexOf('\\py') >= 0,
     usesGraphics: content.indexOf('\\includegraphics') >= 0,
+    // \hoja / \celda: cells of an Excel workbook (compile/sheets.js).
+    usesSheets: content.indexOf('\\celda') >= 0 || content.indexOf('\\hoja') >= 0,
     // Does this file need a processed .build copy of its own?
     //
     // A .pltx ALWAYS does, cells or not. On disk it is a zip, and the engine
@@ -634,7 +637,8 @@ function analyzeFile(path, content) {
     // chapter never compiled. A .pltx has to work anywhere a .tex does.
     // A \pynotebook needs the copy too: it is where the guard that makes the
     // command print nothing reaches the engine.
-    needsBuild: isPltx(path) || notebooks > 0 || (isPyx && (cells.length > 0 || pyExprs.length > 0 || hasPyIf)),
+    needsBuild: isPltx(path) || notebooks > 0 || (isPyx && (cells.length > 0 || pyExprs.length > 0 || hasPyIf))
+      || content.indexOf('\\celda') >= 0 || content.indexOf('\\hoja') >= 0,
   };
 }
 
@@ -1476,6 +1480,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       for (const s of f.verbStyles) use.styles.add(s);
       if (f.usesPy) use.usesPy = true;
       if (f.usesGraphics) use.usesGraphics = true;
+      if (f.usesSheets) use.usesSheets = true;
       // Whether any cell asks handcalcs to typeset it (its blocks need amsmath).
       if (!use.usesRender && f.cells.some((c) => HANDCALCS_MAGIC.test(c.code))) {
         use.usesRender = true;
@@ -1491,6 +1496,46 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     }
     use.floatBarrier = general.floatBarrier !== false;
     const shim = safetyPreamble(use);
+
+    /* \hoja / \celda: read every cell the project places, one call per
+     * workbook and sheet, before the copies are written. A chapter with no
+     * \hoja of its own before its cells uses the main document's first one. */
+    const sheetVals = new Map();
+    const rootSheetLink = files.get(rootPath)?.usesSheets
+      ? (sheetRequests(files.get(rootPath).content).reqs[0]?.link
+        || sheetRequests(files.get(rootPath).content).last)
+      : null;
+    if (use.usesSheets) {
+      const base = dirOf(rootPath);
+      const absOf = (p) => (/^([a-zA-Z]:[\\/]|[\\/])/.test(p) ? p : joinPath(base, p));
+      const groups = new Map();
+      for (const [path, f] of files) {
+        if (!f.usesSheets) continue;
+        for (const r of sheetRequests(f.content, path === rootPath ? null : rootSheetLink).reqs) {
+          const key = requestKey(r, base);
+          if (!r.link || !r.link.path) {
+            sheetVals.set(key, { ok: false, error: 'falta un \\hoja{libro.xlsx} antes, que diga de qué libro' });
+            continue;
+          }
+          const g = `${absOf(r.link.path)}\u0000${r.link.sheet || ''}`;
+          if (!groups.has(g)) groups.set(g, new Map());
+          groups.get(g).set(key, r);
+        }
+      }
+      await Promise.all([...groups].map(async ([g, reqMap]) => {
+        const [file, sheet] = g.split('\u0000');
+        const list = [...reqMap.entries()];
+        try {
+          const res = await sheetValues(file, sheet || null, list.map(([, r]) => r.ref));
+          list.forEach(([key, r], i) => {
+            const v = res[i] || {};
+            sheetVals.set(key, v.ok ? { ok: true, tex: gridTeX(v.grid, r.transpose) } : { ok: false, error: v.error });
+          });
+        } catch (err) {
+          for (const [key] of list) sheetVals.set(key, { ok: false, error: String(err && err.message || err) });
+        }
+      }));
+    }
 
     /* Where each file's processed copy goes.
      *
@@ -1545,6 +1590,16 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         const res = resolvePyMapped(neut.text, valueMap, neut.srcLines);
         processed = res.text;
         if (res.lines) lineMaps[mapKey] = res.lines;
+      }
+      // \celda{…} → its value, in any file (it needs no Python).
+      if (f.usesSheets) {
+        const base = dirOf(rootPath);
+        const r = resolveSheets(processed, path === rootPath ? null : rootSheetLink, (q) => sheetVals.get(requestKey(q, base)));
+        processed = r.text;
+        for (const pr of r.problems) {
+          const buildLine = processed.slice(0, pr.at).split('\n').length;
+          problems += `\n[${baseName(path)} · línea ${buildToSrcLine(lineMaps[mapKey], buildLine)}] ${pr.message}`;
+        }
       }
       /* A \py{} the build still carries.
        *

@@ -36,6 +36,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 # SHA-256 of downloaded updates (update.rs), on every system.
 sha2 = "0.10"
+# Excel workbooks for \hoja / \celda (sheets.rs); already in the tree through Tauri.
+quick-xml = "0.39"
 
 [profile.release]
 panic = "abort"

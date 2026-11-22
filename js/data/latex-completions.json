@@ -228,6 +228,8 @@
     ["Omega", "", "", "Ω"],
     ["py", "{${1:expresión}}", "", "Valor de Python en el texto (Pyx)"],
     ["pyif", "{${1:condición}}{${2:si se cumple}}{${3:si no}}", "", "Texto condicional según Python (Pyx)"],
+    ["hoja", "[${1:Hoja1}]{${2:datos.xlsx}}", "", "Vincular un libro de Excel o un CSV y su hoja (Pyx)"],
+    ["celda", "{${1:E4}}", "", "Valor de una celda o rango del libro vinculado: E4, E4:E8 (Pyx)"],
     ["pynotebook", "{${1:cuaderno.ipynb}}", "", "Vincular un cuaderno de Jupyter: sus variables se usan desde aquí (Pyx)"],
     ["pyfile", "{${1:calculos.py}}", "", "Vincular un archivo .py (o .ipynb): sus variables se usan desde aquí (Pyx)"],
     ["dfrac", "{${1:num}}{${2:den}}", "amsmath", "Fracción grande"],

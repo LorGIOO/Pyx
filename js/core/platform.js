@@ -306,6 +306,8 @@ export const openExternal = (path) => invoke('open_external', { path });
 export const openPdfExternal = (path) => invoke('open_pdf_external', { path });
 export const openViewerWindow = (path) => invoke('open_viewer_window', { path: encodeURIComponent(path) });
 export const readDir = (path) => invoke('read_dir', { path });
+// Cells of an Excel workbook or a CSV, for \hoja / \celda (sheets.rs).
+export const sheetValues = (path, sheet, refs) => invoke('sheet_values', { path, sheet, refs });
 // Every source file under a folder, with its text (.pltx: its document source).
 export const projectTexts = (root) => invoke('project_texts', { root });
 // Batched {mtime, size} for several files — lets the compiler skip re-reading

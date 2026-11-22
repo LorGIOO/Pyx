@@ -13,6 +13,7 @@
 // uses and a TeX distribution):
 //   PYX_E2E_ROOT=/ruta/al/_Preámbulo.pltx PYX_E2E_OUT=/ruta/salida.pdf \
 //     npx vitest run test/e2e/real-compile.test.js
+// (PYX_E2E_REPEAT=2 compiles twice more in the same session and prints the timings.)
 import { describe, it, expect, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import * as fsp from 'node:fs/promises';
@@ -184,8 +185,18 @@ describe.skipIf(!ROOT)('compilación real de un proyecto', () => {
     state.panes = [{ id: 1, docId: 1 }];
     state.activePaneId = 1;
     state.liveCompile = false;
+    // PYX_E2E_REPEAT=n compiles n more times in the same session (kernel and
+    // engine kept), like pressing «Compilar y ver» again in the app: that is
+    // the compile a person waits for, and its timings go to the log.
+    const settle = async () => { for (let i = 0; i < 2400 && (state.compiling || state.compileQueued || state.pdfLoading); i++) await new Promise((r) => setTimeout(r, 50)); };
     await compiler.compileActive(true, { force: true, fresh: true });
-    for (let i = 0; i < 2400 && (state.compiling || state.compileQueued || state.pdfLoading); i++) await new Promise((r) => setTimeout(r, 50));
+    await settle();
+    for (let k = 0; k < (+process.env.PYX_E2E_REPEAT || 0); k++) {
+      await compiler.compileActive(true, { force: true });
+      await settle();
+      const tm = String(state.lastLog || '').match(/===== Tiempos de Pyx =====[\s\S]*?Total[^\n]*/);
+      if (tm) console.log(`--- compilación ${k + 2} ---\n${tm[0]}`);
+    }
     const log = String(state.lastLog || '');
     fs.writeFileSync(`${OUT || path.join(WORK, 'out.pdf')}.log`, log);
     if (process.env.PYX_E2E_DEBUG) console.log(log.slice(0, 6000));

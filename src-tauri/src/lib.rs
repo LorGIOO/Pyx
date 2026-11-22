@@ -240,23 +240,6 @@ async fn config_write(text: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || config::write(&text)).await.map_err(|e| e.to_string())?
 }
 
-/// A file shipped with Pyx in its installation folder (the user manual, the
-/// example projects, the licence): its absolute path, or an error when this
-/// build does not carry it (a development run).
-#[tauri::command]
-fn resource_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
-    if name.split(['/', '\\']).any(|part| part == "..") {
-        return Err("Ruta no válida".into());
-    }
-    let dir = app.path().resource_dir().map_err(|e| e.to_string())?;
-    let p = dir.join(&name);
-    if p.exists() {
-        Ok(p.to_string_lossy().to_string())
-    } else {
-        Err(format!("Esta instalación no incluye {name}."))
-    }
-}
-
 /// Where the settings file is (for «Abrir la carpeta de la configuración»).
 #[tauri::command]
 fn config_path() -> String {
@@ -1496,7 +1479,6 @@ pub fn run() {
             config_read,
             config_write,
             config_path,
-            resource_path,
             copy_file,
             synctex_edit,
             synctex_view,

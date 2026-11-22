@@ -2,6 +2,40 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [2.2.0] — 2026-11-22
+
+### Añadido
+
+- **Datos de Excel y CSV sin Python.** `\hoja[Hoja]{libro.xlsx}` vincula un
+  libro y su hoja; `\celda{E4}` coloca una celda y `\celda{E4:E8}` un rango,
+  listo para un `tabular`; `\celda[T]{…}` lo transpone; `\celda{Hoja2!B2}`
+  lee otra hoja. Pyx lee el archivo al compilar (los valores que guardó Excel,
+  también los de las fórmulas) y CSV con «;» y coma decimal.
+- **Abrir carpeta**: la carpeta del proyecto queda fija en el explorador,
+  aunque no haya documentos abiertos, y se recuerda al reiniciar.
+- La configuración se guarda también, legible, en `config.json`
+  (`%APPDATA%\Pyx` en Windows) y se puede exportar e importar.
+- La instalación trae el manual (en español y en inglés), los proyectos de
+  ejemplo y la licencia. El manual tiene versión en inglés.
+- Ejemplo nuevo, `05-datos-de-excel`, y todos los ejemplos en inglés.
+
+### Cambiado
+
+- **Modo noche del PDF**: solo el papel y el texto negro cambian; los
+  colores, las gráficas y las imágenes se conservan.
+- **Ctrl+T sobre una selección** comenta solo lo seleccionado.
+- Negrita, cursiva y demás formatos con el cursor en un `\py{}` se aplican
+  al comando entero.
+- Explorador, autocompletado y panel de problemas con el aspecto de VS Code.
+- Un documento nuevo empieza vacío.
+- Los archivos de trabajo de LaTeX se borran al cerrar Pyx (y, si una sesión
+  terminó mal, al arrancar): no se quedan en el ordenador.
+
+### Corregido
+
+- Al hacer zoom en el editor (Ctrl+rueda) o cambiar la letra, los números de
+  línea se quedaban desalineados y cortados hasta desplazarse.
+
 ## [2.1.0] — 2026-11-17
 
 ### Cambiado

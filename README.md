@@ -9,9 +9,11 @@
 Un editor de LaTeX con celdas de Python dentro. Escribes el informe, calculas en él<br>
 y el PDF sale con los números ya puestos. Cambias un dato y todo se actualiza.
 
-[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.1.0-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
+[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.2.0-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
 &nbsp;
 [![Manual de usuario](https://img.shields.io/badge/Manual_de_usuario-PDF-1F2937?style=for-the-badge)](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf)
+&nbsp;
+[![User manual](https://img.shields.io/badge/User_manual-PDF-1F2937?style=for-the-badge)](Manual%20de%20usuario/Pyx%20user%20manual.pdf)
 &nbsp;
 [![Web de Pyx](https://img.shields.io/badge/Web-lorgioo.github.io%2FPyx--web-F4F2EC?style=for-the-badge&labelColor=16171B)](https://lorgioo.github.io/Pyx-web/)
 
@@ -62,7 +64,7 @@ Celdas de Python como en Jupyter, con su salida debajo: tablas de pandas, gráfi
 
 **Llevar al PDF**
 
-`\py{}` escribe un valor, `\pyif{}` elige un texto. `tabletex()` y `figtex()` convierten una tabla o una gráfica en LaTeX. Las celdas `%%render` de handcalcs muestran el desarrollo del cálculo.
+`\py{}` escribe un valor, `\pyif{}` elige un texto. `tabletex()` y `figtex()` convierten una tabla o una gráfica en LaTeX. Las celdas `%%render` de handcalcs muestran el desarrollo del cálculo. `\hoja{}` y `\celda{}` colocan celdas de Excel o CSV, sin Python.
 
 </td></tr>
 <tr><td valign="top">
@@ -92,8 +94,8 @@ Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin toca
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** 10/11 (64 bits) | [`Pyx_2.1.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
-| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.1.0_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
+| **Windows** 10/11 (64 bits) | [`Pyx_2.2.0_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
+| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.2.0_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
 | **Linux** | [`.deb`, `.rpm` o `.AppImage`](https://github.com/LorGIOO/Pyx/releases/latest) |
 
 Si ya tienes Python (Anaconda, python.org…) o LaTeX (MiKTeX, TeX Live, MacTeX), Pyx los usa. Si no, al arrancar ofrece prepararlos. Las versiones nuevas se instalan desde **Configuración → General → Buscar actualizaciones**.

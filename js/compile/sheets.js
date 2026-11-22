@@ -82,22 +82,30 @@ export function gridTeX(grid, transpose = false) {
   return g.map((row) => `${row.map(cellTeX).join(' & ')} \\\\`).join(' ');
 }
 
-/** Replace each \celda of `text` with its value; \hoja stays (the preamble's
- *  guard makes it print nothing). `values` maps a request to {ok, tex, error}. */
+/** Replace each \celda of `text` with its value, and each \hoja with
+ *  \relax: in the copy LaTeX reads, a \hoja may sit in the preamble, before
+ *  any definition of it could. `valueOf` maps a request to {ok, tex, error}. */
 export function resolveSheets(text, inherited, valueOf) {
-  const { reqs, last } = sheetRequests(text, inherited);
-  if (!reqs.length) return { text, problems: [], last };
+  const cmds = findSheetCommands(text);
+  if (!cmds.length) return { text, problems: [], last: inherited };
   const problems = [];
+  let link = inherited;
   let out = '';
   let at = 0;
-  for (const r of reqs) {
-    const v = valueOf(r);
-    out += text.slice(at, r.cmd.start);
-    if (v && v.ok) out += v.tex;
-    else problems.push({ at: r.cmd.start, message: `\\celda{${r.ref}}: ${(v && v.error) || 'sin valor'}` });
-    at = r.cmd.end;
+  for (const c of cmds) {
+    out += text.slice(at, c.start);
+    if (c.kind === 'hoja') {
+      link = { path: c.arg, sheet: c.opt };
+      out += '\\relax{}';
+    } else {
+      const r = { link, ref: c.arg, transpose: /^t$/i.test(c.opt), cmd: c };
+      const v = valueOf(r);
+      if (v && v.ok) out += v.tex;
+      else problems.push({ at: out.length, message: `\\celda{${r.ref}}: ${(v && v.error) || 'sin valor'}` });
+    }
+    at = c.end;
   }
-  return { text: out + text.slice(at), problems, last };
+  return { text: out + text.slice(at), problems, last: link };
 }
 
 export const requestKey = (r, base) => `${base}|${(r.link && r.link.path) || ''}|${(r.link && r.link.sheet) || ''}|${r.ref}`;

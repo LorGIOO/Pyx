@@ -8,5 +8,6 @@ su LEEME.md y pulsa «Compilar y ver» (Ctrl+Mayús+B).
   02-handcalcs-y-unidades              handcalcs y unidades con pint
   03-cuaderno-de-jupyter               un informe que solo llama a un cuaderno
   04-tablas-graficas-y-condicionales   tablas de pandas, gráficas y \pyif
+  05-datos-de-excel                    datos de Excel y CSV con \hoja y \celda, sin Python
 
 También en https://lorgioo.github.io/Pyx-web/ejemplos/

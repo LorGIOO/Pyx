@@ -30,7 +30,7 @@ describe('\\hoja y \\celda', () => {
   it('sustituye las celdas y avisa de las que no se pueden leer', () => {
     const t = '\\hoja{a.csv}x = \\celda{B2}, y = \\celda{ZZ}.';
     const r = resolveSheets(t, null, (q) => (q.ref === 'B2' ? { ok: true, tex: '7' } : { ok: false, error: 'no es una dirección' }));
-    expect(r.text).toBe('\\hoja{a.csv}x = 7, y = .');
+    expect(r.text).toBe('\\relax{}x = 7, y = .');
     expect(r.problems[0].message).toContain('\\celda{ZZ}: no es una dirección');
   });
 });

@@ -5,6 +5,9 @@ name: Release
 # runner nativo (Tauri no permite compilación cruzada) y los tres suben sus
 # instaladores al MISMO borrador de Release.
 #
+# Lanzado a mano con una versión que YA está publicada, la vuelve a construir:
+# sus instaladores se sustituyen y su etiqueta pasa al commit elegido.
+#
 # También se puede lanzar a mano (Actions → Release → Run workflow) indicando
 # la versión: la etiqueta se crea entonces sobre el commit elegido. Antes se
 # podía lanzar a mano sin versión, y la release salía con el nombre de la rama.
@@ -121,6 +124,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Una versión publicada otra vez: su etiqueta pasa a ESTE commit, para
+      # que el código de la release sea el de sus instaladores.
+      - name: Llevar la etiqueta a este commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          if [ "$(git rev-parse "refs/tags/$RELEASE_TAG" 2>/dev/null)" != "$GITHUB_SHA" ]; then
+            git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+            git push -f origin "refs/tags/$RELEASE_TAG"
+          fi
 
       # El manual de usuario de ESTA versión, junto a sus instaladores.
       - name: Adjuntar el manual de usuario

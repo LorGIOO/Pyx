@@ -15,7 +15,9 @@ export const state = createMutable({
   activePaneId: 1,
 
   // UI
-  theme: document.documentElement.dataset.theme || 'light',
+  // 'light' | 'dark' | 'custom' (the custom one paints over its base theme,
+  // which is what <html data-theme> holds then)
+  theme: (() => { try { const v = localStorage.getItem('calc-theme'); if (v === 'custom') return 'custom'; } catch (_) { /* ignore */ } return document.documentElement.dataset.theme || 'light'; })(),
   previewVisible: true,
   logVisible: false,
   terminalVisible: false, // in-app terminal (pip install, etc.)

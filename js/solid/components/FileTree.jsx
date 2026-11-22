@@ -6,7 +6,8 @@ import {
 } from '../../core/platform.js';
 import { openTarget, looksBinary } from '../../core/file-kind.js';
 import { openPath, openImageTab, pathRenamed, pathRemoved } from '../stores/docStore.js';
-import { dirOf, joinPath, baseName } from '../../core/paths.js';
+import { dirOf, joinPath, baseName, relativePath } from '../../core/paths.js';
+import { t as tr } from '../../core/i18n.js';
 import { openProjectFolder, closeProjectFolder, projectFolder } from '../stores/projectStore.js';
 import { loadPdf } from '../../pdf/preview.js';
 import { showContextMenu } from './ContextMenu.jsx';
@@ -161,7 +162,7 @@ export default function FileTree(props) {
     if (!name || name === item.name) return;
     // A name, not a path: "..\otro" or "sub/archivo" would move the file.
     if (/[\\/]/.test(name)) {
-      await messageDialog('El nombre no puede contener «\\» ni «/».', { title: 'Renombrar', kind: 'error' });
+      await messageDialog(tr('El nombre no puede contener «\\» ni «/».', 'The name cannot contain “\\” or “/”.'), { title: tr('Renombrar', 'Rename'), kind: 'error' });
       return;
     }
     const to = joinPath(dirOf(item.path), name);
@@ -169,7 +170,7 @@ export default function FileTree(props) {
       await renamePath(item.path, to);
       pathRenamed(item.path, to); // open tabs follow the file
       refresh(dirOf(item.path));
-    } catch (err) { await messageDialog(String(err), { title: 'No se pudo renombrar', kind: 'error' }); }
+    } catch (err) { await messageDialog(String(err), { title: tr('No se pudo renombrar', 'Could not rename'), kind: 'error' }); }
   };
   const doDelete = async (item) => {
     // Deleting a folder here removes it and everything under it, permanently.
@@ -181,13 +182,14 @@ export default function FileTree(props) {
     // On Windows it goes to the recycle bin, so a wrong click can be undone;
     // only when the bin cannot take it is a permanent delete offered, as a
     // second, explicit question.
-    const what = `"${item.name}"${item.is_dir ? ' y todo su contenido' : ''}`;
+    const what = `"${item.name}"${item.is_dir ? tr(' y todo su contenido', ' and everything in it') : ''}`;
     const bin = /Windows/i.test(navigator.userAgent || '');
     const ok = await askDialog(
       bin
-        ? `¿Enviar ${what} a la papelera de reciclaje?\n\n(En una unidad sin papelera, como muchas de red, se elimina definitivamente.)`
-        : `¿Eliminar ${what}? Esta acción no se puede deshacer.`,
-      { title: 'Eliminar', kind: 'warning', okLabel: bin ? 'Enviar a la papelera' : 'Eliminar', cancelLabel: 'Cancelar' },
+        ? tr(`¿Enviar ${what} a la papelera de reciclaje?\n\n(En una unidad sin papelera, como muchas de red, se elimina definitivamente.)`,
+          `Send ${what} to the recycle bin?\n\n(On a drive without a bin, like many network drives, it is deleted for good.)`)
+        : tr(`¿Eliminar ${what}? Esta acción no se puede deshacer.`, `Delete ${what}? This cannot be undone.`),
+      { title: tr('Eliminar', 'Delete'), kind: 'warning', okLabel: bin ? tr('Enviar a la papelera', 'Move to the bin') : tr('Eliminar', 'Delete'), cancelLabel: tr('Cancelar', 'Cancel') },
     );
     if (!ok) return;
     try {
@@ -195,8 +197,8 @@ export default function FileTree(props) {
       if (bin) {
         try { await trashPath(item.path); done = true; } catch (err) {
           const forever = await askDialog(
-            `${String(err)}\n\n¿Eliminar ${what} definitivamente? Esta acción no se puede deshacer.`,
-            { title: 'Eliminar', kind: 'warning', okLabel: 'Eliminar definitivamente', cancelLabel: 'Cancelar' },
+            tr(`${String(err)}\n\n¿Eliminar ${what} definitivamente? Esta acción no se puede deshacer.`, `${String(err)}\n\nDelete ${what} for good? This cannot be undone.`),
+            { title: tr('Eliminar', 'Delete'), kind: 'warning', okLabel: tr('Eliminar definitivamente', 'Delete for good'), cancelLabel: tr('Cancelar', 'Cancel') },
           );
           if (!forever) return;
         }
@@ -205,7 +207,7 @@ export default function FileTree(props) {
       pathRemoved(item.path); // its tabs close, unless they hold unsaved text
       refresh(dirOf(item.path));
     } catch (err) {
-      await messageDialog(String(err), { title: 'No se pudo eliminar', kind: 'error' });
+      await messageDialog(String(err), { title: tr('No se pudo eliminar', 'Could not delete'), kind: 'error' });
     }
   };
   const commitCreate = async (name) => {
@@ -222,25 +224,37 @@ export default function FileTree(props) {
     } catch (err) { await messageDialog(String(err), { kind: 'error' }); }
   };
 
+  // «Copiar ruta relativa» answers what LaTeX needs: the path as seen from
+  // the folder of the document being edited (\\input, \\includegraphics,
+  // \\hoja…), forward slashes, `..` when it is elsewhere. With no document
+  // open it is relative to the explorer's root folder.
+  const copyText = (text) => {
+    try { navigator.clipboard.writeText(text); } catch (_) { /* no clipboard */ }
+  };
+  const relBase = () => dirOf(activeDoc()?.path) || props.root;
   const nodeMenu = (e, item) => {
     const dir = item.is_dir ? item.path : dirOf(item.path);
     showContextMenu(e, [
-      { label: 'Abrir', icon: icons.open, onClick: () => (item.is_dir ? toggleDir(item.path) : openFile(item)) },
-      { label: 'Mostrar en el Explorador', icon: icons.folder, onClick: () => revealInExplorer(item.path) },
+      { label: tr('Abrir', 'Open'), icon: icons.open, onClick: () => (item.is_dir ? toggleDir(item.path) : openFile(item)) },
+      { label: tr('Mostrar en el Explorador', 'Reveal in File Explorer'), icon: icons.folder, onClick: () => revealInExplorer(item.path) },
       { separator: true },
-      { label: 'Nuevo archivo…', icon: icons.newFile, onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: false }); } },
-      { label: 'Nueva carpeta…', icon: icons.newFolder, onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: true }); } },
+      { label: tr('Copiar ruta', 'Copy path'), icon: icons.copy, shortcut: tr('Mayús+Alt+C', 'Shift+Alt+C'), onClick: () => copyText(item.path) },
+      { label: tr('Copiar ruta relativa', 'Copy relative path'), icon: icons.copy, shortcut: tr('Ctrl+Mayús+Alt+C', 'Ctrl+Shift+Alt+C'), onClick: () => copyText(relativePath(relBase(), item.path)) },
       { separator: true },
-      { label: 'Renombrar', icon: icons.saveAs, shortcut: 'F2', onClick: () => startRename(item.path) },
-      { label: 'Eliminar', icon: icons.trash, shortcut: 'Supr', danger: true, onClick: () => doDelete(item) },
+      { label: tr('Nuevo archivo…', 'New file…'), icon: icons.newFile, onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: false }); } },
+      { label: tr('Nueva carpeta…', 'New folder…'), icon: icons.newFolder, onClick: () => { setExpanded((s) => new Set(s).add(dir)); setCreating({ dir, isDir: true }); } },
+      { separator: true },
+      { label: tr('Renombrar', 'Rename'), icon: icons.saveAs, shortcut: 'F2', onClick: () => startRename(item.path) },
+      { label: tr('Eliminar', 'Delete'), icon: icons.trash, shortcut: tr('Supr', 'Del'), danger: true, onClick: () => doDelete(item) },
     ]);
   };
   const bgMenu = (e) => {
     showContextMenu(e, [
-      { label: 'Nuevo archivo…', icon: icons.newFile, onClick: () => setCreating({ dir: props.root, isDir: false }) },
-      { label: 'Nueva carpeta…', icon: icons.newFolder, onClick: () => setCreating({ dir: props.root, isDir: true }) },
+      { label: tr('Nuevo archivo…', 'New file…'), icon: icons.newFile, onClick: () => setCreating({ dir: props.root, isDir: false }) },
+      { label: tr('Nueva carpeta…', 'New folder…'), icon: icons.newFolder, onClick: () => setCreating({ dir: props.root, isDir: true }) },
       { separator: true },
-      { label: 'Actualizar', icon: icons.refresh, onClick: () => refresh(props.root) },
+      { label: tr('Copiar ruta de la carpeta', 'Copy folder path'), icon: icons.copy, onClick: () => copyText(props.root) },
+      { label: tr('Actualizar', 'Refresh'), icon: icons.refresh, onClick: () => refresh(props.root) },
     ]);
   };
 
@@ -257,6 +271,11 @@ export default function FileTree(props) {
     if (e.key === 'F2') { e.preventDefault(); startRename(sel.path); }
     else if (e.key === 'Delete') { e.preventDefault(); doDelete(sel); }
     else if (e.key === 'Enter') { e.preventDefault(); sel.is_dir ? toggleDir(sel.path) : openFile(sel); }
+    // VS Code's keys: Shift+Alt+C copies the path, Ctrl+Shift+Alt+C the relative one.
+    else if ((e.key === 'c' || e.key === 'C') && e.shiftKey && e.altKey) {
+      e.preventDefault();
+      copyText(e.ctrlKey ? relativePath(relBase(), sel.path) : sel.path);
+    }
   };
 
   const InlineInput = (p) => (
@@ -301,7 +320,7 @@ export default function FileTree(props) {
             fallback={<span class="ft-name">{item.name}</span>}>
             <InlineInput value={item.name} commit={(v) => commitRename(item, v)} cancel={() => setRenaming(null)} />
           </Show>
-          <Show when={isModified()}><span class="ft-badge" title="Cambios sin guardar">●</span></Show>
+          <Show when={isModified()}><span class="ft-badge" title={tr('Cambios sin guardar', 'Unsaved changes')}>●</span></Show>
         </div>
         <Show when={item.is_dir && isOpen()}>
           <Show when={creating() && creating().dir === item.path}>
@@ -327,12 +346,12 @@ export default function FileTree(props) {
   const headMenu = (e) => {
     e.stopPropagation();
     showContextMenu(e, [
-      { label: 'Nuevo archivo…', icon: icons.newFile, onClick: () => { setFolded(false); setCreating({ dir: props.root, isDir: false }); } },
-      { label: 'Nueva carpeta…', icon: icons.newFolder, onClick: () => { setFolded(false); setCreating({ dir: props.root, isDir: true }); } },
-      { label: 'Mostrar en el Explorador', icon: icons.folder, onClick: () => revealInExplorer(props.root) },
+      { label: tr('Nuevo archivo…', 'New file…'), icon: icons.newFile, onClick: () => { setFolded(false); setCreating({ dir: props.root, isDir: false }); } },
+      { label: tr('Nueva carpeta…', 'New folder…'), icon: icons.newFolder, onClick: () => { setFolded(false); setCreating({ dir: props.root, isDir: true }); } },
+      { label: tr('Mostrar en el Explorador', 'Reveal in File Explorer'), icon: icons.folder, onClick: () => revealInExplorer(props.root) },
       { separator: true },
-      { label: 'Abrir otra carpeta…', icon: icons.open, onClick: () => openProjectFolder() },
-      ...(isProject() ? [{ label: 'Cerrar carpeta', icon: icons.clear, onClick: () => closeProjectFolder() }] : []),
+      { label: tr('Abrir otra carpeta…', 'Open another folder…'), icon: icons.open, onClick: () => openProjectFolder() },
+      ...(isProject() ? [{ label: tr('Cerrar carpeta', 'Close folder'), icon: icons.clear, onClick: () => closeProjectFolder() }] : []),
     ]);
   };
 
@@ -342,10 +361,10 @@ export default function FileTree(props) {
         <span class={`ft-arrow${folded() ? '' : ' open'}`} innerHTML={CI.chevron} />
         <span class="ft-head-name">{baseName(props.root) || props.root}</span>
         <span class="ft-head-acts">
-          {act(CI.newFile, 'Nuevo archivo…', () => { setFolded(false); setCreating({ dir: props.root, isDir: false }); })}
-          {act(CI.newFolder, 'Nueva carpeta…', () => { setFolded(false); setCreating({ dir: props.root, isDir: true }); })}
-          {act(CI.refresh, 'Actualizar el explorador', refreshAll)}
-          {act(CI.collapse, 'Contraer las carpetas', collapseAll)}
+          {act(CI.newFile, tr('Nuevo archivo…', 'New file…'), () => { setFolded(false); setCreating({ dir: props.root, isDir: false }); })}
+          {act(CI.newFolder, tr('Nueva carpeta…', 'New folder…'), () => { setFolded(false); setCreating({ dir: props.root, isDir: true }); })}
+          {act(CI.refresh, tr('Actualizar el explorador', 'Refresh the explorer'), refreshAll)}
+          {act(CI.collapse, tr('Contraer las carpetas', 'Collapse folders'), collapseAll)}
         </span>
       </div>
       <Show when={!folded()}>

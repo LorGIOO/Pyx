@@ -166,3 +166,8 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* Tab reordering: the dragged tab fades, a bar marks where it will land. */
+.doc-tab.dragging { opacity: .45; }
+.doc-tab.drop-before { box-shadow: inset 2px 0 0 var(--theme-accent, #0e639c); }
+.doc-tab.drop-after { box-shadow: inset -2px 0 0 var(--theme-accent, #0e639c); }

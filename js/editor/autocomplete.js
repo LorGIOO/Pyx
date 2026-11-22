@@ -15,6 +15,7 @@ import { state as appState } from '../core/state.js';
 import { dirOf, joinPath } from '../core/paths.js';
 import { getDocContent, getDocText } from './setup.js';
 import { readTextFile } from '../core/platform.js';
+import { t } from '../core/i18n.js';
 
 /* ---------- LaTeX commands and environments: from DATA ----------
    js/data/latex-completions.json lists every command and environment the
@@ -77,7 +78,7 @@ function commandOption([name, args, pkg, detail], loaded) {
   const info = {
     label,
     type: args ? 'function' : 'keyword',
-    detail: pkg ? `${detail} · ${pkg}${known ? '' : ' (se añade \\usepackage)'}` : detail,
+    detail: pkg ? `${detail} · ${pkg}${known ? '' : t(' (se añade \\usepackage)', ' (adds \\usepackage)')}` : detail,
     boost: known ? 0 : -20,
   };
   if (!args && (known || !pkg)) return info;
@@ -92,7 +93,7 @@ function envOption(row, loaded) {
   const known = loaded.has(pkg);
   return withPackage(envTemplate(row), known ? '' : pkg, {
     label: `\\begin{${name}}`, type: 'class', boost: known ? -5 : -25,
-    detail: pkg ? `${detail} · ${pkg}${known ? '' : ' (se añade \\usepackage)'}` : detail,
+    detail: pkg ? `${detail} · ${pkg}${known ? '' : t(' (se añade \\usepackage)', ' (adds \\usepackage)')}` : detail,
   });
 }
 
@@ -102,7 +103,7 @@ function envOption(row, loaded) {
 // to be a snippet with a linked field — two cursors, which outlived the name:
 // Enter split both lines and everything typed afterwards came out twice.
 const beginGeneric = {
-  label: '\\begin{ }', detail: 'entorno personalizado (escribe el nombre)', type: 'class', boost: 60,
+  label: '\\begin{ }', detail: t('entorno personalizado (escribe el nombre)', 'custom environment (type the name)'), type: 'class', boost: 60,
   apply: (view, c, from, to) => {
     insertEnvSkeleton(view, from, to);
     startCompletion(view); // the environment names, for the name being typed
@@ -141,7 +142,7 @@ function latexOptions() {
   for (const [name, n] of user) {
     if (known.has(name)) continue;
     const args = Array.from({ length: n }, (_, i) => `{\${${i + 1}}}`).join('');
-    const info = { label: '\\' + name, type: n ? 'function' : 'keyword', detail: 'definido en el documento', boost: 10 };
+    const info = { label: '\\' + name, type: n ? 'function' : 'keyword', detail: t('definido en el documento', 'defined in the document'), boost: 10 };
     opts.push(n ? snippetCompletion('\\' + name + args, info) : info);
   }
   latexCache = { text, sig, opts };
@@ -160,16 +161,16 @@ const PY_SNIPPETS = [
   snippetCompletion('for ${item} in ${iterable}:\n\t${}', { label: 'for', detail: 'bucle for', type: 'keyword', boost: 50 }),
   snippetCompletion('for ${i} in range(${n}):\n\t${}', { label: 'forrange', detail: 'for i in range(n)', type: 'keyword', boost: 48 }),
   snippetCompletion('while ${condicion}:\n\t${}', { label: 'while', detail: 'bucle while', type: 'keyword', boost: 50 }),
-  snippetCompletion('if ${condicion}:\n\t${}', { label: 'if', detail: 'condición', type: 'keyword', boost: 50 }),
+  snippetCompletion('if ${condicion}:\n\t${}', { label: 'if', detail: t('condición', 'condition'), type: 'keyword', boost: 50 }),
   snippetCompletion('if ${condicion}:\n\t${}\nelse:\n\t', { label: 'ifelse', detail: 'si … si no', type: 'keyword', boost: 48 }),
   snippetCompletion('elif ${condicion}:\n\t${}', { label: 'elif', detail: 'si no, si …', type: 'keyword', boost: 47 }),
-  snippetCompletion('def ${nombre}(${args}):\n\t${}', { label: 'def', detail: 'definir función', type: 'keyword', boost: 50 }),
+  snippetCompletion('def ${nombre}(${args}):\n\t${}', { label: 'def', detail: t('definir función', 'define a function'), type: 'keyword', boost: 50 }),
   snippetCompletion('class ${Nombre}:\n\tdef __init__(self, ${args}):\n\t\t${}', { label: 'class', detail: 'definir clase', type: 'keyword', boost: 48 }),
-  snippetCompletion('with ${expr} as ${nombre}:\n\t${}', { label: 'with', detail: 'gestor de contexto', type: 'keyword', boost: 47 }),
+  snippetCompletion('with ${expr} as ${nombre}:\n\t${}', { label: 'with', detail: t('gestor de contexto', 'context manager'), type: 'keyword', boost: 47 }),
   snippetCompletion('try:\n\t${}\nexcept ${Exception} as e:\n\t', { label: 'try', detail: 'try / except', type: 'keyword', boost: 47 }),
   snippetCompletion('import ${modulo}', { label: 'import', detail: 'importar', type: 'keyword', boost: 46 }),
   snippetCompletion('from ${modulo} import ${nombre}', { label: 'from', detail: 'from … import', type: 'keyword', boost: 46 }),
-  snippetCompletion('lambda ${x}: ${expr}', { label: 'lambda', detail: 'función anónima', type: 'keyword', boost: 40 }),
+  snippetCompletion('lambda ${x}: ${expr}', { label: 'lambda', detail: t('función anónima', 'anonymous function'), type: 'keyword', boost: 40 }),
   pyFunc('print', 'imprimir'),
 ];
 // Without a kernel (or while it is busy): keywords, builtins and the names
@@ -375,7 +376,7 @@ function endApply(env) {
 // FIRST option in every \begin{/\end{ list: type the name freely (clears the
 // partial, leaves the cursor between the braces). "{ … }".
 const freeEnvOption = {
-  label: '{ … }', detail: 'escribir el nombre', type: 'text', boost: 99,
+  label: '{ … }', detail: t('escribir el nombre', 'type the name'), type: 'text', boost: 99,
   apply: (view, c, from, to) => view.dispatch({ changes: { from, to, insert: '' }, selection: { anchor: from } }),
 };
 function beginEnvOptions() {

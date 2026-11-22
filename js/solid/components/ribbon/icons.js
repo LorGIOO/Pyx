@@ -51,6 +51,8 @@ export const icons = {
   mDisplay: `<svg ${A}><path d="M3.2 3v10M2 3h2.4M2 13h2.4M12.8 3v10M11.6 3H14M11.6 13H14"/><text x="8" y="10.6" text-anchor="middle" font-size="7" font-style="italic" font-family="Georgia,serif" fill="currentColor" stroke="none">x</text></svg>`,
   mArray: `<svg ${A}><path d="M3.6 2.6v10.8M12.4 2.6v10.8"/>${dot(6.4, 5.8)}${dot(9.6, 5.8)}${dot(6.4, 10.2)}${dot(9.6, 10.2)}</svg>`,
   table: svg('<rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M1.5 6h13M1.5 9.8h13M6 6v7.5M10.2 6v7.5"/>'),
+  // codicon: attach (paper clip) — «Insertar archivo»
+  attach: svg('<path d="M10.6 4.6 5.5 9.7a1.6 1.6 0 0 0 2.3 2.3l5.4-5.4a3 3 0 0 0-4.3-4.3L3.4 7.8a4.4 4.4 0 0 0 6.2 6.2l4.1-4.1"/>'),
   image: svg('<rect x="1.5" y="2.5" width="13" height="11" rx="1"/><circle cx="5.4" cy="6.2" r="1.2"/><path d="m1.9 12.7 3.8-3.8 2.6 2.6 2.1-2.1 3.3 3.3"/>'),
   list: svg(`<path d="M5.6 3.5h8.9M5.6 8h8.9M5.6 12.5h8.9"/>${dot(2.6, 3.5)}${dot(2.6, 8)}${dot(2.6, 12.5)}`),
 

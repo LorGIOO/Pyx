@@ -45,7 +45,7 @@ async function gatherTexts(root) {
     // The file the walk already found, under ITS spelling of the path: the
     // editor's text replaces the disk's, instead of listing the file twice.
     const onDisk = d.path && disk.find((f) => samePath(f.path, d.path));
-    const key = onDisk ? onDisk.path : (d.path || `(sin guardar) ${d.fileName || ''}`);
+    const key = onDisk ? onDisk.path : (d.path || `${t('(sin guardar)', '(unsaved)')} ${d.fileName || ''}`);
     let text = '';
     try { text = getDocContent(d.id) || ''; } catch (_) { continue; }
     files.set(key, { path: key, text, docId: d.id });
@@ -141,7 +141,7 @@ export default function ProjectSearch() {
     };
     try {
       for (const hit of res.files) {
-        const d = state.documents.find((x) => !x.kind && (samePath(x.path, hit.path) || `(sin guardar) ${x.fileName || ''}` === hit.path));
+        const d = state.documents.find((x) => !x.kind && (samePath(x.path, hit.path) || `${t('(sin guardar)', '(unsaved)')} ${x.fileName || ''}` === hit.path));
         if (d) {
           if (!inEditor(d)) skipped.push(hit.path);
           continue;

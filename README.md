@@ -64,14 +64,14 @@ Celdas de Python como en Jupyter, con su salida debajo: tablas de pandas, gráfi
 
 **Llevar al PDF**
 
-`\py{}` escribe un valor, `\pyif{}` elige un texto. `tabletex()` y `figtex()` convierten una tabla o una gráfica en LaTeX. Las celdas `%%render` de handcalcs muestran el desarrollo del cálculo. `\hoja{}` y `\celda{}` colocan celdas de Excel o CSV, sin Python.
+`\py{}` escribe un valor, `\pyif{}` elige un texto. `tabletex()` y `figtex()` convierten una tabla o una gráfica en LaTeX. Las celdas `%%render` de handcalcs muestran el desarrollo del cálculo. `\hoja{}` y `\celda{}` colocan celdas de Excel o CSV, sin Python y con el formato que quieras (`\celda[.2f]{E4}`).
 
 </td></tr>
 <tr><td valign="top">
 
 **Tablas e imágenes**
 
-Pega celdas de Excel y salen como tabla. Asistentes con vista previa del código y tu propio estilo guardado. Pega una imagen y queda guardada en el proyecto con su figura escrita.
+Pega celdas de Excel y salen como tabla. Asistentes con el código editable y una biblioteca de plantillas propias. Arrastra un Excel, un cuaderno, un PDF o una imagen al editor y se escribe su llamada. Pega una imagen y queda guardada en el proyecto con su figura escrita.
 
 </td><td valign="top">
 

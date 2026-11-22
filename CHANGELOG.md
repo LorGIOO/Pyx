@@ -13,11 +13,36 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   también los de las fórmulas) y CSV con «;» y coma decimal.
 - **Abrir carpeta**: la carpeta del proyecto queda fija en el explorador,
   aunque no haya documentos abiertos, y se recuerda al reiniciar.
-- La configuración se guarda también, legible, en `config.json`
-  (`%APPDATA%\Pyx` en Windows) y se puede exportar e importar.
+- La configuración se guarda sola en `config.json` en la carpeta `config` de
+  la instalación (con copia en la carpeta del usuario), al cambiar cualquier
+  ajuste y al cerrar, y se puede exportar e importar. En esa misma carpeta
+  están `theme.css`, las plantillas, `macros.json` y `symbols.json`.
 - La instalación trae el manual (en español y en inglés), los proyectos de
   ejemplo y la licencia. El manual tiene versión en inglés.
 - Ejemplo nuevo, `05-datos-de-excel`, y todos los ejemplos en inglés.
+- **Formato en `\celda`**, con la mini-lengua de formato de Python:
+  `\celda[.3f]{E4}`, `\celda[,.2f]{…}`, `\celda[.1%]{…}`, `\celda[abs,.2f]{…}`,
+  plantillas como `\celda[{:.2f}\,kN]{E4}`, coma decimal (`coma`),
+  `cmd=\textbf`, `color=red` y `math`. Cualquier LaTeX alrededor funciona como
+  con un texto (`\textbf{\celda{E4}}`, `$\celda{E4}$`); alrededor de un
+  rango se aplica a cada celda. También lee los **nombres definidos** en
+  Excel (`\celda{Caudal}`).
+- **Insertar archivo** (el clip de Inicio → Insertar): Excel (pregunta la
+  hoja), CSV, Jupyter, Python (ejecutar o mostrar el código), PDF (páginas o
+  una página como figura), imagen, LaTeX y bibliografía. **Arrastrar** uno
+  de esos archivos al editor escribe su llamada donde se suelta (con Mayús,
+  abre el diálogo).
+- **Biblioteca de plantillas** de tablas, figuras y llamadas a archivos: el
+  código de los asistentes se puede editar a mano y guardar como plantilla,
+  marcar una como predeterminada (también para lo que se arrastra) y
+  borrarla. Son archivos `.tex` con marcadores `{{…}}`.
+- **Tema personalizado**: un único `theme.css`, que empieza con todos los
+  colores del tema claro u oscuro y admite cualquier regla CSS, como en VS Code.
+- **Mis símbolos** en el panel de símbolos (`symbols.json`), con buscador.
+- Explorador: **Copiar ruta** y **Copiar ruta relativa** (Mayús+Alt+C y
+  Ctrl+Mayús+Alt+C).
+- Las **pestañas** se reordenan arrastrándolas y se cierran con la rueda del
+  ratón.
 
 ### Cambiado
 
@@ -28,6 +53,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
   al comando entero.
 - Explorador, autocompletado y panel de problemas con el aspecto de VS Code.
 - Un documento nuevo empieza vacío.
+- Los temas son claro, oscuro y personalizado (el azul desaparece).
+- Los desplegables abren una lista con el estilo de la app, no la del sistema.
+- Panel de símbolos con la tipografía de las fórmulas (KaTeX), sin textos
+  solapados.
+- Panel lateral en este orden: Explorador, Estructura, Índice, Buscar.
+- Toda la interfaz en inglés cuando se elige inglés (visor PDF, celdas,
+  asistentes, avisos de compilación, menús y textos de ayuda).
 - Los archivos de trabajo de LaTeX se borran al cerrar Pyx (y, si una sesión
   terminó mal, al arrancar): no se quedan en el ordenador.
 

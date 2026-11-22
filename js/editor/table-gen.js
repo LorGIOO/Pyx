@@ -167,3 +167,49 @@ export function slugLabel(text) {
   return String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/\.[A-Za-z0-9]{1,5}$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 }
+
+/**
+ * The pieces of a table that fill a template's {{placeholders}}
+ * (solid/stores/templatesStore.js): the column spec three ways, the header
+ * row, the body rows (plain, and with \hline between them), caption, label.
+ */
+export function tableParts(o) {
+  const rows = (o.cells && o.cells.length ? o.cells : [['']]).map((r) => r.map((c) => String(c == null ? '' : c)));
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  const spec = Array.from({ length: cols }, (_, j) => {
+    const a = (o.align && o.align[j]) || 'l';
+    return a === 'p' ? `p{${o.pWidth || '3cm'}}` : a;
+  });
+  const text = (c) => (o.escape === false ? c.trim() : escapeCell(c));
+  const line = (r, head) => Array.from({ length: cols }, (_, j) => {
+    const t = text(r[j] || '');
+    return head && o.headerBold && t ? `\\textbf{${t}}` : t;
+  }).join(' & ') + ' \\\\';
+  const hasHead = !!o.header && rows.length > 0;
+  const body = (hasHead ? rows.slice(1) : rows).map((r) => line(r, false));
+  return {
+    colspec: spec.join(''),
+    colspec_v: `|${spec.join('|')}|`,
+    colspec_x: spec.map((a) => (a === 'l' ? '>{\\raggedright\\arraybackslash}X' : a === 'r' ? '>{\\raggedleft\\arraybackslash}X' : a === 'c' ? '>{\\centering\\arraybackslash}X' : 'X')).join(''),
+    header: hasHead ? line(rows[0], true) : '',
+    rows: body.join('\n'),
+    rows_hline: body.join('\n\\hline\n'),
+    caption: o.caption || '',
+    label: o.label || '',
+    ncols: String(cols),
+  };
+}
+
+/** The pieces of a (single-image) figure for a template. */
+export function figureParts(o) {
+  const images = (o.images || []).filter((im) => im && String(im.path || '').trim());
+  const path = images.length ? images[0].path.trim() : 'imagen.png';
+  const width = o.unit === 'cm' ? `${num(o.width || 8)}cm`
+    : o.unit === 'natural' ? '' : `${num(o.width || 0.8)}\\textwidth`;
+  const opts = [];
+  if (width) opts.push(`width=${width}`);
+  if (o.height > 0) opts.push(`height=${num(o.height)}cm`);
+  if (width && o.height > 0) opts.push('keepaspectratio');
+  if (o.angle) opts.push(`angle=${num(o.angle)}`);
+  return { path, width: width || '\\linewidth', options: opts.join(', '), caption: o.caption || '', label: o.label || '' };
+}

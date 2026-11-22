@@ -1,13 +1,17 @@
-import { For, Show, createEffect, onCleanup } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { state } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
-import { switchTo, closeDocument } from '../stores/docStore.js';
+import { switchTo, closeDocument, moveDocument } from '../stores/docStore.js';
 import { openNewDoc } from './NewDocDialog.jsx';
 import { icons } from './ribbon/icons.js';
 import { gv } from '../stores/settingsStore.js';
 import CompileLed from './CompileLed.jsx';
 
 const DOC_MIME = 'application/x-calc-doc';
+// Reordering: which tab is being dragged and where it would land
+// ({ index, after }: drop before or after that tab).
+const [dragFrom, setDragFrom] = createSignal(-1);
+const [dropAt, setDropAt] = createSignal(null);
 
 export default function DocumentTabs() {
   let scrollEl;
@@ -48,15 +52,48 @@ export default function DocumentTabs() {
         {(doc, i) => (
           <div
             class={`doc-tab${i() === state.activeIndex ? ' active' : ''}${doc.modified ? ' modified' : ''}`}
+            classList={{
+              dragging: dragFrom() === i(),
+              'drop-before': dropAt()?.index === i() && !dropAt().after,
+              'drop-after': dropAt()?.index === i() && dropAt().after,
+            }}
             onClick={() => switchTo(i())}
+            // Middle button (the wheel) closes the tab, as in a browser or VS Code.
+            onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+            onAuxClick={(e) => {
+              if (e.button !== 1) return;
+              e.preventDefault();
+              closeDocument(i());
+            }}
             title={doc.path || doc.fileName}
             draggable={true}
             onDragStart={(e) => {
               // Drag a tab onto an editor pane (VSCode-style): drop on the
-              // middle = open there, drop on the right edge = split.
+              // middle = open there, drop on the right edge = split. Dropped
+              // on the strip itself it is moved to a new place among the tabs.
               e.dataTransfer.setData(DOC_MIME, String(doc.id));
               e.dataTransfer.effectAllowed = 'move';
+              setDragFrom(i());
             }}
+            onDragOver={(e) => {
+              if (dragFrom() < 0) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              const r = e.currentTarget.getBoundingClientRect();
+              setDropAt({ index: i(), after: e.clientX > r.left + r.width / 2 });
+            }}
+            onDrop={(e) => {
+              const from = dragFrom();
+              const at = dropAt();
+              if (from < 0 || !at) return;
+              e.preventDefault();
+              e.stopPropagation();
+              let to = at.index + (at.after ? 1 : 0);
+              if (from < to) to -= 1;
+              moveDocument(from, to);
+              setDragFrom(-1); setDropAt(null);
+            }}
+            onDragEnd={() => { setDragFrom(-1); setDropAt(null); }}
           >
             <span class="doc-tab-name">{doc.fileName}</span>
             {/* codicon: close */}

@@ -106,7 +106,7 @@ export function parseLatexLog(log, opts = {}) {
     for (const l of block.split('\n')) {
       const m = l.match(/^\[(.+?)\]\s*(.+)$/);
       if (!m) continue;
-      const lm = m[1].match(/\s*·\s*línea\s+(\d+)$/);
+      const lm = m[1].match(/\s*·\s*(?:línea|line)\s+(\d+)$/);
       pushOnce({
         severity: 'error',
         file: null,

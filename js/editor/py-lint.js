@@ -13,6 +13,7 @@ import { linter } from '@codemirror/lint';
 import { parseCells } from './cells.js';
 import { state as appState } from '../core/state.js';
 import { kernelExec, isTauri } from '../core/platform.js';
+import { t } from '../core/i18n.js';
 
 let lintId = 900000; // own id space, distinct from cell runs (cosmetic)
 
@@ -57,7 +58,7 @@ export const pyLint = linter(async (view) => {
         from,
         to: Math.max(from, line.to),
         severity: 'error',
-        message: `SyntaxError: ${f.msg} (línea ${ln})`,
+        message: `SyntaxError: ${f.msg} (${t('línea', 'line')} ${ln})`,
       });
     }
   }

@@ -4,6 +4,7 @@ import {
   termLines, termRunning, runTerminal, stopTerminal, clearTerminal, pushHistory, getHistory,
 } from '../stores/terminalStore.js';
 import { dirOf } from '../../core/paths.js';
+import { t } from '../../core/i18n.js';
 
 export default function TerminalPanel() {
   let scrollRef, inputRef;
@@ -47,9 +48,9 @@ export default function TerminalPanel() {
         <span>Terminal{termRunning() ? ' · ejecutando…' : ''}</span>
         <div class="terminal-header-actions">
           <Show when={termRunning()}>
-            <button onClick={stopTerminal} title="Detener el comando en curso">Detener</button>
+            <button onClick={stopTerminal} title={t('Detener el comando en curso', 'Stop the running command')}>{t('Detener', 'Stop')}</button>
           </Show>
-          <button onClick={clearTerminal} title="Limpiar la salida">Limpiar</button>
+          <button onClick={clearTerminal} title={t('Limpiar la salida', 'Clear the output')}>{t('Limpiar', 'Clear')}</button>
           <button onClick={() => (state.terminalVisible = false)} title="Cerrar">×</button>
         </div>
       </div>

@@ -253,10 +253,15 @@
 .wz-cols { display: flex; gap: 18px; }
 .wz-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .wz-row input[type="checkbox"] { flex: 0 0 auto; }
-/* What "Insertar" will write, as it will be written. */
+/* What "Insertar" will write, as it will be written — and editable. */
 .wz-code {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 120px;
   margin: 2px 0 0;
-  max-height: 170px;
+  max-height: 340px;
   overflow: auto;
   padding: 8px 10px;
   font: 11.5px/1.45 'Cascadia Code', Consolas, monospace;
@@ -281,6 +286,20 @@
 .wz-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .wz-add { align-self: flex-start; }
 .wz-style { display: flex; align-items: center; gap: 8px; }
+.wz-code:focus { outline: 1px solid var(--theme-accent); outline-offset: -1px; }
+.wz-codebar { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+.wz-codebar code { font: 10.5px 'Cascadia Code', Consolas, monospace; color: var(--theme-accent); }
+.wz-edited { color: var(--theme-warning, #b8860b); }
+/* The template library row at the top of an assistant. */
+.wz-tpl {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 0 0 8px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--theme-border);
+}
+.wz-tpl .wz-label { width: auto; margin-right: 2px; }
+.wz-tpl select { flex: 0 1 260px; min-width: 160px; }
+.wz-tpl-name { flex: 0 1 200px; }
+.wz-star.on { color: var(--theme-accent); border-color: var(--theme-accent); }
 
 /* ---- keyboard shortcuts tab (TeXstudio-like table) ---- */
 .cfg-keys-head, .cfg-keys-row {
@@ -395,3 +414,12 @@
 }
 .newdoc-title { font-size: 14px; font-weight: 600; }
 .newdoc-desc { font-size: 12px; color: var(--theme-text-secondary); line-height: 1.4; }
+
+/* «Personalizado»: base theme + the buttons for theme.css */
+.cfg-theme-custom { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cfg-theme-custom .cfg-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--theme-text-secondary); }
+
+/* «Insertar archivo» */
+.insfile-modal { width: min(640px, calc(100vw - 32px)); }
+.insfile-kind { font-weight: 600; color: var(--theme-text); }
+.wz-link { border: none; background: none; padding: 0; color: var(--theme-accent); cursor: pointer; text-decoration: underline; font: inherit; }

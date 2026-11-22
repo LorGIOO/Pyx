@@ -9,7 +9,20 @@
 // which the Content-Security-Policy allows as 'self'.
 try {
   var saved = localStorage.getItem('calc-theme');
-  if (saved) document.documentElement.dataset.theme = saved;
+  if (saved === 'blue') saved = 'dark'; // a theme that no longer exists
+  if (saved === 'custom') {
+    // «Personalizado»: its base theme, plus the last theme.css (cached), so
+    // the very first frame already looks right.
+    document.documentElement.dataset.theme = localStorage.getItem('calc-theme-base') === 'dark' ? 'dark' : 'light';
+    document.documentElement.dataset.customTheme = '1';
+    var css = localStorage.getItem('pyx-theme-css');
+    if (css) {
+      var st = document.createElement('style');
+      st.id = 'pyx-custom-theme';
+      st.textContent = css;
+      document.head.appendChild(st);
+    }
+  } else if (saved) document.documentElement.dataset.theme = saved;
 } catch (_) {
   /* localStorage unavailable — keep the default light theme */
 }

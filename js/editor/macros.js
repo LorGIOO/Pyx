@@ -10,6 +10,26 @@
 import { general, setGeneral } from '../solid/stores/settingsStore.js';
 import { state } from '../core/state.js';
 import { kernelMacro } from './cell-runner.js';
+import { readUserFile, writeUserFile } from '../core/userfiles.js';
+import { t } from '../core/i18n.js';
+
+// The macros also live in macros.json, in Pyx's folder next to config.json:
+// a file to read, back up or share. Edited there, it is read at start.
+export const MACROS_FILE = 'macros.json';
+export async function initMacrosFile() {
+  const text = await readUserFile(MACROS_FILE);
+  if (text == null) {
+    await writeUserFile(MACROS_FILE, JSON.stringify({ macros: getMacros() }, null, 2)).catch(() => {});
+    return;
+  }
+  try {
+    const o = JSON.parse(text);
+    const list = Array.isArray(o) ? o : o && o.macros;
+    if (Array.isArray(list) && JSON.stringify(list) !== JSON.stringify(getMacros())) {
+      setGeneral({ macros: list.map((m) => ({ name: String((m && m.name) || 'Macro'), code: String((m && m.code) || '') })) });
+    }
+  } catch (_) { /* a broken file: keep the settings' copy */ }
+}
 
 export const DEFAULT_MACROS = [
   { name: 'Mayúsculas', code: 'resultado = seleccion.upper()' },
@@ -34,7 +54,9 @@ export function getMacros() {
   return Array.isArray(general.macros) ? general.macros : DEFAULT_MACROS;
 }
 export function saveMacros(list) {
-  setGeneral({ macros: list.map((m) => ({ name: String(m.name || 'Macro'), code: String(m.code || '') })) });
+  const macros = list.map((m) => ({ name: String(m.name || 'Macro'), code: String(m.code || '') }));
+  setGeneral({ macros });
+  writeUserFile(MACROS_FILE, JSON.stringify({ macros }, null, 2)).catch(() => {});
 }
 
 /** Run a macro on the active editor. Returns {result?, stdout?, error?}. */
@@ -42,7 +64,7 @@ export async function runMacro(macro) {
   const { getViewOfDoc, getDocText, applyDocChanges } = await import('./setup.js');
   const d = state.documents[state.activeIndex];
   const view = d ? getViewOfDoc(d.id) : null;
-  if (!view) return { error: 'No hay ningún documento abierto.' };
+  if (!view) return { error: t('No hay ningún documento abierto.', 'No document is open.') };
   const sel = view.state.selection.main;
   const res = await kernelMacro(macro.code, {
     selection: view.state.sliceDoc(sel.from, sel.to),
@@ -71,7 +93,7 @@ export async function runMacro(macro) {
     } else {
       // In another pane now, or in a background tab (no view at all).
       const text = getDocText(d.id);
-      if (!text) return { error: 'El documento de la macro se cerró antes de que terminara: no se ha insertado nada.' };
+      if (!text) return { error: t('El documento de la macro se cerró antes de que terminara: no se ha insertado nada.', 'The macro\'s document closed before it finished: nothing was inserted.') };
       const from = Math.min(sel.from, text.length), to = Math.min(sel.to, text.length);
       applyDocChanges(d.id, { from, to, insert: res.result });
     }

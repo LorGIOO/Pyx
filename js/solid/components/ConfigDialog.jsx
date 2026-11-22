@@ -7,7 +7,8 @@ import {
   KEY_ACTIONS, comboOf, setCombo, resetCombo, resetAllCombos, comboFromEvent, conflictsOf,
   actionLabel, groupLabel,
 } from '../stores/keysStore.js';
-import { THEMES, setTheme, DEFAULT_THEME } from '../stores/themeStore.js';
+import { THEMES, setTheme, DEFAULT_THEME, customBase, setCustomBase, resetCustomTheme, THEME_FILE } from '../stores/themeStore.js';
+import { userDir } from '../../core/userfiles.js';
 import { listFonts } from '../../core/platform.js';
 import {
   broadcastSpellRefresh, setMinimapEnabled, applyEditorSettings,
@@ -424,7 +425,7 @@ const FIELDS = () => [
   {
     cat: 'compile', sec: ['Archivos', 'Files'], key: 'encoding', type: 'select',
     label: 'Codificación de los archivos', en: 'File encoding',
-    opts: ENCODINGS.map((e) => [e, e]),
+    opts: () => ENCODINGS.map((e) => [e, e === 'UTF-8 con BOM' ? tr('UTF-8 con BOM', 'UTF-8 with BOM') : e]),
     // Choosing an encoding here is an explicit request: the documents that
     // are open take it too (docStore keeps a format per document).
     after: () => import('../stores/docStore.js').then((m) => m.applyEncodingSetting()).catch(() => {}),
@@ -516,6 +517,21 @@ const FIELDS = () => [
 
 
 /** The settings file: open its folder, export it, import one. */
+// theme.css opens in Pyx itself: saving it applies the theme at once.
+const [themeBase, setThemeBase] = createSignal(customBase());
+async function editThemeFile() {
+  const P = await import('../../core/platform.js');
+  const { closeDialogs } = await import('../stores/dialogStore.js');
+  const dir = await userDir();
+  if (!dir) { P.messageDialog(tr('Solo en la aplicación de escritorio.', 'Desktop app only.')); return; }
+  const { loadCustomTheme } = await import('../stores/themeStore.js');
+  await loadCustomTheme(); // makes sure the file exists
+  const sep = dir.includes('\\') ? '\\' : '/';
+  const { openPath } = await import('../stores/docStore.js');
+  closeDialogs();
+  openPath(dir + sep + THEME_FILE);
+}
+
 async function configFileAction(what) {
   const P = await import('../../core/platform.js');
   const C = await import('../../core/config-file.js');
@@ -529,10 +545,10 @@ async function configFileAction(what) {
       const from = await P.openJsonDialog();
       if (!from) return;
       if (C.importConfigText(await P.readTextFile(from))) location.reload();
-      else await P.messageDialog('Ese archivo no es una configuración de Pyx.', { title: 'Importar', kind: 'error' });
+      else await P.messageDialog(tr('Ese archivo no es una configuración de Pyx.', 'That file is not a Pyx settings file.'), { title: tr('Importar', 'Import'), kind: 'error' });
     }
   } catch (e) {
-    await P.messageDialog(String(e), { title: 'Configuración', kind: 'error' });
+    await P.messageDialog(String(e), { title: tr('Configuración', 'Settings'), kind: 'error' });
   }
 }
 
@@ -709,11 +725,29 @@ export default function ConfigDialog() {
                     class={`cfg-theme ink-${th.ink}${state.theme === th.id ? ' active' : ''}`}
                     onClick={() => setTheme(th.id)}
                     style={{ background: `linear-gradient(135deg, ${th.swatches[0]} 0 50%, ${th.swatches[1]} 50% 100%)` }}
-                    title={th.label}
-                  ><span class="cfg-theme-name">{th.label}</span></button>
+                    title={th.label()}
+                  ><span class="cfg-theme-name">{th.label()}</span></button>
                 )}
               </For>
             </div>
+            {/* «Personalizado»: one stylesheet, theme.css, in Pyx's folder. */}
+            <Show when={state.theme === 'custom'}>
+              <div class="cfg-theme-custom">
+                <label class="cfg-inline">
+                  <span>{tr('Base', 'Base')}</span>
+                  <select class="cfg-select" value={themeBase()} onChange={(e) => { setCustomBase(e.target.value); setThemeBase(e.target.value); }}>
+                    <option value="light">{tr('Claro', 'Light')}</option>
+                    <option value="dark">{tr('Oscuro', 'Dark')}</option>
+                  </select>
+                </label>
+                <button class="ctl-btn" onClick={() => editThemeFile()}>{tr('Editar theme.css', 'Edit theme.css')}</button>
+                <button class="ctl-btn" onClick={async () => {
+                  const P = await import('../../core/platform.js');
+                  if (await P.askDialog(tr('¿Volver a empezar theme.css con los colores del tema base? Se pierden tus cambios.', 'Start theme.css again from the base theme\'s colours? Your changes are lost.'),
+                    { title: tr('Tema personalizado', 'Custom theme'), kind: 'warning' })) resetCustomTheme();
+                }}>{tr('Empezar de nuevo', 'Start over')}</button>
+              </div>
+            </Show>
           </Show>
         </div>
         <Show when={f.hint}>
@@ -874,8 +908,8 @@ export default function ConfigDialog() {
                   <button class="ctl-btn" onClick={() => configFileAction('import')}>{tr('Importar…', 'Import…')}</button>
                 </div>
                 <p class="cfg-hint">
-                  {tr('Toda la configuración se guarda también, legible, en config.json (en Windows, %APPDATA%\\Pyx). Si Pyx pierde sus datos, se recupera de ahí; exportada, se lleva a otro ordenador.',
-                    'All settings are also saved, readable, in config.json (on Windows, %APPDATA%\\Pyx). If Pyx loses its data they come back from there; exported, they move to another computer.')}
+                  {tr('Toda la configuración se guarda sola, legible, en config.json, en la carpeta «config» de la instalación de Pyx (o, si esa carpeta no admite escritura, en la de tu usuario), con una copia en la de tu usuario. En la misma carpeta están theme.css (el tema personalizado), las plantillas de tablas, figuras y archivos, macros.json y symbols.json. Exportada, la configuración se lleva a otro ordenador.',
+                    'All settings are saved automatically, readable, in config.json, in the «config» folder of Pyx\'s installation (or, if that folder cannot be written, in your user folder), with a copy in your user folder. The same folder holds theme.css (the custom theme), the table, figure and file templates, macros.json and symbols.json. Exported, the settings move to another computer.')}
                 </p>
               </Show>
 

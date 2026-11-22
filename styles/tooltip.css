@@ -50,18 +50,6 @@
   --pyx-tip-key-bottom: rgba(68, 68, 68, 0.6);
 }
 
-/* Pyx's own "blue" theme has no VSCode counterpart: same recipe, its palette. */
-[data-theme="blue"] {
-  --pyx-tip-bg: #1b263b;
-  --pyx-tip-fg: #e0e1dd;
-  --pyx-tip-border: rgba(224, 225, 221, 0.2);
-  --pyx-tip-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
-  --pyx-tip-key-bg: rgba(152, 193, 217, 0.14);
-  --pyx-tip-key-fg: #e0e1dd;
-  --pyx-tip-key-border: rgba(44, 74, 107, 0.8);
-  --pyx-tip-key-bottom: rgba(44, 74, 107, 1);
-}
-
 .pyx-tip {
   display: none;
   position: fixed;

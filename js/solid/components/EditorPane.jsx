@@ -40,15 +40,15 @@ function editorMenu(e) {
       // styled like "Cortar" and "Copiar" there was no way to tell at a
       // glance which rows would replace the word and which would act on it.
       spellItems = [
-        { header: `Sugerencias para «${info.word}»` },
+        { header: t(`Sugerencias para «${info.word}»`, `Suggestions for “${info.word}”`) },
         ...(info.suggestions.length
           ? info.suggestions.map((s) => ({
             label: s, suggestion: true, icon: icons.replace, onClick: () => replace(s),
           }))
-          : [{ label: 'Sin sugerencias', disabled: true, icon: icons.circleSlash, onClick: () => {} }]),
+          : [{ label: t('Sin sugerencias', 'No suggestions'), disabled: true, icon: icons.circleSlash, onClick: () => {} }]),
         { separator: true },
         {
-          label: 'Agregar al diccionario',
+          label: t('Agregar al diccionario', 'Add to dictionary'),
           icon: icons.book,
           onClick: () => { addToUserDict(info.word); broadcastSpellRefresh(); },
         },
@@ -58,20 +58,20 @@ function editorMenu(e) {
   }
   const items = [
     ...spellItems,
-    { label: 'Cortar', icon: icons.cut, shortcut: 'Ctrl+X', onClick: () => clip('cut') },
-    { label: 'Copiar', icon: icons.copy, shortcut: 'Ctrl+C', onClick: () => clip('copy') },
-    { label: 'Pegar', icon: icons.paste, shortcut: 'Ctrl+V', onClick: () => pasteClipboard() },
+    { label: t('Cortar', 'Cut'), icon: icons.cut, shortcut: 'Ctrl+X', onClick: () => clip('cut') },
+    { label: t('Copiar', 'Copy'), icon: icons.copy, shortcut: 'Ctrl+C', onClick: () => clip('copy') },
+    { label: t('Pegar', 'Paste'), icon: icons.paste, shortcut: 'Ctrl+V', onClick: () => pasteClipboard() },
     { separator: true },
-    { label: 'Seleccionar todo', icon: icons.selectAll, shortcut: 'Ctrl+A', onClick: () => selectAll() },
+    { label: t('Seleccionar todo', 'Select all'), icon: icons.selectAll, shortcut: 'Ctrl+A', onClick: () => selectAll() },
     { separator: true },
-    { label: 'Deshacer', icon: icons.undo, shortcut: 'Ctrl+Z', onClick: () => doUndo() },
-    { label: 'Rehacer', icon: icons.redo, shortcut: 'Ctrl+Y', onClick: () => doRedo() },
+    { label: t('Deshacer', 'Undo'), icon: icons.undo, shortcut: 'Ctrl+Z', onClick: () => doUndo() },
+    { label: t('Rehacer', 'Redo'), icon: icons.redo, shortcut: 'Ctrl+Y', onClick: () => doRedo() },
     { separator: true },
-    { label: 'Buscar…', icon: icons.find, shortcut: 'Ctrl+F', onClick: () => openFind() },
+    { label: t('Buscar…', 'Find…'), icon: icons.find, shortcut: 'Ctrl+F', onClick: () => openFind() },
   ];
   // Python cells are a Pyx (.pltx) capability — hidden for plain .tex.
   if (isPyxDoc(activeDoc())) {
-    items.push({ label: 'Nueva celda Python', icon: icons.cell, shortcut: 'Ctrl+Alt+C', onClick: () => insertCell() });
+    items.push({ label: t('Nueva celda Python', 'New Python cell'), icon: icons.cell, shortcut: 'Ctrl+Alt+C', onClick: () => insertCell() });
   }
   showContextMenu(e, items);
 }
@@ -121,7 +121,7 @@ function Pane(props) {
       onDrop={onDrop}
     >
       <Show when={state.panes.length > 1}>
-        <button class="split-close" title="Cerrar panel"
+        <button class="split-close" title={t('Cerrar panel', 'Close pane')}
           onClick={(e) => { e.stopPropagation(); closePane(props.pane.id); }}>×</button>
       </Show>
 

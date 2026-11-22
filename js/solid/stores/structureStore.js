@@ -17,6 +17,7 @@
 
 import { createSignal } from 'solid-js';
 import { stripTexComment } from '../../compile/latex-bridge.js';
+import { t } from '../../core/i18n.js';
 
 /** The active document's text as a CodeMirror `Text` (or a plain string in
  *  tests). Cheap to hold and to swap — it is a rope, not a copy. */
@@ -67,7 +68,7 @@ export function parseTOC(src) {
     }
     out.push({
       level: LEVEL[m[1]], kind: m[1], star: m[2] === '*',
-      title: title.trim() || '(sin título)', line: i,
+      title: title.trim() || t('(sin título)', '(untitled)'), line: i,
     });
   }
   return out;

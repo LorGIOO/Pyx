@@ -1,12 +1,15 @@
 import { render } from 'solid-js/web';
-import { initConfigFile } from './core/config-file.js';
-import { onMount } from 'solid-js';
+import { initConfigFile, flushConfigFile } from './core/config-file.js';
+import { onMount, createRoot, createEffect } from 'solid-js';
+import { lang, t } from './core/i18n.js';
+import { initTheme, applyRemoteTheme } from './solid/stores/themeStore.js';
+import { installSelectPopup } from './solid/components/select-popup.js';
 import App from './solid/App.jsx';
 import PreviewPane from './solid/components/PreviewPane.jsx';
 import { state } from './core/state.js';
 import {
   detectEnv, isTauri, openExternal, onAppEvent, focusSelf, invoke,
-  onCloseRequested, destroyWindow, askDialog, pathExists,
+  onCloseRequested, destroyWindow, askDialog, pathExists, setUiLang,
 } from './core/platform.js';
 import { setChangeHandler, getViewOfDoc } from './editor/setup.js';
 import {
@@ -83,9 +86,7 @@ if (viewerBoot) {
       }
     });
     // Follow the main window's theme when it changes while this window is open.
-    onAppEvent('theme:set', (id) => {
-      if (id) document.documentElement.dataset.theme = String(id);
-    });
+    onAppEvent('theme:set', (msg) => applyRemoteTheme(msg));
     return (
       <div class="preview-pane" style={{ height: '100vh' }}>
         <PreviewPane />
@@ -128,16 +129,18 @@ if (viewerBoot) {
     try {
       let go;
       try {
-        go = await resolveUnsaved({ title: 'Cerrar Pyx' });
+        go = await resolveUnsaved({ title: t('Cerrar Pyx', 'Close Pyx') });
       } catch (_) {
         // The question itself failed. Never trap the user in a window that
         // cannot be closed — but still do not close silently.
         go = await askDialog(
-          'No se pudo comprobar si hay cambios sin guardar. ¿Cerrar Pyx de todas formas?',
-          { title: 'Cerrar Pyx', okLabel: 'Cerrar', cancelLabel: 'Cancelar' },
+          t('No se pudo comprobar si hay cambios sin guardar. ¿Cerrar Pyx de todas formas?', 'Could not check for unsaved changes. Close Pyx anyway?'),
+          { title: t('Cerrar Pyx', 'Close Pyx'), okLabel: t('Cerrar', 'Close'), cancelLabel: t('Cancelar', 'Cancel') },
         ).catch(() => true);
       }
       if (go) {
+        // The settings file is written NOW, not a second from now.
+        await flushConfigFile().catch(() => {});
         // A downloaded, verified update installs on the way out.
         const { installOnExit } = await import('./core/updates.js');
         if (await installOnExit()) return;
@@ -275,6 +278,13 @@ if (viewerBoot) {
   initConfigFile().then((restored) => { if (restored) location.reload(); }).catch(() => {});
 
   render(() => <App />, document.getElementById('app-root'));
+  initTheme();
+  installSelectPopup(); // every <select> opens Pyx's own list
+  import('./editor/macros.js').then((m) => m.initMacrosFile()).catch(() => {});
+  // Files dragged from the system onto the editor: their call goes in.
+  import('./editor/file-drop.js').then((m) => m.installFileDrop({ openPath })).catch(() => {});
+  // The Rust side writes some messages too (Excel cells…): same language.
+  createRoot(() => createEffect(() => { setUiLang(lang()); }));
 
   // Probe the toolchain (Python + LaTeX) and warm up the kernel in the background.
   if (isTauri()) {

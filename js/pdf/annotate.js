@@ -22,6 +22,7 @@ import {
   r2, markPaths, bbox, hitTest, moveMark, handlesOf, applyHandle, snapAngle, eraseAt, headsOf, mergeLineRects,
   noteWidth, noteHeight, tboxHeight, NOTE_FONT, onNoteIcon,
 } from './annot-geom.js';
+import { t } from '../core/i18n.js';
 
 export { mergeLineRects, smoothPath, hitTest, bbox } from './annot-geom.js';
 
@@ -335,7 +336,7 @@ function editText(n, a, content, isNew) {
   if (a.closed) { delete a.closed; redraw(n); }
   ta.className = isBox ? 'annot-tbox-editor' : 'annot-note-editor';
   ta.value = a.str || '';
-  ta.placeholder = isBox ? 'Texto… (Ctrl+Intro termina, Esc cancela)' : 'Comentario… (Ctrl+Intro para terminar, Esc cancela)';
+  ta.placeholder = isBox ? t('Texto… (Ctrl+Intro termina, Esc cancela)', 'Text… (Ctrl+Enter finishes, Esc cancels)') : t('Comentario… (Ctrl+Intro para terminar, Esc cancela)', 'Comment… (Ctrl+Enter to finish, Esc cancels)');
   if (isBox) {
     // The editor sits exactly where the text will be, at its real size.
     const k = svg ? pxPerPt(svg, w) : 1;
@@ -420,18 +421,22 @@ export function markupFromSelection() {
 }
 
 /* ---------- the list of corrections ---------- */
-const LABEL = {
+const LABEL_ES = {
   hl: 'Resaltado', ul: 'Subrayado', st: 'Tachado', note: 'Comentario', text: 'Nota', tbox: 'Texto', pen: 'Trazo',
   highlight: 'Rotulador', line: 'Línea', arrow: 'Flecha', rect: 'Recuadro', ellipse: 'Elipse',
+};
+const LABEL_EN = {
+  hl: 'Highlight', ul: 'Underline', st: 'Strike-out', note: 'Comment', text: 'Note', tbox: 'Text', pen: 'Stroke',
+  highlight: 'Marker', line: 'Line', arrow: 'Arrow', rect: 'Rectangle', ellipse: 'Ellipse',
 };
 /** Every mark of the document as one line of text, page by page. */
 export function correctionsText() {
   const lines = [];
   for (const n of annotatedPages()) {
     for (const a of store[n]) {
-      const what = LABEL[a.t === 'mark' ? a.k : a.t] || a.t;
+      const what = t(LABEL_ES, LABEL_EN)[a.t === 'mark' ? a.k : a.t] || a.t;
       const body = a.t === 'mark' ? `: «${a.txt || ''}»` : a.str ? `: ${a.str.replace(/\s*\n\s*/g, ' / ')}` : '';
-      lines.push(`Pág. ${n} · ${what}${body}`);
+      lines.push(`${t('Pág.', 'p.')} ${n} · ${what}${body}`);
     }
   }
   return lines.join('\n');

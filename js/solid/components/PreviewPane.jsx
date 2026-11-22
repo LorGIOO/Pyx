@@ -23,6 +23,7 @@ import {
 import { icons as ICO } from './ribbon/icons.js';
 import PdfOutline from './PdfOutline.jsx';
 import { createAnchoredPopup } from './createAnchoredPopup.js';
+import { t as tr } from '../../core/i18n.js';
 
 // Viewer toolbar icons — same hand as the ribbon and the notebook cells:
 // a 16x16 box, 1.2px strokes, no fills unless the shape IS a solid. The
@@ -77,32 +78,32 @@ const [outlineOpen, setOutlineOpen] = createSignal(false);
 // Review tools, in the order a corrector reaches for them: pick/move, the
 // three that act on SELECTED TEXT, free drawing, shapes, text, eraser, laser.
 const ANNOT_TOOLS = [
-  { id: 'select', icon: 'select', title: 'Seleccionar y editar: arrastra una marca para moverla o sus tiradores para cambiarle el tamaño y la forma (el del centro de una línea la curva); las flechas del teclado la desplazan; Supr la borra; doble clic edita un texto o un comentario' },
-  { id: 'texthl', icon: 'texthl', title: 'Resaltar texto (selecciónalo)' },
-  { id: 'underline', icon: 'underline', title: 'Subrayar texto (selecciónalo)' },
-  { id: 'strike', icon: 'strike', title: 'Tachar texto (selecciónalo)' },
-  { id: 'pen', icon: 'pen', title: 'Lápiz (trazo libre suavizado)' },
-  { id: 'highlight', icon: 'marker', title: 'Rotulador (resaltado a mano alzada)' },
-  { id: 'line', icon: 'line', title: 'Línea: recta, curva o en codo (Mayús: 0°/45°/90°)' },
-  { id: 'arrow', icon: 'arrow', title: 'Flecha: recta, curva o en codo, con una o dos puntas (Mayús: 0°/45°/90°)' },
-  { id: 'rect', icon: 'rect', title: 'Recuadro (Mayús: cuadrado)' },
-  { id: 'ellipse', icon: 'ellipse', title: 'Elipse (Mayús: círculo)' },
-  { id: 'tbox', icon: 'tbox', title: 'Cuadro de texto: clic donde va y escribe; doble clic con «Seleccionar» lo vuelve a editar' },
-  { id: 'note', icon: 'note', title: 'Comentario: clic donde va; se escribe en la página (Ctrl+Intro termina). Un clic en su icono lo pliega y deja solo el icono; otro lo abre' },
-  { id: 'eraser', icon: 'eraser', title: 'Borrador: la marca entera o solo la parte que toca' },
-  { id: 'laser', icon: 'laser', title: 'Láser: señala con un trazo que se desvanece solo (no se guarda)' },
+  { id: 'select', icon: 'select', title: () => tr('Seleccionar y editar: arrastra una marca para moverla o sus tiradores para cambiarle el tamaño y la forma (el del centro de una línea la curva); las flechas del teclado la desplazan; Supr la borra; doble clic edita un texto o un comentario', 'Select and edit: drag a mark to move it, or its handles to change its size and shape (the middle one of a line bends it); the arrow keys nudge it; Del deletes it; double-click edits a text or a comment') },
+  { id: 'texthl', icon: 'texthl', title: () => tr('Resaltar texto (selecciónalo)', 'Highlight text (select it)') },
+  { id: 'underline', icon: 'underline', title: () => tr('Subrayar texto (selecciónalo)', 'Underline text (select it)') },
+  { id: 'strike', icon: 'strike', title: () => tr('Tachar texto (selecciónalo)', 'Strike out text (select it)') },
+  { id: 'pen', icon: 'pen', title: () => tr('Lápiz (trazo libre suavizado)', 'Pen (smoothed freehand stroke)') },
+  { id: 'highlight', icon: 'marker', title: () => tr('Rotulador (resaltado a mano alzada)', 'Marker (freehand highlight)') },
+  { id: 'line', icon: 'line', title: () => tr('Línea: recta, curva o en codo (Mayús: 0°/45°/90°)', 'Line: straight, curved or elbow (Shift: 0°/45°/90°)') },
+  { id: 'arrow', icon: 'arrow', title: () => tr('Flecha: recta, curva o en codo, con una o dos puntas (Mayús: 0°/45°/90°)', 'Arrow: straight, curved or elbow, with one or two heads (Shift: 0°/45°/90°)') },
+  { id: 'rect', icon: 'rect', title: () => tr('Recuadro (Mayús: cuadrado)', 'Rectangle (Shift: square)') },
+  { id: 'ellipse', icon: 'ellipse', title: () => tr('Elipse (Mayús: círculo)', 'Ellipse (Shift: circle)') },
+  { id: 'tbox', icon: 'tbox', title: () => tr('Cuadro de texto: clic donde va y escribe; doble clic con «Seleccionar» lo vuelve a editar', 'Text box: click where it goes and type; double-click with “Select” to edit it again') },
+  { id: 'note', icon: 'note', title: () => tr('Comentario: clic donde va; se escribe en la página (Ctrl+Intro termina). Un clic en su icono lo pliega y deja solo el icono; otro lo abre', 'Comment: click where it goes; you type on the page (Ctrl+Enter finishes). A click on its icon folds it to just the icon; another opens it') },
+  { id: 'eraser', icon: 'eraser', title: () => tr('Borrador: la marca entera o solo la parte que toca', 'Eraser: the whole mark or only the part it touches') },
+  { id: 'laser', icon: 'laser', title: () => tr('Láser: señala con un trazo que se desvanece solo (no se guarda)', 'Laser: point with a stroke that fades by itself (not saved)') },
 ];
 const ANNOT_COLORS = ['#ffd400', '#e23b3b', '#f5a623', '#2ca24c', '#2f7fe0', '#9b51e0', '#1a1a1a'];
 
 /** Copy every mark of the document, page by page, as a list of corrections. */
 async function copyCorrections() {
   const text = correctionsText();
-  if (!text) { messageDialog('No hay anotaciones en este PDF.'); return; }
+  if (!text) { messageDialog(tr('No hay anotaciones en este PDF.', 'There are no annotations in this PDF.')); return; }
   try {
     await navigator.clipboard.writeText(text);
-    messageDialog(`Lista de correcciones copiada (${text.split('\n').length} marcas). Pégala en un correo o documento.`);
+    messageDialog(tr(`Lista de correcciones copiada (${text.split('\n').length} marcas). Pégala en un correo o documento.`, `List of corrections copied (${text.split('\n').length} marks). Paste it into an email or a document.`));
   } catch (_) {
-    messageDialog('No se pudo copiar al portapapeles.');
+    messageDialog(tr('No se pudo copiar al portapapeles.', 'Could not copy to the clipboard.'));
   }
 }
 
@@ -113,14 +114,14 @@ async function exportPdfCopy(marks = null) {
   if (!p) return;
   let withMarks = marks;
   if (withMarks === null && hasAnnotations()) {
-    const ans = await choiceDialog('Este PDF tiene anotaciones. ¿Guardar la copia con ellas dibujadas en las páginas?',
-      { title: 'Guardar una copia del PDF', kind: 'info', yes: 'Con anotaciones', no: 'Sin anotaciones' });
+    const ans = await choiceDialog(tr('Este PDF tiene anotaciones. ¿Guardar la copia con ellas dibujadas en las páginas?', 'This PDF has annotations. Save the copy with them drawn on the pages?'),
+      { title: tr('Guardar una copia del PDF', 'Save a copy of the PDF'), kind: 'info', yes: tr('Con anotaciones', 'With annotations'), no: tr('Sin anotaciones', 'Without annotations') });
     if (ans === 'cancel') return;
     withMarks = ans === 'yes';
   }
-  if (withMarks && !hasAnnotations()) { messageDialog('No hay anotaciones en este PDF.'); return; }
+  if (withMarks && !hasAnnotations()) { messageDialog(tr('No hay anotaciones en este PDF.', 'There are no annotations in this PDF.')); return; }
   const stem = (previewFile() || 'documento.pdf').replace(/\.[^.]*$/, '');
-  const dest = await savePdfDialog(`${stem}${withMarks ? ' (anotado)' : ''}.pdf`);
+  const dest = await savePdfDialog(`${stem}${withMarks ? tr(' (anotado)', ' (annotated)') : ''}.pdf`);
   if (!dest) return;
   try {
     if (withMarks) {
@@ -130,8 +131,8 @@ async function exportPdfCopy(marks = null) {
       await copyFile(p, dest);
     }
   } catch (e) {
-    messageDialog(`No se pudo guardar el PDF: ${String((e && e.message) || e)}`,
-      { title: 'Exportar PDF', kind: 'error' });
+    messageDialog(tr(`No se pudo guardar el PDF: ${String((e && e.message) || e)}`, `Could not save the PDF: ${String((e && e.message) || e)}`),
+      { title: tr('Exportar PDF', 'Export PDF'), kind: 'error' });
   }
 }
 
@@ -143,14 +144,16 @@ function clearThisPage() {
   if (clearPage(n)) return;
   const others = annotatedPages();
   messageDialog(others.length
-    ? `La página ${n} no tiene anotaciones. Las hay en ${others.length === 1 ? 'la página' : 'las páginas'} ${others.join(', ')}.`
-    : 'Este PDF no tiene anotaciones.');
+    ? tr(`La página ${n} no tiene anotaciones. Las hay en ${others.length === 1 ? 'la página' : 'las páginas'} ${others.join(', ')}.`,
+      `Page ${n} has no annotations. There are some on ${others.length === 1 ? 'page' : 'pages'} ${others.join(', ')}.`)
+    : tr('Este PDF no tiene anotaciones.', 'This PDF has no annotations.'));
 }
 async function clearEverything() {
-  if (!hasAnnotations()) { messageDialog('Este PDF no tiene anotaciones.'); return; }
+  if (!hasAnnotations()) { messageDialog(tr('Este PDF no tiene anotaciones.', 'This PDF has no annotations.')); return; }
   const n = annotatedPages().length;
-  const ok = await askDialog(`¿Borrar todas las anotaciones del documento (${n} página${n === 1 ? '' : 's'})?\n\nCtrl+Z las recupera mientras el visor siga abierto.`,
-    { title: 'Borrar anotaciones' });
+  const ok = await askDialog(tr(`¿Borrar todas las anotaciones del documento (${n} página${n === 1 ? '' : 's'})?\n\nCtrl+Z las recupera mientras el visor siga abierto.`,
+    `Delete all the annotations of the document (${n} page${n === 1 ? '' : 's'})?\n\nCtrl+Z brings them back while the viewer stays open.`),
+    { title: tr('Borrar anotaciones', 'Delete annotations') });
   if (ok) clearAll();
 }
 
@@ -178,7 +181,7 @@ function AnnotBar() {
     <div class="pdf-annotbar">
       <For each={ANNOT_TOOLS}>
         {(t) => (
-          <button class={`pv-btn${annotTool() === t.id ? ' active' : ''}`} title={t.title}
+          <button class={`pv-btn${annotTool() === t.id ? ' active' : ''}`} title={t.title()}
             innerHTML={ic[t.icon]}
             onClick={() => setAnnotTool(annotTool() === t.id ? '' : t.id)}></button>
         )}
@@ -190,72 +193,72 @@ function AnnotBar() {
             style={{ background: c }} onClick={() => setColor(c)}></button>
         )}
       </For>
-      <input type="color" class="annot-color" title="Color personalizado"
+      <input type="color" class="annot-color" title={tr('Color personalizado', 'Custom colour')}
         value={annotColor()} onInput={(e) => setColor(e.target.value)} />
       <Show when={hasWidth()}>
         <label class="annot-num" title={ctx() === 'eraser'
-          ? 'Tamaño del borrador (el círculo del puntero). La rueda lo cambia.'
-          : 'Grosor del trazo, en puntos. La rueda lo cambia; el círculo del puntero muestra el tamaño real.'}>
-          <span>{ctx() === 'eraser' ? 'Tamaño' : 'Grosor'}</span>
+          ? tr('Tamaño del borrador (el círculo del puntero). La rueda lo cambia.', 'Eraser size (the pointer circle). The wheel changes it.')
+          : tr('Grosor del trazo, en puntos. La rueda lo cambia; el círculo del puntero muestra el tamaño real.', 'Stroke width, in points. The wheel changes it; the pointer circle shows the real size.')}>
+          <span>{ctx() === 'eraser' ? tr('Tamaño', 'Size') : tr('Grosor', 'Width')}</span>
           <input type="number" min="0.25" max="60" step="0.25" value={annotWidth()}
             onChange={(e) => setWidth(e.target.value)}
             onWheel={wheel(annotWidth, setWidth, 0.5)} />
         </label>
       </Show>
       <Show when={ctx() === 'tbox'}>
-        <label class="annot-num" title="Tamaño de la letra, en puntos. La rueda lo cambia.">
-          <span>Letra</span>
+        <label class="annot-num" title={tr('Tamaño de la letra, en puntos. La rueda lo cambia.', 'Font size, in points. The wheel changes it.')}>
+          <span>{tr('Letra', 'Font')}</span>
           <input type="number" min="4" max="96" step="1" value={annotFont()}
             onChange={(e) => setFont(e.target.value)} onWheel={wheel(annotFont, setFont, 1)} />
         </label>
       </Show>
       <Show when={isLine()}>
-        <select class="annot-width" title="Forma de la línea: recta, curva (se ajusta arrastrando su centro con «Seleccionar») o en codo"
+        <select class="annot-width" title={tr('Forma de la línea: recta, curva (se ajusta arrastrando su centro con «Seleccionar») o en codo', 'Line shape: straight, curved (adjusted by dragging its middle with “Select”) or elbow')}
           value={annotLineKind()}
           onChange={(e) => { setAnnotLineKind(e.target.value); applyStyle({ kind: e.target.value }); }}>
-          <option value="straight">Recta</option>
-          <option value="curve">Curva</option>
-          <option value="elbow">En codo</option>
+          <option value="straight">{tr('Recta', 'Straight')}</option>
+          <option value="curve">{tr('Curva', 'Curved')}</option>
+          <option value="elbow">{tr('En codo', 'Elbow')}</option>
         </select>
       </Show>
       <Show when={ctx() === 'arrow'}>
-        <select class="annot-width" title="Puntas de la flecha" value={annotHeads()}
+        <select class="annot-width" title={tr('Puntas de la flecha', 'Arrow heads')} value={annotHeads()}
           onChange={(e) => { setAnnotHeads(e.target.value); applyStyle({ heads: e.target.value }); }}>
-          <option value="end">→ Al final</option>
-          <option value="both">↔ En los dos extremos</option>
-          <option value="start">← Al inicio</option>
-          <option value="none">— Sin punta</option>
+          <option value="end">{tr('→ Al final', '→ At the end')}</option>
+          <option value="both">{tr('↔ En los dos extremos', '↔ At both ends')}</option>
+          <option value="start">{tr('← Al inicio', '← At the start')}</option>
+          <option value="none">{tr('— Sin punta', '— No head')}</option>
         </select>
       </Show>
       <Show when={canDash()}>
-        <button class={`pv-btn annot-toggle${annotDash() ? ' active' : ''}`} title="Trazo discontinuo"
+        <button class={`pv-btn annot-toggle${annotDash() ? ' active' : ''}`} title={tr('Trazo discontinuo', 'Dashed stroke')}
           onClick={() => { const v = !annotDash(); setAnnotDash(v); applyStyle({ dash: v }); }}>┄</button>
       </Show>
       <Show when={ctx() === 'rect'}>
-        <button class={`pv-btn annot-toggle${annotRound() ? ' active' : ''}`} title="Esquinas redondeadas"
+        <button class={`pv-btn annot-toggle${annotRound() ? ' active' : ''}`} title={tr('Esquinas redondeadas', 'Rounded corners')}
           onClick={() => { const v = !annotRound(); setAnnotRound(v); applyStyle({ round: v }); }}>▢</button>
       </Show>
       <Show when={annotTool() === 'eraser'}>
-        <select class="annot-width" title="Qué borra el borrador" value={annotEraser()}
+        <select class="annot-width" title={tr('Qué borra el borrador', 'What the eraser deletes')} value={annotEraser()}
           onChange={(e) => setAnnotEraser(e.target.value)}>
-          <option value="whole">La marca entera</option>
-          <option value="part">Solo lo que toca</option>
+          <option value="whole">{tr('La marca entera', 'The whole mark')}</option>
+          <option value="part">{tr('Solo lo que toca', 'Only what it touches')}</option>
         </select>
       </Show>
       <div class="pv-sep"></div>
-      <button class="pv-btn" title="Deshacer (Ctrl+Z)" innerHTML={ic.undo} onClick={undo}></button>
-      <button class="pv-btn" title="Rehacer (Ctrl+Y)" innerHTML={ic.redo} onClick={redo}></button>
-      <button class="pv-btn" title="Copiar la lista de correcciones (página, tipo y texto de cada marca)" innerHTML={ic.copyList}
+      <button class="pv-btn" title={tr('Deshacer (Ctrl+Z)', 'Undo (Ctrl+Z)')} innerHTML={ic.undo} onClick={undo}></button>
+      <button class="pv-btn" title={tr('Rehacer (Ctrl+Y)', 'Redo (Ctrl+Y)')} innerHTML={ic.redo} onClick={redo}></button>
+      <button class="pv-btn" title={tr('Copiar la lista de correcciones (página, tipo y texto de cada marca)', 'Copy the list of corrections (page, type and text of each mark)')} innerHTML={ic.copyList}
         onClick={copyCorrections}></button>
-      <button class="pv-btn" title="Plegar o desplegar todos los comentarios (plegado, solo se ve su icono; un clic en el icono de uno lo pliega o lo abre)" innerHTML={ic.noteFold}
-        onClick={() => { if (toggleAllNotes() === null) messageDialog('Este PDF no tiene comentarios.'); }}></button>
-      <button class="pv-btn" title="Guardar una copia del PDF con las anotaciones dibujadas en sus páginas" innerHTML={ic.saveMarks}
+      <button class="pv-btn" title={tr('Plegar o desplegar todos los comentarios (plegado, solo se ve su icono; un clic en el icono de uno lo pliega o lo abre)', 'Fold or unfold all comments (folded, only the icon shows; a click on one icon folds or opens it)')} innerHTML={ic.noteFold}
+        onClick={() => { if (toggleAllNotes() === null) messageDialog(tr('Este PDF no tiene comentarios.', 'This PDF has no comments.')); }}></button>
+      <button class="pv-btn" title={tr('Guardar una copia del PDF con las anotaciones dibujadas en sus páginas', 'Save a copy of the PDF with the annotations drawn on its pages')} innerHTML={ic.saveMarks}
         onClick={() => exportPdfCopy(true)}></button>
-      <button class="pv-btn" title="Borrar las anotaciones de la página a la vista" innerHTML={ic.trashPage}
+      <button class="pv-btn" title={tr('Borrar las anotaciones de la página a la vista', 'Delete the annotations of the page in view')} innerHTML={ic.trashPage}
         onClick={clearThisPage}></button>
-      <button class="pv-btn" title="Borrar todas las anotaciones del documento" innerHTML={ic.trashAll}
+      <button class="pv-btn" title={tr('Borrar todas las anotaciones del documento', 'Delete all the annotations of the document')} innerHTML={ic.trashAll}
         onClick={clearEverything}></button>
-      <button class="pv-btn" title="Cerrar la barra de anotación" innerHTML={ic.close}
+      <button class="pv-btn" title={tr('Cerrar la barra de anotación', 'Close the annotation bar')} innerHTML={ic.close}
         onClick={() => { setAnnotTool(''); setAnnotBarOpen(false); }}></button>
     </div>
   );
@@ -291,7 +294,7 @@ function PdfSearchBar() {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Buscar en el PDF"
+        placeholder={tr('Buscar en el PDF', 'Search the PDF')}
         onInput={(e) => run(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') step(e.shiftKey ? -1 : 1);
@@ -303,13 +306,13 @@ function PdfSearchBar() {
           searched. Show that progress instead of appearing frozen. */}
       <span class="pdf-search-count">
         {searchProgress() > 0 && searchProgress() < 1
-          ? `Indexando… ${Math.round(searchProgress() * 100)}%`
-          : total() ? `${pos()} de ${total()}` : 'Sin resultados'}
+          ? tr(`Indexando… ${Math.round(searchProgress() * 100)}%`, `Indexing… ${Math.round(searchProgress() * 100)}%`)
+          : total() ? tr(`${pos()} de ${total()}`, `${pos()} of ${total()}`) : tr('Sin resultados', 'No results')}
       </span>
       {/* codicon: arrow-up / arrow-down / close */}
-      <button class="pyx-ico" title="Anterior (Shift+Enter)" innerHTML={ICO.arrowUp} onClick={() => step(-1)} />
-      <button class="pyx-ico" title="Siguiente (Enter)" innerHTML={ICO.arrowDown} onClick={() => step(1)} />
-      <button class="pyx-ico" title="Cerrar (Esc)" innerHTML={ic.close} onClick={close} />
+      <button class="pyx-ico" title={tr('Anterior (Shift+Enter)', 'Previous (Shift+Enter)')} innerHTML={ICO.arrowUp} onClick={() => step(-1)} />
+      <button class="pyx-ico" title={tr('Siguiente (Enter)', 'Next (Enter)')} innerHTML={ICO.arrowDown} onClick={() => step(1)} />
+      <button class="pyx-ico" title={tr('Cerrar (Esc)', 'Close (Esc)')} innerHTML={ic.close} onClick={close} />
     </div>
   );
 }
@@ -341,7 +344,7 @@ export default function PreviewPane() {
       state.previewVisible = false;
       state.viewerMaximized = false;
     }).catch((e) =>
-      messageDialog(`No se pudo abrir la ventana del visor: ${String((e && e.message) || e)}`));
+      messageDialog(tr(`No se pudo abrir la ventana del visor: ${String((e && e.message) || e)}`, `Could not open the viewer window: ${String((e && e.message) || e)}`)));
   };
   const onPageInput = (e) => { const n = parseInt(e.target.value, 10); if (n) goToPage(Math.max(1, Math.min(numPages(), n))); };
   const canPrev = () => hasPdf() && currentPage() > 1;
@@ -426,50 +429,50 @@ export default function PreviewPane() {
         {/* Greyed out at the ends of the document, like every PDF viewer: the
             four arrows used to look live on page 1 of 1 and simply did nothing
             when clicked. */}
-        <Btn icon={ic.first} title="Primera página" disabled={!canPrev()} onClick={goFirst} />
-        <Btn icon={ic.prev} title="Página anterior" disabled={!canPrev()} onClick={goPrev} />
+        <Btn icon={ic.first} title={tr('Primera página', 'First page')} disabled={!canPrev()} onClick={goFirst} />
+        <Btn icon={ic.prev} title={tr('Página anterior', 'Previous page')} disabled={!canPrev()} onClick={goPrev} />
         <div class="pv-page">
           <input type="text" value={currentPage()} onChange={onPageInput} disabled={!hasPdf()} />
           <span>/ {numPages() || 0}</span>
         </div>
-        <Btn icon={ic.next} title="Página siguiente" disabled={!canNext()} onClick={goNext} />
-        <Btn icon={ic.last} title="Última página" disabled={!canNext()} onClick={goLast} />
+        <Btn icon={ic.next} title={tr('Página siguiente', 'Next page')} disabled={!canNext()} onClick={goNext} />
+        <Btn icon={ic.last} title={tr('Última página', 'Last page')} disabled={!canNext()} onClick={goLast} />
 
         <div class="pv-sep"></div>
 
-        <Btn icon={ic.zout} title="Alejar (Ctrl+rueda)" onClick={() => zoomBy(1 / 1.1)} />
-        <button class="pv-zoom" title="Restablecer 100%" onClick={() => setZoom(1)}>{Math.round(scale() * 100)}%</button>
-        <Btn icon={ic.zin} title="Acercar (Ctrl+rueda)" onClick={() => zoomBy(1.1)} />
+        <Btn icon={ic.zout} title={tr('Alejar (Ctrl+rueda)', 'Zoom out (Ctrl+wheel)')} onClick={() => zoomBy(1 / 1.1)} />
+        <button class="pv-zoom" title={tr('Restablecer 100%', 'Reset to 100%')} onClick={() => setZoom(1)}>{Math.round(scale() * 100)}%</button>
+        <Btn icon={ic.zin} title={tr('Acercar (Ctrl+rueda)', 'Zoom in (Ctrl+wheel)')} onClick={() => zoomBy(1.1)} />
 
         <div class="pv-sep"></div>
 
-        <Btn icon={ic.fitW} title="Ajustar al ancho" active={fitMode() === 'width'} onClick={() => setFit('width')} />
-        <Btn icon={ic.fitH} title="Ajustar al alto de la página" active={fitMode() === 'height'} onClick={() => setFit('height')} />
+        <Btn icon={ic.fitW} title={tr('Ajustar al ancho', 'Fit width')} active={fitMode() === 'width'} onClick={() => setFit('width')} />
+        <Btn icon={ic.fitH} title={tr('Ajustar al alto de la página', 'Fit page height')} active={fitMode() === 'height'} onClick={() => setFit('height')} />
 
         <div class="pv-sep"></div>
 
-        <Btn icon={ic.sel} title="Seleccionar texto" active={tool() === 'select'} onClick={() => setTool('select')} />
-        <Btn icon={ic.pan} title="Mover (mano) — o pulsa la rueda del ratón" active={tool() === 'pan'} onClick={() => setTool('pan')} />
+        <Btn icon={ic.sel} title={tr('Seleccionar texto', 'Select text')} active={tool() === 'select'} onClick={() => setTool('select')} />
+        <Btn icon={ic.pan} title={tr('Mover (mano) — o pulsa la rueda del ratón', 'Pan (hand) — or press the mouse wheel')} active={tool() === 'pan'} onClick={() => setTool('pan')} />
         {/* La lupa ya no es un botón: se activa con doble clic sobre el PDF. */}
 
         <div class="pv-sep"></div>
-        <Btn icon={ic.outline} title="Marcadores: ir a una sección del PDF" active={outlineOpen()}
+        <Btn icon={ic.outline} title={tr('Marcadores: ir a una sección del PDF', 'Bookmarks: go to a section of the PDF')} active={outlineOpen()}
           disabled={!hasPdf()} onClick={() => setOutlineOpen(!outlineOpen())} />
-        <Btn icon={ic.find} title="Buscar en el PDF (Ctrl+F)" active={pdfSearchOpen()}
+        <Btn icon={ic.find} title={tr('Buscar en el PDF (Ctrl+F)', 'Search the PDF (Ctrl+F)')} active={pdfSearchOpen()}
           disabled={!hasPdf()} onClick={() => setPdfSearchOpen(!pdfSearchOpen())} />
-        <Btn icon={ic.draw} title="Anotar / dibujar sobre el PDF" active={annotBarOpen()}
+        <Btn icon={ic.draw} title={tr('Anotar / dibujar sobre el PDF', 'Annotate / draw on the PDF')} active={annotBarOpen()}
           disabled={!hasPdf()}
           onClick={() => { const o = !annotBarOpen(); setAnnotBarOpen(o); setAnnotTool(o ? 'pen' : ''); }} />
-        <Btn icon={ic.contrast} title="Modo noche — folio oscuro; los colores y las imágenes se conservan" active={invert()} onClick={() => setInvert(!invert())} />
-        <Btn icon={ic.max} title="Ampliar visor (ocultar el editor)" active={state.viewerMaximized}
+        <Btn icon={ic.contrast} title={tr('Modo noche — folio oscuro; los colores y las imágenes se conservan', 'Night mode — dark paper; colours and images are kept')} active={invert()} onClick={() => setInvert(!invert())} />
+        <Btn icon={ic.max} title={tr('Ampliar visor (ocultar el editor)', 'Maximize the viewer (hide the editor)')} active={state.viewerMaximized}
           onClick={() => (state.viewerMaximized = !state.viewerMaximized)} />
-        <Btn icon={ic.detach} title="Sacar el visor de Pyx a una ventana auxiliar" disabled={!hasPdf()} onClick={detachViewer} />
-        <Btn icon={ic.save} title="Guardar una copia del PDF…" disabled={!hasPdf()} onClick={exportPdf} />
-        <Btn icon={ic.float} title="Abrir el PDF en la aplicación externa" disabled={!hasPdf()} onClick={floatWindow} />
+        <Btn icon={ic.detach} title={tr('Sacar el visor de Pyx a una ventana auxiliar', 'Move the viewer to a separate window')} disabled={!hasPdf()} onClick={detachViewer} />
+        <Btn icon={ic.save} title={tr('Guardar una copia del PDF…', 'Save a copy of the PDF…')} disabled={!hasPdf()} onClick={exportPdf} />
+        <Btn icon={ic.float} title={tr('Abrir el PDF en la aplicación externa', 'Open the PDF in the external application')} disabled={!hasPdf()} onClick={floatWindow} />
         </div>
         <Show when={overflowed() > 0}>
           <button class={`pv-btn pv-more${more.open() ? ' active' : ''}`} ref={more.anchor}
-            title="Más herramientas del visor" aria-haspopup="true"
+            title={tr('Más herramientas del visor', 'More viewer tools')} aria-haspopup="true"
             onClick={openMore} innerHTML={ICO.ellipsis}></button>
         </Show>
         <Show when={more.open()}>
@@ -491,7 +494,7 @@ export default function PreviewPane() {
         <span class="pv-spacer"></span>
         <Show when={previewFile()}><span class="pv-file">{previewFile()}</span></Show>
         <Show when={!IS_AUX_VIEWER}>
-          <Btn icon={ic.close} title="Cerrar el visor PDF"
+          <Btn icon={ic.close} title={tr('Cerrar el visor PDF', 'Close the PDF viewer')}
             onClick={() => { state.previewVisible = false; state.viewerMaximized = false; }} />
         </Show>
       </div>
@@ -511,9 +514,9 @@ export default function PreviewPane() {
       <Show when={state.pdfForeign && hasPdf() && !IS_AUX_VIEWER}>
         <div class="pv-foreign">
           <span class="pyx-ico" innerHTML={ICO.warn}></span>
-          <span>
-            Este PDF es de <b>{previewFile()}</b>, no del documento abierto.
-            Compila (<b>Ctrl+Mayús+B</b>) para ver el suyo.
+          <span>{tr(
+            <>Este PDF es de <b>{previewFile()}</b>, no del documento abierto. Compila (<b>Ctrl+Mayús+B</b>) para ver el suyo.</>,
+            <>This PDF belongs to <b>{previewFile()}</b>, not to the open document. Compile (<b>Ctrl+Shift+B</b>) to see its own.</>)}
           </span>
         </div>
       </Show>
@@ -523,8 +526,9 @@ export default function PreviewPane() {
           <Show
             when={loadError()}
             fallback={IS_AUX_VIEWER
-              ? 'Cargando el PDF…'
-              : <>Compila el documento (<b>Compilar y ver</b> o <b>Ctrl+Shift+B</b>) para ver el PDF aquí.</>}
+              ? tr('Cargando el PDF…', 'Loading the PDF…')
+              : tr(<>Compila el documento (<b>Compilar y ver</b> o <b>Ctrl+Mayús+B</b>) para ver el PDF aquí.</>,
+                <>Compile the document (<b>Compile and view</b> or <b>Ctrl+Shift+B</b>) to see the PDF here.</>)}
           >
             <span style={{ color: 'var(--theme-cell-error, #d16969)' }}>{loadError()}</span>
           </Show>

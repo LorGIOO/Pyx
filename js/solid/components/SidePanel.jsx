@@ -2,8 +2,8 @@ import { createMemo, onMount, onCleanup, For, Show } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
 import { t as tr } from '../../core/i18n.js';
 import { toc, todos, includes, crumbPath } from '../stores/structureStore.js';
-import { SYMBOL_CATEGORIES, insertText } from '../../data/symbols.js';
-import { gotoLine, insertSnippet } from '../../editor/commands.js';
+import { gotoLine } from '../../editor/commands.js';
+import SymbolPanel from './SymbolPanel.jsx';
 import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
 import FileTree from './FileTree.jsx';
@@ -29,13 +29,15 @@ const I = {
   // codicon: live-share
   collab: `<svg ${S}><circle cx="6" cy="5.5" r="2.4"/><path d="M1.8 13.5c.5-2.4 2.2-3.8 4.2-3.8s3.7 1.4 4.2 3.8"/><circle cx="11.6" cy="6.2" r="1.9"/><path d="M11 9.8c1.7.1 2.9 1.3 3.3 3.2"/></svg>`,
 };
+// Order: Explorer, Structure, TOC, Search (then Symbols and the shared session).
+// `label` is a function so it follows the UI language live.
 const TABS = [
-  { id: 'structure', label: 'Estructura', icon: I.structure },
-  { id: 'toc', label: 'TOC', icon: I.toc },
-  { id: 'symbols', label: 'Símbolos', icon: I.symbols },
-  { id: 'files', label: 'Explorador', icon: I.files },
-  { id: 'search', label: 'Buscar en el proyecto', icon: I.search },
-  { id: 'collab', label: 'Sesión compartida', icon: I.collab },
+  { id: 'files', label: () => tr('Explorador', 'Explorer'), icon: I.files },
+  { id: 'structure', label: () => tr('Estructura', 'Structure'), icon: I.structure },
+  { id: 'toc', label: () => tr('Índice (TOC)', 'Outline (TOC)'), icon: I.toc },
+  { id: 'search', label: () => tr('Buscar en el proyecto', 'Search the project'), icon: I.search },
+  { id: 'symbols', label: () => tr('Símbolos', 'Symbols'), icon: I.symbols },
+  { id: 'collab', label: () => tr('Sesión compartida', 'Shared session'), icon: I.collab },
 ].filter((t) => t.id !== 'collab' || FEATURES.collab);
 const KIND_SHORT = {
   part: 'P', chapter: 'C', section: 'S', subsection: 'ss',
@@ -107,7 +109,7 @@ export default function SidePanel() {
       <div class="side-strip">
         <For each={TABS}>
           {(t) => (
-            <button class={`side-ico${tab() === t.id ? ' active' : ''}`} title={t.label}
+            <button class={`side-ico${tab() === t.id ? ' active' : ''}`} title={t.label()} aria-label={t.label()}
               innerHTML={t.icon} onClick={() => toggle(t.id)} />
           )}
         </For>
@@ -115,7 +117,7 @@ export default function SidePanel() {
 
       <Show when={tab()}>
         <div class="side-body">
-          <div class="side-title">{TABS.find((t) => t.id === tab())?.label}</div>
+          <div class="side-title">{TABS.find((t) => t.id === tab())?.label()}</div>
           <div class="side-content">
             {/* TOC: sectioning tree, click to jump; the cursor's section is
                 highlighted (TeXstudio-style); TODO/FIXME entries listed below. */}
@@ -158,10 +160,10 @@ export default function SidePanel() {
                 </span>
               </div>
               <Show when={includes().length}
-                fallback={<div class="side-empty">No incluye otros archivos (\input, \include, \subfile).</div>}>
+                fallback={<div class="side-empty">{tr('No incluye otros archivos (\\input, \\include, \\subfile).', 'It does not include other files (\\input, \\include, \\subfile).')}</div>}>
                 <For each={includes()}>
                   {(inc) => (
-                    <div class="struct-row" onClick={() => openInclude(inc.target)} title={`Abrir ${inc.target}`}>
+                    <div class="struct-row" onClick={() => openInclude(inc.target)} title={tr(`Abrir ${inc.target}`, `Open ${inc.target}`)}>
                       <span class="struct-cmd">\{inc.cmd}</span>
                       <span class="struct-target">{inc.target}</span>
                     </div>
@@ -170,24 +172,9 @@ export default function SidePanel() {
               </Show>
             </Show>
 
-            {/* Símbolos: every category, click to insert */}
+            {/* Símbolos: drawn by KaTeX; «Mis símbolos» from symbols.json */}
             <Show when={tab() === 'symbols'}>
-              <For each={SYMBOL_CATEGORIES}>
-                {(cat) => (
-                  <div class="sym-cat">
-                    <div class="sym-cat-name">{cat.name}</div>
-                    <div class="sym-grid">
-                      <For each={cat.items}>
-                        {(it) => (
-                          <button class="sym-btn" title={it[1]} onClick={() => insertSnippet(insertText(it[1]))}>
-                            {it[0]}
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                )}
-              </For>
+              <SymbolPanel />
             </Show>
 
             {/* Buscar en el proyecto (Ctrl+Mayús+F) */}
@@ -199,8 +186,8 @@ export default function SidePanel() {
             <Show when={tab() === 'files'}>
               <Show when={rootDir()} fallback={
                 <div class="side-empty-actions">
-                  <p>No hay ninguna carpeta abierta. Abre la carpeta de tu proyecto para ver aquí todos sus archivos y carpetas.</p>
-                  <button onClick={() => openProjectFolder()}>Abrir carpeta</button>
+                  <p>{tr('No hay ninguna carpeta abierta. Abre la carpeta de tu proyecto para ver aquí todos sus archivos y carpetas.', 'No folder is open. Open your project folder to see all its files and folders here.')}</p>
+                  <button onClick={() => openProjectFolder()}>{tr('Abrir carpeta', 'Open folder')}</button>
                 </div>}>
                 <FileTree root={rootDir()} />
               </Show>

@@ -50,7 +50,7 @@ export default function MacrosDialog() {
               <For each={list()}>
                 {(m, i) => (
                   <div class="macros-item" classList={{ active: i() === sel() }} onClick={() => setSel(i())}>
-                    <span class="macros-key">{i() < 9 ? `Alt+Mayús+${i() + 1}` : ''}</span>
+                    <span class="macros-key">{i() < 9 ? t(`Alt+Mayús+${i() + 1}`, `Alt+Shift+${i() + 1}`) : ''}</span>
                     <span>{m.name}</span>
                   </div>
                 )}

@@ -11,6 +11,7 @@ import { setStarNames, clearStarNames, unknownStarModules } from './dep-plan.js'
 import { notebookCodeHash, notebookDefs, linkInfo } from './notebooks.js';
 import { hashString } from '../core/hash.js';
 import { dirOf } from '../core/paths.js';
+import { t as tr } from '../core/i18n.js';
 
 let reqId = 1;
 let started = false;
@@ -96,7 +97,7 @@ export const programOf = (entries) => entries.map(({ key, cell, info }) => ({
    neither exists do the notebook's cells run here, and then the snapshot is
    taken from that run, so they do not run again next time. */
 export async function notebookLink(op, payload) {
-  if (!isTauri()) return { source: null, reason: 'requiere la app de escritorio' };
+  if (!isTauri()) return { source: null, reason: tr('requiere la app de escritorio', 'needs the desktop app') };
   await ensureKernel();
   return kernelExec({ id: reqId++, nblink: op, ...payload });
 }
@@ -138,13 +139,13 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   const { entries, names } = q;
   const ranHere = !fresh && nsHasRun(entries);
   const base = { entries, codeHash: q.codeHash, names, asked: names, extras: q.extras, ranHere };
-  if (!names) return { mode: 'run', ...base, reason: 'no se puede saber qué variables usa el documento' };
+  if (!names) return { mode: 'run', ...base, reason: tr('no se puede saber qué variables usa el documento', 'cannot tell which variables the document uses') };
   if (!names.length) return { mode: 'none', ...base, entries: [] };
   const t0 = performance.now();
   const r = await fetchLink(nbPath, q, fresh);
   const ms = performance.now() - t0;
   if (!r || !r.source) {
-    if (ranHere) return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
+    if (ranHere) return { mode: 'run', ...base, ms, reason: tr('ya ejecutado en esta sesión', 'already run in this session') };
     const why = (r && (r.reason || r.error)) || '';
     if (fresh) return { mode: 'run', ...base, ms, reason: why };
     // Its code (or a data file) changed and Jupyter is not there: put back
@@ -173,7 +174,7 @@ export async function resolveNotebook(nbPath, cells, needed, cwd, { fresh = fals
   }
   // Its cells already ran here and Jupyter has nothing newer to offer: the
   // namespace holds their values already, nothing to load.
-  if (ranHere && r.source !== 'jupyter') return { mode: 'run', ...base, ms, reason: 'ya ejecutado en esta sesión' };
+  if (ranHere && r.source !== 'jupyter') return { mode: 'run', ...base, ms, reason: tr('ya ejecutado en esta sesión', 'already run in this session') };
   const got = r.names || {};
   const { avail, token } = linkToken(r, names);
   const modules = new Map();
@@ -345,30 +346,31 @@ const kindOf = (p) => (/\.py$/i.test(String(p)) ? 'archivo' : 'cuaderno');
 export function notebookNote(nbPath, plan, ran) {
   const name = String(nbPath).split(/[\\/]/).pop();
   if (!plan) return '';
-  if (plan.mode === 'none') return `${name}: el documento no usa ninguna de sus variables (no se ha ejecutado)`;
+  if (plan.mode === 'none') return tr(`${name}: el documento no usa ninguna de sus variables (no se ha ejecutado)`, `${name}: the document uses none of its variables (not run)`);
   if (plan.mode === 'link') {
     const n = plan.names.length;
     const what = `${n} variable${n === 1 ? '' : 's'}`;
-    const t = plan.ms != null ? ` en ${Math.round(plan.ms)} ms` : '';
+    const t = plan.ms != null ? tr(` en ${Math.round(plan.ms)} ms`, ` in ${Math.round(plan.ms)} ms`) : '';
     // The file was edited after these values were taken and nothing ran in
     // Jupyter since: they may be behind the code. Said, never guessed away.
     const behind = plan.codeChanged
-      ? `. Aviso: el ${kindOf(nbPath)} se ha editado después de tomar estos valores y en Jupyter no se ha ejecutado nada desde entonces; si cambiaste celdas, ejecútalas en Jupyter para actualizarlos`
+      ? tr(`. Aviso: el ${kindOf(nbPath)} se ha editado después de tomar estos valores y en Jupyter no se ha ejecutado nada desde entonces; si cambiaste celdas, ejecútalas en Jupyter para actualizarlos`,
+        `. Warning: the ${kindOf(nbPath)} was edited after these values were taken and nothing has run in Jupyter since; if you changed cells, run them in Jupyter to update them`)
       : '';
-    if (plan.source === 'jupyter') return `${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el ${kindOf(nbPath)}${behind}`;
-    const when = plan.when ? ` del ${new Date(plan.when * 1000).toLocaleString()}` : '';
-    const of = plan.from === 'jupyter' ? `de Jupyter${when}` : `de la última ejecución en Pyx${when}`;
-    return `${name}: ${what} guardadas (${of})${t}, sin ejecutar el ${kindOf(nbPath)}${behind}`;
+    if (plan.source === 'jupyter') return tr(`${name}: ${what} tomadas de Jupyter (${plan.label || 'kernel abierto'})${t}, sin ejecutar el ${kindOf(nbPath)}${behind}`, `${name}: ${what} taken from Jupyter (${plan.label || 'open kernel'})${t}, without running the ${kindOf(nbPath)}${behind}`);
+    const when = plan.when ? tr(` del ${new Date(plan.when * 1000).toLocaleString()}`, ` of ${new Date(plan.when * 1000).toLocaleString()}`) : '';
+    const of = plan.from === 'jupyter' ? tr(`de Jupyter${when}`, `from Jupyter${when}`) : tr(`de la última ejecución en Pyx${when}`, `from the last run in Pyx${when}`);
+    return tr(`${name}: ${what} guardadas (${of})${t}, sin ejecutar el ${kindOf(nbPath)}${behind}`, `${name}: ${what} saved (${of})${t}, without running the ${kindOf(nbPath)}${behind}`);
   }
   if (plan.restored) {
-    return `${name}: ${plan.restored} celda${plan.restored === 1 ? '' : 's'} sin cambios recuperada${plan.restored === 1 ? '' : 's'} de la última ejecución; ${ran ? 'solo se ha ejecutado lo que cambió' : 'no ha hecho falta ejecutar nada'}`;
+    return tr(`${name}: ${plan.restored} celda${plan.restored === 1 ? '' : 's'} sin cambios recuperada${plan.restored === 1 ? '' : 's'} de la última ejecución; ${ran ? 'solo se ha ejecutado lo que cambió' : 'no ha hecho falta ejecutar nada'}`, `${name}: ${plan.restored} unchanged cell${plan.restored === 1 ? '' : 's'} restored from the last run; ${ran ? 'only what changed was run' : 'nothing needed to run'}`);
   }
   if (plan.resumed) {
-    return `${name}: lo recuperado de la última ejecución sigue cargado; ${ran ? 'solo se ha ejecutado lo que faltaba' : 'no ha hecho falta ejecutar nada'}`;
+    return tr(`${name}: lo recuperado de la última ejecución sigue cargado; ${ran ? 'solo se ha ejecutado lo que faltaba' : 'no ha hecho falta ejecutar nada'}`, `${name}: what was restored from the last run is still loaded; ${ran ? 'only what was missing was run' : 'nothing needed to run'}`);
   }
-  if (!ran) return `${name}: ya cargado en esta sesión, sin ejecutar nada`;
+  if (!ran) return tr(`${name}: ya cargado en esta sesión, sin ejecutar nada`, `${name}: already loaded in this session, nothing run`);
   const why = plan.reason ? ` (${plan.reason})` : '';
-  return `${name}: ejecutado en Pyx${why}; sus valores quedan guardados y no se volverá a ejecutar mientras su código no cambie`;
+  return tr(`${name}: ejecutado en Pyx${why}; sus valores quedan guardados y no se volverá a ejecutar mientras su código no cambie`, `${name}: run in Pyx${why}; its values are saved and it will not run again while its code does not change`);
 }
 
 /** The notebook's last full run back in the namespace, its cells in the
@@ -380,7 +382,7 @@ async function restoreNotebook(nbPath, entries, cwd) {
   try {
     r = await notebookLink('restore', { notebook: nbPath, cwd });
   } catch (e) {
-    noteLinkProblem(`${nbName(nbPath)}: no se pudo recuperar su última ejecución (${errText(e)}); se ejecuta entero`);
+    noteLinkProblem(tr(`${nbName(nbPath)}: no se pudo recuperar su última ejecución (${errText(e)}); se ejecuta entero`, `${nbName(nbPath)}: its last run could not be restored (${errText(e)}); it runs in full`));
     return null;
   }
   if (!r || !r.ok || !Array.isArray(r.ledger)) return null;
@@ -418,8 +420,8 @@ export async function runLinkEntry(entry, cwd, meta = {}) {
     // this line, calling them ends in a NameError nobody can explain.
     const dep = Object.entries(res.depErrors || {});
     const lines = [];
-    if (bad.length) lines.push(`No se pudieron cargar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`);
-    if (dep.length) lines.push(`No se pudo traer lo que usan sus funciones: ${dep.map(([n, e]) => `${n} (${e})`).join('; ')}`);
+    if (bad.length) lines.push(`${tr('No se pudieron cargar del cuaderno', 'Could not load from the notebook')}: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`);
+    if (dep.length) lines.push(`${tr('No se pudo traer lo que usan sus funciones', 'Could not bring what its functions use')}: ${dep.map(([n, e]) => `${n} (${e})`).join('; ')}`);
     // A value file may be gone or unreadable: the remembered answer says
     // otherwise, so the next compile asks again.
     if (lines.length) forgetLink(entry.cell.notebook);
@@ -432,8 +434,8 @@ export async function runLinkEntry(entry, cwd, meta = {}) {
   }
   forgetLink(entry.cell.notebook);
   nsFail(key, meta.D);
-  const msg = (res && res.error) || 'sin respuesta del kernel';
-  return { ok: false, stdout: '', stderr: msg, error: { type: 'Error', msg: `no se pudieron cargar los valores del cuaderno: ${msg}` } };
+  const msg = (res && res.error) || tr('sin respuesta del kernel', 'no answer from the kernel');
+  return { ok: false, stdout: '', stderr: msg, error: { type: 'Error', msg: `${tr('no se pudieron cargar los valores del cuaderno', 'the notebook values could not be loaded')}: ${msg}` } };
 }
 
 /** After the notebook's cells ran here: keep their values as its snapshot,
@@ -669,7 +671,7 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
     return {
       ok: false,
       stdout: '',
-      stderr: 'Las celdas Python requieren la app de escritorio (npm run tauri:dev).',
+      stderr: tr('Las celdas Python requieren la app de escritorio (npm run tauri:dev).', 'Python cells need the desktop app (npm run tauri:dev).'),
       result: null,
       images: [],
     };
@@ -705,7 +707,7 @@ export async function runCellCode(code, { cwd, reset, watch } = {}) {
     // A user interrupt kills the kernel, so the in-flight request fails — show a
     // clear "interrupted" message instead of the generic "terminated" one.
     const msg = interrupting
-      ? '⏹ Ejecución interrumpida por el usuario.'
+      ? tr('⏹ Ejecución interrumpida por el usuario.', '⏹ Run interrupted by the user.')
       : String((e && e.message) || e);
     return {
       ok: false,
@@ -808,7 +810,7 @@ export const missingModules = () => [...missing];
 
 /** Run a user macro in the kernel (its own namespace). */
 export async function kernelMacro(code, { selection, document, line, cwd } = {}) {
-  if (!isTauri()) return { error: 'Las macros necesitan la app de escritorio.' };
+  if (!isTauri()) return { error: tr('Las macros necesitan la app de escritorio.', 'Macros need the desktop app.') };
   await ensureKernel();
   return withKernelLock(() => kernelExec({ id: reqId++, macro: code, selection, document, line, cwd }));
 }

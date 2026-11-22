@@ -2,14 +2,16 @@
 //
 // The window reads its settings from localStorage at start — instant, no
 // round trip to the disk. Every change is ALSO written, a second later, to
-// config.json in the user's settings folder (%APPDATA%\Pyx on Windows), as
+// config.json in Pyx's own folder (src-tauri/src/config.rs says where), as
 // plain JSON: something a person can read, back up, or copy to another
 // computer. When localStorage comes back empty (the WebView's data was wiped,
 // a reinstall), the settings are restored from that file.
 import { invoke, isTauri } from './platform.js';
 
 // Per-document data (annotations of each PDF, …) stays out: settings only.
-const SKIP = /^(pyx-annot:|pyx-annot-doc|pdf-annots|pyx-dd-mem$)/;
+// theme.css is a file of its own (pyx-theme-css only caches it); pyx-uf:* are
+// the browser build's stand-ins for those files.
+const SKIP = /^(pyx-annot:|pyx-annot-doc|pdf-annots|pyx-dd-mem$|pyx-theme-css$|pyx-uf:)/;
 const MAX_VALUE = 256 * 1024;
 const MARK = 'pyx-config-restored';
 
@@ -29,16 +31,25 @@ function snapshot() {
 
 let timer = null;
 let lastWritten = '';
+function writeNow() {
+  clearTimeout(timer);
+  timer = null;
+  const body = JSON.stringify({ app: 'Pyx', version: 1, saved: new Date().toISOString(), settings: snapshot() }, null, 2);
+  const cmp = body.replace(/"saved": "[^"]*",?/, '');
+  if (cmp === lastWritten) return Promise.resolve();
+  lastWritten = cmp;
+  return invoke('config_write', { text: body }).catch(() => { lastWritten = ''; });
+}
 function scheduleWrite() {
   if (!isTauri()) return;
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    const body = JSON.stringify({ app: 'Pyx', version: 1, saved: new Date().toISOString(), settings: snapshot() }, null, 2);
-    const cmp = body.replace(/"saved": "[^"]*",?/, '');
-    if (cmp === lastWritten) return;
-    lastWritten = cmp;
-    invoke('config_write', { text: body }).catch(() => { lastWritten = ''; });
-  }, 1000);
+  timer = setTimeout(writeNow, 600);
+}
+
+/** Write the settings file right away (the window is closing). */
+export function flushConfigFile() {
+  if (!isTauri()) return Promise.resolve();
+  return writeNow();
 }
 
 /** Write a whole settings object into localStorage. */

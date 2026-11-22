@@ -9,6 +9,7 @@ import {
 } from '../../core/platform.js';
 import { state } from '../../core/state.js';
 import { general } from './settingsStore.js';
+import { t } from '../../core/i18n.js';
 
 export const [termLines, setTermLines] = createSignal([]); // [{ kind, text }]
 export const [termRunning, setTermRunning] = createSignal(false);
@@ -61,8 +62,8 @@ async function ensureListeners() {
   await onTerminalLine((line) => append('out', String(line)));
   await onTerminalDone((code) => {
     append('sys', stopRequested
-      ? '■ Detenido'
-      : (code === 0 ? '✓ Listo (código 0)' : `✗ Terminado con código ${code}`));
+      ? t('■ Detenido', '■ Stopped')
+      : (code === 0 ? t('✓ Listo (código 0)', '✓ Done (code 0)') : t(`✗ Terminado con código ${code}`, `✗ Finished with code ${code}`)));
     stopRequested = false;
     setTermRunning(false);
     flushTerminal();

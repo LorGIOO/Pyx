@@ -5,7 +5,7 @@
 
 export const SYMBOL_CATEGORIES = [
   {
-    name: 'Griegas minúsculas',
+    name: 'Griegas minúsculas', en: 'Greek lowercase',
     items: [
       ['α', '\\alpha'], ['β', '\\beta'], ['γ', '\\gamma'], ['δ', '\\delta'],
       ['ε', '\\epsilon'], ['ϵ', '\\varepsilon'], ['ζ', '\\zeta'], ['η', '\\eta'],
@@ -18,7 +18,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Griegas mayúsculas',
+    name: 'Griegas mayúsculas', en: 'Greek uppercase',
     items: [
       ['Γ', '\\Gamma'], ['Δ', '\\Delta'], ['Θ', '\\Theta'], ['Λ', '\\Lambda'],
       ['Ξ', '\\Xi'], ['Π', '\\Pi'], ['Σ', '\\Sigma'], ['Υ', '\\Upsilon'],
@@ -26,7 +26,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Operadores binarios',
+    name: 'Operadores binarios', en: 'Binary operators',
     items: [
       ['±', '\\pm'], ['∓', '\\mp'], ['×', '\\times'], ['÷', '\\div'],
       ['⋅', '\\cdot'], ['∗', '\\ast'], ['⋆', '\\star'], ['∘', '\\circ'],
@@ -39,7 +39,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Relaciones',
+    name: 'Relaciones', en: 'Relations',
     items: [
       ['≤', '\\leq'], ['≥', '\\geq'], ['≡', '\\equiv'], ['⊨', '\\models'],
       ['≺', '\\prec'], ['≻', '\\succ'], ['∼', '\\sim'], ['⊥', '\\perp'],
@@ -54,7 +54,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Flechas',
+    name: 'Flechas', en: 'Arrows',
     items: [
       ['←', '\\leftarrow'], ['→', '\\rightarrow'], ['↔', '\\leftrightarrow'],
       ['⇐', '\\Leftarrow'], ['⇒', '\\Rightarrow'], ['⇔', '\\Leftrightarrow'],
@@ -70,7 +70,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Grandes operadores',
+    name: 'Grandes operadores', en: 'Large operators',
     items: [
       ['∑', '\\sum'], ['∏', '\\prod'], ['∐', '\\coprod'], ['∫', '\\int'],
       ['∮', '\\oint'], ['∬', '\\iint'], ['∭', '\\iiint'], ['⋃', '\\bigcup'],
@@ -79,7 +79,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Delimitadores',
+    name: 'Delimitadores', en: 'Delimiters',
     items: [
       ['⟨', '\\langle'], ['⟩', '\\rangle'], ['⌊', '\\lfloor'], ['⌋', '\\rfloor'],
       ['⌈', '\\lceil'], ['⌉', '\\rceil'], ['‖', '\\|'], ['|', '\\vert'],
@@ -88,7 +88,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Misceláneos',
+    name: 'Misceláneos', en: 'Miscellaneous',
     items: [
       ['∞', '\\infty'], ['∇', '\\nabla'], ['∂', '\\partial'], ['∀', '\\forall'],
       ['∃', '\\exists'], ['∄', '\\nexists'], ['∅', '\\emptyset'], ['∅', '\\varnothing'],
@@ -104,7 +104,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Funciones',
+    name: 'Funciones', en: 'Functions',
     items: [
       ['sin', '\\sin'], ['cos', '\\cos'], ['tan', '\\tan'], ['cot', '\\cot'],
       ['sec', '\\sec'], ['csc', '\\csc'], ['arcsin', '\\arcsin'], ['arccos', '\\arccos'],
@@ -116,7 +116,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Acentos y construcciones',
+    name: 'Acentos y construcciones', en: 'Accents and constructions',
     items: [
       ['x̂', '\\hat{}'], ['x̃', '\\tilde{}'], ['x̄', '\\bar{}'], ['x⃗', '\\vec{}'],
       ['ẋ', '\\dot{}'], ['ẍ', '\\ddot{}'], ['x̆', '\\breve{}'], ['x̌', '\\check{}'],
@@ -127,7 +127,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Negaciones',
+    name: 'Negaciones', en: 'Negations',
     items: [
       ['≠', '\\neq'], ['∉', '\\notin'], ['≮', '\\nless'], ['≯', '\\ngtr'],
       ['≰', '\\nleq'], ['≱', '\\ngeq'], ['⊄', '\\nsubset'], ['⊅', '\\nsupset'],
@@ -138,7 +138,7 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
   {
-    name: 'Conjuntos numéricos',
+    name: 'Conjuntos numéricos', en: 'Number sets',
     items: [
       ['ℕ', '\\mathbb{N}'], ['ℤ', '\\mathbb{Z}'], ['ℚ', '\\mathbb{Q}'],
       ['ℝ', '\\mathbb{R}'], ['ℂ', '\\mathbb{C}'], ['ℍ', '\\mathbb{H}'],
@@ -148,6 +148,17 @@ export const SYMBOL_CATEGORIES = [
     ],
   },
 ];
+
+/** What KaTeX draws for a command: its arguments filled with x, a, b… so
+ *  \\frac{}{} shows as a fraction and ^{} as a power. */
+export function previewSource(cmd) {
+  if (cmd === '^{}') return 'x^{n}';
+  if (cmd === '_{}') return 'x_{n}';
+  if (cmd === '\\sqrt[n]{}') return '\\sqrt[n]{x}';
+  if (cmd === '\\frac{}{}') return '\\frac{a}{b}';
+  if (/^\\(overbrace|underbrace|overline|underline|widehat|widetilde|overrightarrow)\{\}$/.test(cmd)) return cmd.replace('{}', '{xy}');
+  return cmd.replace(/\{\}/g, '{x}');
+}
 
 // Build the text to insert for a symbol command.
 export function insertText(cmd) {

@@ -6,6 +6,7 @@ import {
   SearchQuery, setSearchQuery, getSearchQuery,
   findNext, findPrevious, replaceNext, replaceAll, closeSearchPanel, openSearchPanel,
 } from '@codemirror/search';
+import { t } from '../core/i18n.js';
 
 /* Opening the panel FOR something: "Buscar" (Ctrl+F) or "Reemplazar" (Ctrl+R).
  *
@@ -51,12 +52,12 @@ export function pyxSearchPanel(view) {
   const row1 = document.createElement('div');
   row1.className = 'ps-row';
 
-  const expand = btn('▸', 'Reemplazar (Ctrl+R)', () => setReplaceRow(!showReplace));
+  const expand = btn('▸', t('Reemplazar (Ctrl+R)', 'Replace (Ctrl+R)'), () => setReplaceRow(!showReplace));
   expand.classList.add('ps-expand');
 
   const input = document.createElement('input');
   input.className = 'ps-input';
-  input.placeholder = 'Buscar';
+  input.placeholder = t('Buscar', 'Find');
   input.onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); findNext(view); }
     else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); findPrevious(view); }
@@ -66,15 +67,15 @@ export function pyxSearchPanel(view) {
   const count = document.createElement('span');
   count.className = 'ps-count';
 
-  const tCase = toggle('Aa', 'Distinguir mayúsculas', () => { caseSensitive = !caseSensitive; push(); });
-  const tRe = toggle('.*', 'Expresión regular', () => { regexp = !regexp; push(); });
-  const tWord = toggle('ab', 'Palabra completa', () => { whole = !whole; push(); });
+  const tCase = toggle('Aa', t('Distinguir mayúsculas', 'Match case'), () => { caseSensitive = !caseSensitive; push(); });
+  const tRe = toggle('.*', t('Expresión regular', 'Regular expression'), () => { regexp = !regexp; push(); });
+  const tWord = toggle('ab', t('Palabra completa', 'Whole word'), () => { whole = !whole; push(); });
 
   row1.append(
     expand, input, count, tCase, tRe, tWord,
-    btn('↑', 'Anterior (Shift+Enter)', () => findPrevious(view)),
-    btn('↓', 'Siguiente (Enter)', () => findNext(view)),
-    btn('✕', 'Cerrar (Esc)', () => { closeSearchPanel(view); view.focus(); }),
+    btn('↑', t('Anterior (Mayús+Intro)', 'Previous (Shift+Enter)'), () => findPrevious(view)),
+    btn('↓', t('Siguiente (Intro)', 'Next (Enter)'), () => findNext(view)),
+    btn('✕', t('Cerrar (Esc)', 'Close (Esc)'), () => { closeSearchPanel(view); view.focus(); }),
   );
 
   /* row 2: replace (hidden until expanded) */
@@ -83,13 +84,13 @@ export function pyxSearchPanel(view) {
   row2.style.display = 'none';
   const rinput = document.createElement('input');
   rinput.className = 'ps-input';
-  rinput.placeholder = 'Reemplazar';
+  rinput.placeholder = t('Reemplazar', 'Replace');
   rinput.oninput = () => push();
   rinput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); replaceNext(view); } };
   row2.append(
     rinput,
     btn('⇄', 'Reemplazar', () => replaceNext(view)),
-    btn('⇄∗', 'Reemplazar todo', () => replaceAll(view)),
+    btn('⇄∗', t('Reemplazar todo', 'Replace all'), () => replaceAll(view)),
   );
 
   dom.append(row1, row2);

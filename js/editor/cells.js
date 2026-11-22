@@ -78,6 +78,7 @@ export {
   CELL_OPEN, CELL_CLOSE, cellKey, codeHashMap,
   parseCells, parseCellsText, cellAtLine,
 } from './cell-parse.js';
+import { t as tr } from '../core/i18n.js';
 
 let execCounter = 0; // notebook-style [1], [2], ...
 
@@ -234,7 +235,7 @@ async function docProgram(docId, cells, view = null, cwd = undefined, { fresh = 
       while (k < own.length && own[k].cell.headerLine < ref.line) entries.push(own[k++]);
       const nbPath = await resolveLinkPath(cwd || dirOf(path), ref.raw, ref.cmd, ref.fromRoot ? null : dirOf(path));
       if (!nbPath) {
-        nbErrors.push(`✗ No se pudo leer el cuaderno \\pynotebook{${ref.raw}}: guarda el documento para que su ruta tenga desde dónde partir`);
+        nbErrors.push(tr(`✗ No se pudo leer el cuaderno \\pynotebook{${ref.raw}}: guarda el documento para que su ruta tenga desde dónde partir`, `✗ Could not read the notebook \\pynotebook{${ref.raw}}: save the document so that its path has somewhere to start from`));
         continue;
       }
       nbPrefixes.push(`${nbPath}::`);
@@ -247,13 +248,13 @@ async function docProgram(docId, cells, view = null, cwd = undefined, { fresh = 
           plans.set(nbPath, plan);
           if (plan.missing && plan.missing.length) {
             nbErrors.push(plan.source === 'jupyter'
-              ? `✗ Jupyter no tiene ${plan.missing.join(', ')} (${baseName(nbPath)}): ejecuta en Jupyter las celdas que las definen`
-              : `✗ Los valores guardados de ${baseName(nbPath)} no incluyen ${plan.missing.join(', ')}`);
+              ? tr(`✗ Jupyter no tiene ${plan.missing.join(', ')} (${baseName(nbPath)}): ejecuta en Jupyter las celdas que las definen`, `✗ Jupyter does not have ${plan.missing.join(', ')} (${baseName(nbPath)}): run the cells that define them in Jupyter`)
+              : tr(`✗ Los valores guardados de ${baseName(nbPath)} no incluyen ${plan.missing.join(', ')}`, `✗ The saved values of ${baseName(nbPath)} do not include ${plan.missing.join(', ')}`));
           }
         }
         if (plan) entries.push(...plan.entries);
       } catch (e) {
-        nbErrors.push(`✗ No se pudo leer el cuaderno \\pynotebook{${ref.raw}}: ${String((e && e.message) || e)}`);
+        nbErrors.push(`✗ ${tr('No se pudo leer el cuaderno', 'Could not read the notebook')} \\pynotebook{${ref.raw}}: ${String((e && e.message) || e)}`);
       }
     }
     while (k < own.length) entries.push(own[k++]);
@@ -296,11 +297,11 @@ function reportNotebookProblem(docId, target, fail, nbErrors) {
   const lines = [];
   if (fail && fail.entry.link) {
     const e = fail.res.error;
-    lines.push(`✗ ${(e && e.msg) || fail.res.stderr || 'no se pudieron cargar los valores del cuaderno'} (${baseName(fail.entry.cell.notebook)})`);
+    lines.push(`✗ ${(e && e.msg) || fail.res.stderr || tr('no se pudieron cargar los valores del cuaderno', 'the notebook values could not be loaded')} (${baseName(fail.entry.cell.notebook)})`);
   } else if (fail) {
     const e = fail.res.error;
     const what = e ? `${e.type}: ${e.msg}${e.line != null ? ` (línea ${e.line} de la celda)` : ''}` : (fail.res.stderr || 'error');
-    lines.push(`✗ Falló el cuaderno ${baseName(fail.entry.cell.notebook)}, celda ${fail.entry.cell.nth}: ${what}`);
+    lines.push(tr(`✗ Falló el cuaderno ${baseName(fail.entry.cell.notebook)}, celda ${fail.entry.cell.nth}: ${what}`, `✗ The notebook ${baseName(fail.entry.cell.notebook)} failed, cell ${fail.entry.cell.nth}: ${what}`));
   }
   for (const m of nbErrors || []) lines.push(m);
   if (!lines.length || !target) return;
@@ -849,7 +850,7 @@ class CellToolbar extends WidgetType {
     // The focus bar and the run button sit in the gutter, left of the box.
     const focus = document.createElement('span');
     focus.className = 'cell-focus';
-    focus.title = this.collapsed ? 'Expandir la celda' : 'Contraer la celda';
+    focus.title = this.collapsed ? tr('Expandir la celda', 'Expand the cell') : tr('Contraer la celda', 'Collapse the cell');
     focus.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -860,8 +861,8 @@ class CellToolbar extends WidgetType {
 
     // Play while idle, stop while running — the button swaps in place.
     const run = out.running
-      ? iconBtn('run stop', I.stop, 'Interrumpir la ejecución — púlsalo otra vez si la celda no responde', () => interruptKernel())
-      : iconBtn('run', I.compile, 'Ejecutar la celda (Mayús+Intro)', () => runCellByKey(view, this.key));
+      ? iconBtn('run stop', I.stop, tr('Interrumpir la ejecución — púlsalo otra vez si la celda no responde', 'Interrupt the run — press it again if the cell does not respond'), () => interruptKernel())
+      : iconBtn('run', I.compile, tr('Ejecutar la celda (Mayús+Intro)', 'Run the cell (Shift+Enter)'), () => runCellByKey(view, this.key));
     run.classList.add('cell-gutter-btn');
     bar.appendChild(run);
 
@@ -881,7 +882,7 @@ class CellToolbar extends WidgetType {
       preview.className = 'cell-preview';
       const first = (this.cell.code.split('\n').find((l) => l.trim()) || '').trim();
       const n = this.cell.code.split('\n').length;
-      preview.textContent = first ? `${first}  ⋯ (${n} líneas)` : `(${n} líneas)`;
+      preview.textContent = first ? `${first}  ⋯ (${n} ${tr('líneas', 'lines')})` : `(${n} ${tr('líneas', 'lines')})`;
       left.appendChild(preview);
     } else if (this.stale) {
       // The code changed after this result was produced. In a calculation
@@ -891,12 +892,12 @@ class CellToolbar extends WidgetType {
       status.className = 'cell-status stale';
       if (this.stale === 'upstream') {
         // Its own code is unchanged, but something it depends on is not.
-        status.textContent = '⟳ desactualizada: depende de una celda modificada';
-        status.title = 'Una celda de la que depende ha cambiado. Ejecuta esa celda (Mayús+Intro) '
-          + 'y Pyx volverá a ejecutar esta automáticamente, o compila.';
+        status.textContent = tr('⟳ desactualizada: depende de una celda modificada', '⟳ stale: it depends on a modified cell');
+        status.title = tr('Una celda de la que depende ha cambiado. Ejecuta esa celda (Mayús+Intro) y Pyx volverá a ejecutar esta automáticamente, o compila.',
+          'A cell it depends on has changed. Run that cell (Shift+Enter) and Pyx will run this one again automatically, or compile.');
       } else {
         status.textContent = '⟳ resultado desactualizado';
-        status.title = 'La celda ha cambiado desde la última ejecución. Vuelve a ejecutarla.';
+        status.title = tr('La celda ha cambiado desde la última ejecución. Vuelve a ejecutarla.', 'The cell has changed since the last run. Run it again.');
       }
       left.appendChild(status);
     }
@@ -906,28 +907,28 @@ class CellToolbar extends WidgetType {
     // hidden until the cell is the active one — a cell at rest shows code.
     const right = document.createElement('div');
     right.className = 'cell-actions';
-    right.appendChild(iconBtn('above', I.runAbove, 'Ejecutar las celdas anteriores',
+    right.appendChild(iconBtn('above', I.runAbove, tr('Ejecutar las celdas anteriores', 'Run the cells above'),
       () => runCellsAbove(view, this.key)));
-    right.appendChild(iconBtn('below', I.runBelow, 'Ejecutar esta celda y las siguientes',
+    right.appendChild(iconBtn('below', I.runBelow, tr('Ejecutar esta celda y las siguientes', 'Run this cell and the ones below'),
       () => runCellsBelow(view, this.key)));
-    right.appendChild(iconBtn('split', I.split, 'Dividir la celda por el cursor',
+    right.appendChild(iconBtn('split', I.split, tr('Dividir la celda por el cursor', 'Split the cell at the cursor'),
       () => splitCellByKey(view, this.key)));
-    right.appendChild(iconBtn('more', I.more, 'Más acciones…', (e) => cellMenu(e, [
-      { label: 'Cortar celda', icon: MI.cut, shortcut: 'X', onClick: () => { copyText(cellText(view, this.key)); deleteCellByKey(view, this.key); } },
-      { label: 'Copiar celda', icon: MI.copy, shortcut: 'C', onClick: () => copyText(cellText(view, this.key)) },
+    right.appendChild(iconBtn('more', I.more, tr('Más acciones…', 'More actions…'), (e) => cellMenu(e, [
+      { label: tr('Cortar celda', 'Cut cell'), icon: MI.cut, shortcut: 'X', onClick: () => { copyText(cellText(view, this.key)); deleteCellByKey(view, this.key); } },
+      { label: tr('Copiar celda', 'Copy cell'), icon: MI.copy, shortcut: 'C', onClick: () => copyText(cellText(view, this.key)) },
       { separator: true },
-      { label: 'Insertar celda arriba', icon: MI.arrowUp, onClick: () => insertCellNear(view, this.key, 'above') },
-      { label: 'Insertar celda abajo', icon: MI.arrowDown, onClick: () => insertCellNear(view, this.key, 'below') },
+      { label: tr('Insertar celda arriba', 'Insert cell above'), icon: MI.arrowUp, onClick: () => insertCellNear(view, this.key, 'above') },
+      { label: tr('Insertar celda abajo', 'Insert cell below'), icon: MI.arrowDown, onClick: () => insertCellNear(view, this.key, 'below') },
       { separator: true },
-      { label: 'Dividir la celda por el cursor', icon: MI.splitCell, onClick: () => splitCellByKey(view, this.key) },
-      { label: this.collapsed ? 'Expandir la celda' : 'Contraer la celda', icon: this.collapsed ? MI.expandAll : MI.collapseAll, onClick: () => view.dispatch({ effects: toggleCollapse.of(this.key) }) },
+      { label: tr('Dividir la celda por el cursor', 'Split the cell at the cursor'), icon: MI.splitCell, onClick: () => splitCellByKey(view, this.key) },
+      { label: this.collapsed ? tr('Expandir la celda', 'Expand the cell') : tr('Contraer la celda', 'Collapse the cell'), icon: this.collapsed ? MI.expandAll : MI.collapseAll, onClick: () => view.dispatch({ effects: toggleCollapse.of(this.key) }) },
       { separator: true },
-      { label: 'Borrar la salida de esta celda', icon: MI.clear, disabled: !hasOutput(out), onClick: () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); } },
-      { label: 'Copiar la salida de esta celda', icon: MI.copy, disabled: !hasOutput(out), onClick: () => copyText(outputText(out)) },
+      { label: tr('Borrar la salida de esta celda', 'Clear this cell\'s output'), icon: MI.clear, disabled: !hasOutput(out), onClick: () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); } },
+      { label: tr('Copiar la salida de esta celda', 'Copy this cell\'s output'), icon: MI.copy, disabled: !hasOutput(out), onClick: () => copyText(outputText(out)) },
       { separator: true },
-      { label: 'Eliminar celda', icon: MI.trash, danger: true, onClick: () => deleteCellByKey(view, this.key) },
+      { label: tr('Eliminar celda', 'Delete cell'), icon: MI.trash, danger: true, onClick: () => deleteCellByKey(view, this.key) },
     ])));
-    right.appendChild(iconBtn('danger', I.trash, 'Eliminar celda', () => deleteCellByKey(view, this.key)));
+    right.appendChild(iconBtn('danger', I.trash, tr('Eliminar celda', 'Delete cell'), () => deleteCellByKey(view, this.key)));
     bar.appendChild(right);
 
     return bar;
@@ -955,7 +956,7 @@ function appendLongText(body, text, view) {
   const note = document.createElement('div');
   note.className = 'out-note out-more';
   const label = document.createElement('span');
-  label.textContent = `… ${hidden.toLocaleString('es-ES')} líneas más `;
+  label.textContent = tr(`… ${hidden.toLocaleString('es-ES')} líneas más `, `… ${hidden.toLocaleString('en-US')} more lines `);
   const btn = document.createElement('button');
   btn.className = 'out-more-btn';
   btn.textContent = 'Mostrarlas todas';
@@ -997,7 +998,7 @@ function renderDisplay(d, body, view) {
     const src = `data:${mime};base64,` + d.data;
     const fig = document.createElement('div');
     fig.className = 'out-fig';
-    fig.appendChild(expandBtn('Abrir en otra pestaña', () => openImageTab(src)));
+    fig.appendChild(expandBtn(tr('Abrir en otra pestaña', 'Open in another tab'), () => openImageTab(src)));
     const img = document.createElement('img');
     img.onload = () => view.requestMeasure();
     img.src = src;
@@ -1019,7 +1020,7 @@ function renderDisplay(d, body, view) {
   // A DataFrame without pandas' alignment-only <style> renders inline, with
   // the app's table look (rich-frame.js explains why it went to a frame).
   const html = d.kind === 'html' ? stripPandasStyle(d.data) : d.data;
-  holder.appendChild(expandBtn('Abrir en otra pestaña', () => openHtmlTab(html)));
+  holder.appendChild(expandBtn(tr('Abrir en otra pestaña', 'Open in another tab'), () => openHtmlTab(html)));
   if (d.kind === 'html' && needsIsolation(html)) {
     holder.appendChild(createRichFrame(html, () => view.requestMeasure()));
   } else {
@@ -1066,9 +1067,9 @@ function renderTraceback(err, headerLine, body, view) {
     row.appendChild(document.createTextNode(', '));
     const ln = document.createElement('span');
     ln.className = 'tb-line' + (cur ? ' clickable' : '');
-    ln.textContent = `línea ${cur ? headerLine + relLine : relLine}`;
+    ln.textContent = `${tr('línea', 'line')} ${cur ? headerLine + relLine : relLine}`;
     if (cur) {
-      ln.title = `Ir a la línea ${headerLine + relLine}`;
+      ln.title = tr(`Ir a la línea ${headerLine + relLine}`, `Go to line ${headerLine + relLine}`);
       ln.onmousedown = (e) => e.preventDefault();
       ln.onclick = () => jumpToLine(view, headerLine + relLine);
     }
@@ -1091,7 +1092,7 @@ function renderTraceback(err, headerLine, body, view) {
   if (Array.isArray(err.frames) && err.frames.length) {
     const h = document.createElement('div');
     h.className = 'tb-head';
-    h.textContent = 'Traceback (llamada más reciente al final):';
+    h.textContent = tr('Traceback (llamada más reciente al final):', 'Traceback (most recent call last):');
     wrap.appendChild(h);
     for (const f of err.frames) {
       addLoc(f.line, f.name, f.cur);
@@ -1125,7 +1126,7 @@ function renderTraceback(err, headerLine, body, view) {
     const b = document.createElement('button');
     b.className = 'tb-install';
     b.textContent = `Instalar ${err.module}…`;
-    b.title = 'Instalar el paquete en el Python que usa Pyx';
+    b.title = tr('Instalar el paquete en el Python que usa Pyx', 'Install the package in the Python Pyx uses');
     b.onmousedown = (e) => e.preventDefault();
     b.onclick = () => import('../solid/components/SetupDialog.jsx').then((mod) => mod.offerPackage(err.module));
     wrap.appendChild(b);
@@ -1173,16 +1174,16 @@ class CellOutput extends WidgetType {
     const cnt = document.createElement('div');
     cnt.className = 'out-count';
     cnt.textContent = out.running ? '[*]' : out.count ? `[${out.count}]` : '[ ]';
-    cnt.title = out.count ? `Ejecución nº ${out.count}` : 'Sin ejecutar';
+    cnt.title = out.count ? tr(`Ejecución nº ${out.count}`, `Run #${out.count}`) : tr('Sin ejecutar', 'Not run');
     gutter.appendChild(cnt);
     // VSCode puts a "…" beside the output with the actions that belong to the
     // RESULT rather than to the cell.
-    const more = iconBtn('outmore', I.more, 'Acciones de la salida…', (e) => cellMenu(e, [
-      { label: 'Copiar la salida de esta celda', icon: MI.copy, onClick: () => copyText(outputText(out)) },
-      { label: 'Borrar la salida de esta celda', icon: MI.clear, onClick: () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); } },
+    const more = iconBtn('outmore', I.more, tr('Acciones de la salida…', 'Output actions…'), (e) => cellMenu(e, [
+      { label: tr('Copiar la salida de esta celda', 'Copy this cell\'s output'), icon: MI.copy, onClick: () => copyText(outputText(out)) },
+      { label: tr('Borrar la salida de esta celda', 'Clear this cell\'s output'), icon: MI.clear, onClick: () => { deleteOutput(docIdOf(view.state), this.key); broadcastCellRefresh(); } },
       { separator: true },
       {
-        label: this.outCollapsed ? 'Expandir la salida' : 'Minimizar la salida',
+        label: this.outCollapsed ? tr('Expandir la salida', 'Expand the output') : tr('Minimizar la salida', 'Minimize the output'),
         icon: this.outCollapsed ? MI.expandAll : MI.collapseAll,
         onClick: () => view.dispatch({ effects: toggleOutCollapse.of(this.key) }),
       },
@@ -1217,7 +1218,7 @@ class CellOutput extends WidgetType {
     if (out.ms != null) {
       const t = document.createElement('span');
       t.className = 'cell-st time';
-      t.title = 'Tiempo de ejecución de la celda';
+      t.title = tr('Tiempo de ejecución de la celda', 'Cell run time');
       t.textContent = fmtMs(out.ms);
       bar.appendChild(t);
     }
@@ -1308,8 +1309,8 @@ class CellOutput extends WidgetType {
       const docLine = this.headerLine + out.error.line;
       const chip = document.createElement('div');
       chip.className = 'out-errline';
-      chip.textContent = `✗ ${out.error.type} — línea ${docLine}: ${mapMsgLines(out.error.msg, this.headerLine)}`;
-      chip.title = `Ir a la línea ${docLine}`;
+      chip.textContent = `✗ ${out.error.type} — ${tr('línea', 'line')} ${docLine}: ${mapMsgLines(out.error.msg, this.headerLine)}`;
+      chip.title = tr(`Ir a la línea ${docLine}`, `Go to line ${docLine}`);
       chip.onmousedown = (e) => e.preventDefault();
       chip.onclick = () => jumpToLine(view, docLine);
       body.appendChild(chip);
@@ -1330,7 +1331,7 @@ class CellOutput extends WidgetType {
     if (out.trimmed) {
       const note = document.createElement('div');
       note.className = 'out-note';
-      note.textContent = '(figuras no guardadas en el documento — vuelve a ejecutar la celda para verlas)';
+      note.textContent = tr('(figuras no guardadas en el documento — vuelve a ejecutar la celda para verlas)', '(figures not saved in the document — run the cell again to see them)');
       body.appendChild(note);
     }
 

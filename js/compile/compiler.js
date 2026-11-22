@@ -41,6 +41,7 @@ import { saveActiveAs, saveWithEncoding, markSavedIfUnchanged } from '../solid/s
 import { general } from '../solid/stores/settingsStore.js';
 import { collabHooks } from '../collab/hooks.js';
 import { checkLatex } from '../collab/latex-guard.js';
+import { t } from '../core/i18n.js';
 
 /* ---- live compile (TeXstudio-style) ----
    The editor schedules a background compile shortly after typing stops; the
@@ -187,7 +188,7 @@ function showCompiledPdf(pdfPath, { gen, follow }) {
     // The viewer's failure is ADDED to the engine's log — it used to replace
     // it, and the one line left ("Invalid PDF structure") hid every error
     // that explained it.
-    const why = `El visor no pudo abrir el PDF: ${String((e && e.message) || e)}`;
+    const why = t(`El visor no pudo abrir el PDF: ${String((e && e.message) || e)}`, `The viewer could not open the PDF: ${String((e && e.message) || e)}`);
     state.compileReason = why;
     const body = state.lastLog.replace(/^===== Avisos de Pyx =====\n?/, '');
     state.lastLog = `===== Avisos de Pyx =====\n[Visor] ${why}\n${state.lastLog.startsWith('===== Avisos de Pyx =====') ? '' : '\n'}${body}`;
@@ -852,9 +853,11 @@ function startWatchdog() {
   }, 5000);
 }
 function abandonCompile(phase, limit) {
-  const what = phase === 'latex' ? 'el motor LaTeX' : phase === 'python' ? 'Python' : 'la preparación';
-  const why = `La compilación se abandonó: ${what} llevaba más de ${Math.round(limit / 60000)} min sin avanzar. `
-    + 'Vuelve a compilar; si se repite, usa «Recompilar desde cero».';
+  const what = phase === 'latex' ? t('el motor LaTeX', 'the LaTeX engine') : phase === 'python' ? 'Python' : t('la preparación', 'the preparation');
+  const why = t(`La compilación se abandonó: ${what} llevaba más de ${Math.round(limit / 60000)} min sin avanzar. `
+    + 'Vuelve a compilar; si se repite, usa «Recompilar desde cero».',
+  `The compile was abandoned: ${what} had made no progress for more than ${Math.round(limit / 60000)} min. `
+    + 'Compile again; if it happens again, use “Recompile from scratch”.');
   runSeq++; // the run in flight no longer owns anything
   clearInterval(watchdog);
   watchdog = null;
@@ -1048,8 +1051,8 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     let pythonNote = ''; // why the Python process was replaced, if it was
     const cellProblem = (label, stderr, docLine) => {
       const last = (stderr || '').split('\n').filter((l) => l.trim()).pop();
-      const at = docLine ? ` · línea ${docLine}` : '';
-      problems += `\n[${label}${at}] ${last || 'error de ejecución'}`;
+      const at = docLine ? ` · ${t('línea', 'line')} ${docLine}` : '';
+      problems += `\n[${label}${at}] ${last || t('error de ejecución', 'runtime error')}`;
     };
 
     // 1) Gather the \input tree and run every Python cell in DOCUMENT ORDER
@@ -1096,7 +1099,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     let watched = [];   // the linked files this compile used (link-watch.js)
     for (const f of nbFiles) {
       for (const nb of f.notebooks.values()) {
-        if (nb.error) nbProblems += `\n[${baseName(nb.path || nb.raw)}] No se pudo leer: ${nb.error}`;
+        if (nb.error) nbProblems += `\n[${baseName(nb.path || nb.raw)}] ${t('No se pudo leer', 'Could not read')}: ${nb.error}`;
       }
     }
 
@@ -1371,17 +1374,17 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         const name = baseName(nbPath);
         if (nbPlan.missing && nbPlan.missing.length) {
           nbProblems += nbPlan.source === 'jupyter'
-            ? `\n[${name}] Jupyter no tiene ${nbPlan.missing.join(', ')}: ejecuta en Jupyter las celdas que las definen.`
+            ? t(`\n[${name}] Jupyter no tiene ${nbPlan.missing.join(', ')}: ejecuta en Jupyter las celdas que las definen.`, `\n[${name}] Jupyter does not have ${nbPlan.missing.join(', ')}: run the cells that define them in Jupyter.`)
             : `\n[${name}] Los valores guardados no incluyen ${nbPlan.missing.join(', ')}.`;
         }
         const bad = Object.entries(nbPlan.errors || {}).filter(([n]) => (nbPlan.asked || []).includes(n));
         if (bad.length) {
-          nbProblems += `\n[${name}] No se pudieron copiar del cuaderno: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`;
+          nbProblems += `\n[${name}] ${t('No se pudieron copiar del cuaderno', 'Could not copy from the notebook')}: ${bad.map(([n, e]) => `${n} (${e})`).join('; ')}`;
         }
         // (A notebook that FAILED is not saved, on purpose: its error is listed.)
         if (nbRan.has(nbPath) && nbPlan.mode === 'run' && !nbSaved.has(nbPath) && nbPlan.names && nbPlan.names.length
           && nsHasRun(nbPlan.entries)) {
-          nbNotes.push(`${name}: no se pudieron guardar sus valores; la próxima vez se tomarán de Jupyter si está abierto`);
+          nbNotes.push(t(`${name}: no se pudieron guardar sus valores; la próxima vez se tomarán de Jupyter si está abierto`, `${name}: its values could not be saved; next time they will be taken from Jupyter if it is open`));
         }
       }
       // What went wrong around a notebook without stopping the compile
@@ -1421,16 +1424,16 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     }
 
     if (cancelRequested) {
-      state.lastLog = '===== Avisos de Pyx =====\n[Pyx] Compilación detenida por el usuario.';
+      state.lastLog = '===== Avisos de Pyx =====\n[Pyx] ' + t('Compilación detenida por el usuario.', 'Compile stopped by the user.');
       state.lastCompileOk = false;
-      state.compileReason = 'Compilación detenida por el usuario.';
+      state.compileReason = t('Compilación detenida por el usuario.', 'Compile stopped by the user.');
       return null;
     }
     // Python-only .pltx (no LaTeX document): running the cells IS the compile.
     if (pythonOnly) {
       state.lastLog =
         (problems ? `===== Avisos de Pyx =====${problems}\n\n` : '') +
-        'Documento sin LaTeX: se han ejecutado las celdas Python (no se genera PDF).'
+        t('Documento sin LaTeX: se han ejecutado las celdas Python (no se genera PDF).', 'Document without LaTeX: the Python cells were run (no PDF is made).')
         + (nbNotes.length ? `\n\nArchivos vinculados:\n${nbNotes.map((n) => `  ${n}`).join('\n')}` : '');
       state.lastCompileOk = !problems;
       state.compileReason = '';
@@ -1486,12 +1489,12 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         use.usesRender = true;
       }
       if (f.unterminated) {
-        problems += `\n[${baseName(path)} · línea ${f.unterminated}] celda sin %#end:`
-          + ' no se ejecuta y el resto del archivo no llega al PDF.';
+        problems += `\n[${baseName(path)} · ${t('línea', 'line')} ${f.unterminated}] `
+          + t('celda sin %#end: no se ejecuta y el resto del archivo no llega al PDF.', 'cell without %#end: it does not run and the rest of the file does not reach the PDF.');
       }
       for (const [raw, why] of f.unreadable || []) {
-        problems += `\n[${baseName(path)}] no se pudo leer \\input{${raw}}`
-          + `${why ? ` (${why})` : ''}: en el PDF aparece «No se pudo leer» en su lugar.`;
+        problems += `\n[${baseName(path)}] ${t('no se pudo leer', 'could not read')} \\input{${raw}}`
+          + `${why ? ` (${why})` : ''}: ${t('en el PDF aparece «No se pudo leer» en su lugar.', 'the PDF shows “Could not read” in its place.')}`;
       }
     }
     use.floatBarrier = general.floatBarrier !== false;
@@ -1514,7 +1517,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         for (const r of sheetRequests(f.content, path === rootPath ? null : rootSheetLink).reqs) {
           const key = requestKey(r, base);
           if (!r.link || !r.link.path) {
-            sheetVals.set(key, { ok: false, error: 'falta un \\hoja{libro.xlsx} antes, que diga de qué libro' });
+            sheetVals.set(key, { ok: false, error: t('falta un \\hoja{libro.xlsx} antes, que diga de qué libro', 'a \\hoja{workbook.xlsx} is missing before it, to say which workbook') });
             continue;
           }
           const g = `${absOf(r.link.path)}\u0000${r.link.sheet || ''}`;
@@ -1529,7 +1532,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
           const res = await sheetValues(file, sheet || null, list.map(([, r]) => r.ref));
           list.forEach(([key, r], i) => {
             const v = res[i] || {};
-            sheetVals.set(key, v.ok ? { ok: true, tex: gridTeX(v.grid, r.transpose) } : { ok: false, error: v.error });
+            sheetVals.set(key, v.ok ? { ok: true, grid: v.grid } : { ok: false, error: v.error });
           });
         } catch (err) {
           for (const [key] of list) sheetVals.set(key, { ok: false, error: String(err && err.message || err) });
@@ -1598,7 +1601,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         processed = r.text;
         for (const pr of r.problems) {
           const buildLine = processed.slice(0, pr.at).split('\n').length;
-          problems += `\n[${baseName(path)} · línea ${buildToSrcLine(lineMaps[mapKey], buildLine)}] ${pr.message}`;
+          problems += `\n[${baseName(path)} · ${t('línea', 'line')} ${buildToSrcLine(lineMaps[mapKey], buildLine)}] ${pr.message}`;
         }
       }
       /* A \py{} the build still carries.
@@ -1617,10 +1620,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       for (const lk of leaks) {
         if (!f.isPyx && lk.balanced) continue; // not this file's business
         const src = buildToSrcLine(lineMaps[mapKey], lk.line);
-        problems += `\n[${baseName(path)} · línea ${src}] ${lk.token} `
+        problems += `\n[${baseName(path)} · ${t('línea', 'line')} ${src}] ${lk.token} `
           + (lk.balanced
-            ? 'sin resolver: no se imprimirá nada en el PDF.'
-            : 'con las llaves sin cerrar: se ignora el comando y se compila el resto.');
+            ? t('sin resolver: no se imprimirá nada en el PDF.', 'unresolved: nothing will be printed in the PDF.')
+            : t('con las llaves sin cerrar: se ignora el comando y se compila el resto.', 'with unclosed braces: the command is ignored and the rest is compiled.'));
       }
       processed = defusePyxLeaks(processed, leaks.filter((lk) => !lk.balanced));
       processed = processed.replace(new RegExp(INPUT_SRC, 'g'), (all, cmd, raw) => {
@@ -1809,18 +1812,18 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     }
     if (res.stopped) {
       problems += res.stopped === 'cancelado'
-        ? '\n[LaTeX] Compilación detenida por el usuario.'
+        ? '\n[LaTeX] ' + t('Compilación detenida por el usuario.', 'Compile stopped by the user.')
         : res.stopped === 'sustituida'
-          ? '\n[LaTeX] Sustituida por una compilación más reciente.'
-          : '\n[LaTeX] Pyx detuvo el motor: '
-            + (res.stopped === 'bucle' ? 'el mismo error se repetía sin fin (bucle).'
-              : res.stopped === 'sin-progreso' ? 'llevaba demasiado tiempo sin avanzar (bucle infinito).'
-                : 'superó el tiempo máximo de una pasada.')
-            + ' Detalles al final del registro.';
+          ? '\n[LaTeX] ' + t('Sustituida por una compilación más reciente.', 'Replaced by a newer compile.')
+          : '\n[LaTeX] ' + t('Pyx detuvo el motor: ', 'Pyx stopped the engine: ')
+            + (res.stopped === 'bucle' ? t('el mismo error se repetía sin fin (bucle).', 'the same error repeated endlessly (loop).')
+              : res.stopped === 'sin-progreso' ? t('llevaba demasiado tiempo sin avanzar (bucle infinito).', 'it had made no progress for too long (infinite loop).')
+                : t('superó el tiempo máximo de una pasada.', 'it exceeded the maximum time of a pass.'))
+            + t(' Detalles al final del registro.', ' Details at the end of the log.');
     }
     // A compile ends in a new PDF or in a reason — never in "done" over the
     // PDF of an hour ago. latex.rs always gives one when it wrote no PDF.
-    const reason = res.pdf_path ? '' : (res.reason || 'El motor terminó sin escribir un PDF.');
+    const reason = res.pdf_path ? '' : (res.reason || t('El motor terminó sin escribir un PDF.', 'The engine finished without writing a PDF.'));
     state.compileReason = reason;
     // What the engine actually did: the backend adds passes when TeX needs them.
     const ranPasses = ((res.log || '').match(/===== Pasada /g) || []).length || passes;
@@ -1828,7 +1831,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // missing image): list it as a problem, not only deep in the raw log.
     const cut = /===== Pyx: el PDF no se completó =====\n([\s\S]*?)(?:\n=====|$)/.exec(res.log || '');
     if (cut) problems += `\n[PDF] ${cut[1].trim().replace(/\s*\n\s*/g, ' ')}`;
-    else if (reason && !res.stopped) problems += `\n[PDF] No hay PDF nuevo: ${reason.replace(/\s*\n\s*/g, ' ')}`;
+    else if (reason && !res.stopped) problems += `\n[PDF] ${t('No hay PDF nuevo', 'No new PDF')}: ${reason.replace(/\s*\n\s*/g, ' ')}`;
     const tm = res.timings || {};
     const passesMs = (tm.passes_ms || []).map((x) => `${x} ms`).join(' + ');
 

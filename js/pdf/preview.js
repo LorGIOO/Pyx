@@ -53,6 +53,7 @@ import {
   setNumPages, setCurrentPage, setPreviewFile, setHasPdf, tool, setLastArea, pdfVersion, setPdfVersion,
   setLoadError, setSearchProgress, annotTool,
 } from '../solid/stores/previewStore.js';
+import { t } from '../core/i18n.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 // Where PDF.js may rasterize pages (it falls back to the main thread by itself
@@ -131,7 +132,7 @@ function parseOnce(bytes) {
   });
   let timer = 0;
   const late = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('el lector de PDF no respondió')), PARSE_MS + size / 1000);
+    timer = setTimeout(() => reject(new Error(t('el lector de PDF no respondió', 'the PDF reader did not respond'))), PARSE_MS + size / 1000);
   });
   return Promise.race([task.promise, late])
     .finally(() => clearTimeout(timer))
@@ -516,7 +517,7 @@ export async function loadPdf(path) {
   } catch (e) {
     if (seq !== loadSeq) return null; // a failure nobody is waiting for any more
     // Never a silent blank pane: the viewer shows WHY the PDF didn't load.
-    setLoadError(`No se pudo cargar el PDF: ${String((e && e.message) || e)}`);
+    setLoadError(t(`No se pudo cargar el PDF: ${String((e && e.message) || e)}`, `Could not load the PDF: ${String((e && e.message) || e)}`));
     throw e;
   }
 }

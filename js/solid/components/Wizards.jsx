@@ -5,12 +5,18 @@ import { relativePath, joinPath, baseName } from '../../core/paths.js';
 import { activeRootDir } from '../../compile/compiler.js';
 import { parseTsv, parseHtmlTable, tableRules } from '../../editor/paste-table.js';
 import {
-  tableLatex, tablePackages, figureLatex, figurePackages, slugLabel,
+  tableLatex, tablePackages, figureLatex, figurePackages, slugLabel, tableParts, figureParts,
 } from '../../editor/table-gen.js';
+import {
+  templates, loadTemplates, saveTemplate, deleteTemplate, fillTemplate, templatize, PLACEHOLDERS,
+} from '../stores/templatesStore.js';
+import { userDir } from '../../core/userfiles.js';
+import { revealInExplorer, askDialog } from '../../core/platform.js';
 import { getDocContent } from '../../editor/setup.js';
 import { activeDoc } from '../../core/state.js';
 import { registerDialog, closeDialogs } from '../stores/dialogStore.js';
 import { general, setGeneral } from '../stores/settingsStore.js';
+import { t as tr } from '../../core/i18n.js';
 
 /* «Mi estilo»: the options of each assistant the user saved as their own.
    A new table or figure starts from them instead of the built-in defaults;
@@ -31,12 +37,93 @@ function StyleButtons(props) {
   const flash = (t) => { setMsg(t); setTimeout(() => setMsg(''), 2200); };
   return (
     <div class="wz-style">
-      <button class="wz-browse" title="Las próximas tablas o figuras empezarán con estas opciones (no se guarda el contenido)"
-        onClick={() => { setGeneral({ [props.key]: props.get() }); flash('Guardado como tu estilo'); }}>Guardar como mi estilo</button>
-      <button class="wz-browse" title="Volver a las opciones de Pyx" disabled={!Object.keys(savedStyle(props.key)).length}
-        onClick={() => { setGeneral({ [props.key]: null }); props.reset(); flash('Estilo de Pyx restablecido'); }}>Estilo de Pyx</button>
+      <button class="wz-browse" title={tr('Las próximas tablas o figuras empezarán con estas opciones (no se guarda el contenido)', 'The next tables or figures will start with these options (the content is not saved)')}
+        onClick={() => { setGeneral({ [props.key]: props.get() }); flash(tr('Guardado como tu estilo', 'Saved as your style')); }}>{tr('Guardar opciones como mi estilo', 'Save options as my style')}</button>
+      <button class="wz-browse" title={tr('Volver a las opciones de Pyx', 'Back to Pyx\'s options')} disabled={!Object.keys(savedStyle(props.key)).length}
+        onClick={() => { setGeneral({ [props.key]: null }); props.reset(); flash(tr('Estilo de Pyx restablecido', 'Pyx style restored')); }}>{tr('Opciones de Pyx', 'Pyx options')}</button>
       <span class="wz-hint">{msg()}</span>
     </div>
+  );
+}
+
+// Stand-ins for an empty caption / label while a template is being made.
+const SENT_CAP = '\u0001caption\u0001';
+const SENT_LAB = '\u0001label\u0001';
+
+/** The template library of an assistant: pick one (or Pyx's own options),
+ *  save the code on screen as a new one, delete one, make one the default,
+ *  open the folder. Templates are .tex files (stores/templatesStore.js). */
+function TemplateBar(props) {
+  const [naming, setNaming] = createSignal(false);
+  const [name, setName] = createSignal('');
+  const [msg, setMsg] = createSignal('');
+  const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2600); };
+  const defKey = props.kind === 'tables' ? 'tableTemplate' : 'figureTemplate';
+  const isDefault = () => !!props.selected() && (general[defKey] || '') === props.selected();
+  const save = async () => {
+    const n = name().trim();
+    if (!n) return;
+    await saveTemplate(props.kind, n, props.templateText());
+    props.setSelected(n);
+    props.discard();
+    setNaming(false); setName('');
+    flash(tr(`Plantilla «${n}» guardada`, `Template “${n}” saved`));
+  };
+  const remove = async () => {
+    const n = props.selected();
+    if (!n) return;
+    if (!(await askDialog(tr(`¿Eliminar la plantilla «${n}»?`, `Delete the template “${n}”?`), { title: tr('Plantillas', 'Templates'), kind: 'warning' }))) return;
+    await deleteTemplate(props.kind, n);
+    if ((general[defKey] || '') === n) setGeneral({ [defKey]: '' });
+    props.setSelected('');
+  };
+  const folder = async () => {
+    const d = await userDir();
+    if (d) revealInExplorer(`${d}${d.includes('\\') ? '\\' : '/'}templates${d.includes('\\') ? '\\' : '/'}${props.kind}`);
+  };
+  return (
+    <div class="wz-tpl">
+      <span class="wz-label">{tr('Plantilla', 'Template')}</span>
+      <select value={props.selected()} onChange={(e) => { props.setSelected(e.target.value); props.discard(); }}>
+        <option value="">{tr('Opciones de este asistente', 'This assistant\'s options')}</option>
+        <For each={templates(props.kind)}>{(tp) => <option value={tp.name}>{tp.name}</option>}</For>
+      </select>
+      <button class={`wz-browse wz-star${isDefault() ? ' on' : ''}`} disabled={!props.selected() && !general[defKey]} title={tr('Usar siempre al abrir el asistente (y al arrastrar archivos)', 'Always use when the assistant opens (and when files are dropped)')}
+        onClick={() => setGeneral({ [defKey]: isDefault() ? '' : props.selected() })}>{isDefault() ? '★' : '☆'} {tr('Por defecto', 'Default')}</button>
+      <Show when={!naming()} fallback={
+        <>
+          <input type="text" class="wz-tpl-name" placeholder={tr('Nombre de la plantilla', 'Template name')} value={name()}
+            ref={(el) => requestAnimationFrame(() => el.focus())}
+            onInput={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { e.stopPropagation(); setNaming(false); } }} />
+          <button class="wz-browse" disabled={!name().trim()} onClick={save}>{tr('Guardar', 'Save')}</button>
+        </>
+      }>
+        <button class="wz-browse" title={tr('Guarda el código de abajo (con tus cambios) como plantilla de la biblioteca', 'Save the code below (with your changes) as a library template')}
+          onClick={() => { setName(props.selected() || ''); setNaming(true); }}>{tr('Guardar como plantilla…', 'Save as template…')}</button>
+      </Show>
+      <button class="wz-browse" disabled={!props.selected()} title={tr('Eliminar la plantilla elegida', 'Delete the chosen template')} onClick={remove}>{tr('Eliminar', 'Delete')}</button>
+      <button class="wz-browse" title={tr('Abrir la carpeta de las plantillas', 'Open the templates folder')} onClick={folder}>{tr('Carpeta', 'Folder')}</button>
+      <span class="wz-hint">{msg()}</span>
+    </div>
+  );
+}
+
+/** What «Insertar» writes: editable. Edited by hand, it stays as written
+ *  until «Descartar cambios»; the placeholders a template may use are listed. */
+function CodeBox(props) {
+  return (
+    <>
+      <textarea class="wz-code" spellcheck={false} value={props.edited() ?? props.code()}
+        onInput={(e) => props.setEdited(e.target.value)} rows={9} />
+      <div class="wz-codebar">
+        <Show when={props.edited() != null} fallback={
+          <span class="wz-hint">{tr('Puedes editar el código a mano antes de insertarlo o de guardarlo como plantilla. Marcadores:', 'You can edit the code by hand before inserting it or saving it as a template. Placeholders:')} <code>{PLACEHOLDERS[props.kind].map((p) => `{{${p}}}`).join(' ')}</code></span>
+        }>
+          <span class="wz-hint wz-edited">{tr('Código editado a mano: los cambios de arriba ya no lo actualizan.', 'Code edited by hand: the options above no longer update it.')}</span>
+          <button class="wz-browse" onClick={() => props.setEdited(null)}>{tr('Descartar cambios', 'Discard changes')}</button>
+        </Show>
+      </div>
+    </>
   );
 }
 
@@ -47,9 +134,16 @@ function StyleButtons(props) {
 
 const [tableOpen, setTableOpen] = createSignal(false);
 const [figureOpen, setFigureOpen] = createSignal(false);
+// A path to start the figure with (a dropped or inserted image).
+let figureStartPath = '';
 // Opening one closes any other dialog, and Escape closes it (dialogStore).
-export const openTableWizard = () => { closeDialogs(); setTableOpen(true); };
-export const openFigureWizard = () => { closeDialogs(); setFigureOpen(true); };
+export const openTableWizard = () => { closeDialogs(); loadTemplates('tables'); setTableOpen(true); };
+export const openFigureWizard = (path) => {
+  closeDialogs();
+  figureStartPath = typeof path === 'string' ? path : '';
+  loadTemplates('figures');
+  setFigureOpen(true);
+};
 registerDialog(tableOpen, () => setTableOpen(false));
 registerDialog(figureOpen, () => setFigureOpen(false));
 
@@ -77,19 +171,19 @@ const Field = (props) => (
   </div>
 );
 
-const FLOATS = [
-  ['htbp', 'Donde mejor quepa [htbp]'],
-  ['H', 'Exactamente aquí [H]'],
-  ['t', 'Arriba de la página [t]'],
-  ['b', 'Abajo de la página [b]'],
-  ['p', 'En página aparte [p]'],
+const FLOATS = () => [
+  ['htbp', tr('Donde mejor quepa [htbp]', 'Wherever it fits best [htbp]')],
+  ['H', tr('Exactamente aquí [H]', 'Exactly here [H]')],
+  ['t', tr('Arriba de la página [t]', 'Top of the page [t]')],
+  ['b', tr('Abajo de la página [b]', 'Bottom of the page [b]')],
+  ['p', tr('En página aparte [p]', 'On a page of its own [p]')],
 ];
 
 /** The note under the code: what the document must load for it to compile. */
 const Needs = (props) => (
   <Show when={props.list.length}>
     <div class="wz-needs">
-      Requiere en el preámbulo: {props.list.map((p) => `\\usepackage{${p}}`).join('  ')}
+      {tr('Requiere en el preámbulo:', 'Needs in the preamble:')} {props.list.map((p) => `\\usepackage{${p}}`).join('  ')}
     </div>
   </Show>
 );
@@ -102,7 +196,7 @@ function TableWizard() {
   // The grid: rows of cell texts. One signal for the whole grid — a table
   // this size re-renders in well under a frame.
   const [cells, setCells] = createSignal([
-    ['Columna 1', 'Columna 2', 'Columna 3'],
+    [tr('Columna 1', 'Column 1'), tr('Columna 2', 'Column 2'), tr('Columna 3', 'Column 3')],
     ['', '', ''],
     ['', '', ''],
   ]);
@@ -189,21 +283,36 @@ function TableWizard() {
     headerBold: headerBold(), escape: escape(), float: float(), caption: caption().trim(), captionPos: captionPos(),
     label: label().trim(), size: size(), fit: fit(),
   });
-  const code = createMemo(() => tableLatex(options()));
-  const insert = () => { insertSnippet(code() + '\n'); setTableOpen(false); };
+  // A library template, or this assistant's own options ('').
+  const [tpl, setTpl] = createSignal(general.tableTemplate || '');
+  const [edited, setEdited] = createSignal(null);
+  const tplText = () => (templates('tables').find((x) => x.name === tpl()) || {}).text;
+  const parts = () => tableParts(options());
+  const code = createMemo(() => (tpl() && tplText() != null ? fillTemplate(tplText(), parts()) : tableLatex(options())));
+  const usingTpl = () => !!(tpl() && tplText() != null);
+  const insert = () => { insertSnippet((edited() ?? code()) + '\n'); setTableOpen(false); };
+  // «Guardar como plantilla»: the code on screen with Pyx's pieces turned back
+  // into {{placeholders}}.
+  const templateText = () => {
+    if (edited() != null) return templatize(edited(), parts());
+    // Not edited: an empty caption or label still gets its line in the template.
+    const p = { ...parts(), caption: parts().caption || SENT_CAP, label: parts().label || SENT_LAB };
+    return templatize(usingTpl() ? fillTemplate(tplText(), p) : tableLatex({ ...options(), caption: p.caption, label: p.label }), p);
+  };
 
   return (
     <div class="cfg-overlay">
       <div class="cfg-modal wz-modal wz-wide" style={pos() ? { left: pos().x + 'px', top: pos().y + 'px', transform: 'none' } : undefined}>
         <div class="cfg-titlebar" onPointerDown={startDrag}>
-          <span>Asistente de tabla</span>
-          <button class="cfg-close" onClick={() => setTableOpen(false)}>✕</button>
+          <span>{tr('Asistente de tabla', 'Table assistant')}</span>
+          <button class="cfg-close" title={tr('Cerrar', 'Close')} onClick={() => setTableOpen(false)}>✕</button>
         </div>
         <div class="wz-body">
+          <TemplateBar kind="tables" selected={tpl} setSelected={setTpl} templateText={templateText} discard={() => setEdited(null)} />
           <div class="wz-toolbar">
-            <Field label="Filas"><input type="number" min="1" max={MAX_ROWS} value={nRows()} onChange={(e) => resize(+e.target.value, nCols())} /></Field>
-            <Field label="Columnas"><input type="number" min="1" max={MAX_COLS} value={nCols()} onChange={(e) => resize(nRows(), +e.target.value)} /></Field>
-            <span class="wz-hint wz-grow">Escribe en las celdas o <b>pega aquí las celdas copiadas de Excel</b>: la tabla se rellena y crece sola. Intro baja de fila.</span>
+            <Field label={tr('Filas', 'Rows')}><input type="number" min="1" max={MAX_ROWS} value={nRows()} onChange={(e) => resize(+e.target.value, nCols())} /></Field>
+            <Field label={tr('Columnas', 'Columns')}><input type="number" min="1" max={MAX_COLS} value={nCols()} onChange={(e) => resize(nRows(), +e.target.value)} /></Field>
+            <span class="wz-hint wz-grow">{tr(<>Escribe en las celdas o <b>pega aquí las celdas copiadas de Excel</b>: la tabla se rellena y crece sola. Intro baja de fila.</>, <>Type in the cells or <b>paste here the cells copied from Excel</b>: the table fills and grows by itself. Enter goes down a row.</>)}</span>
           </div>
           <div class="wz-grid-wrap">
             <table class="wz-grid" ref={gridEl}>
@@ -212,11 +321,11 @@ function TableWizard() {
                   <Index each={align()}>
                     {(a, j) => (
                       <th>
-                        <select value={a()} title="Alineación de la columna" onChange={(e) => setColAlign(j, e.target.value)}>
-                          <option value="l">⇤ izq.</option>
-                          <option value="c">↔ centro</option>
-                          <option value="r">⇥ der.</option>
-                          <option value="p">¶ párrafo</option>
+                        <select value={a()} title={tr('Alineación de la columna', 'Column alignment')} onChange={(e) => setColAlign(j, e.target.value)}>
+                          <option value="l">{tr('⇤ izq.', '⇤ left')}</option>
+                          <option value="c">{tr('↔ centro', '↔ centre')}</option>
+                          <option value="r">{tr('⇥ der.', '⇥ right')}</option>
+                          <option value="p">{tr('¶ párrafo', '¶ paragraph')}</option>
                         </select>
                       </th>
                     )}
@@ -244,71 +353,71 @@ function TableWizard() {
           </div>
           <div class="wz-cols">
             <div class="wz-col">
-              <Field label="Líneas">
+              <Field label={tr('Líneas', 'Rules')}>
                 <select value={rules()} onChange={(e) => setRules(e.target.value)}>
-                  <option value="booktabs">booktabs (profesional)</option>
-                  <option value="hline">\hline arriba, bajo la cabecera y abajo</option>
-                  <option value="grid">Cuadrícula completa</option>
-                  <option value="none">Sin líneas</option>
+                  <option value="booktabs">{tr('booktabs (profesional)', 'booktabs (professional)')}</option>
+                  <option value="hline">{tr('\\hline arriba, bajo la cabecera y abajo', '\\hline at top, under the header and at bottom')}</option>
+                  <option value="grid">{tr('Cuadrícula completa', 'Full grid')}</option>
+                  <option value="none">{tr('Sin líneas', 'No rules')}</option>
                 </select>
               </Field>
-              <Field label="Cabecera">
+              <Field label={tr('Cabecera', 'Header')}>
                 <input type="checkbox" checked={header()} onChange={(e) => setHeader(e.target.checked)} />
-                <span class="wz-hint">la primera fila</span>
+                <span class="wz-hint">{tr('la primera fila', 'the first row')}</span>
                 <input type="checkbox" checked={headerBold()} disabled={!header()} onChange={(e) => setHeaderBold(e.target.checked)} />
-                <span class="wz-hint">en negrita</span>
+                <span class="wz-hint">{tr('en negrita', 'in bold')}</span>
               </Field>
-              <Field label="Líneas verticales" title="No se recomiendan con booktabs">
+              <Field label={tr('Líneas verticales', 'Vertical rules')} title={tr('No se recomiendan con booktabs', 'Not recommended with booktabs')}>
                 <input type="checkbox" checked={vlines()} onChange={(e) => setVlines(e.target.checked)} />
               </Field>
-              <Field label="Celdas de texto" title="Escapa % & _ # $ { } en las celdas. Desactívalo si escribes LaTeX en ellas ($x^2$, \textbf{…}).">
+              <Field label={tr('Celdas de texto', 'Text cells')} title={tr('Escapa % & _ # $ { } en las celdas. Desactívalo si escribes LaTeX en ellas ($x^2$, \\textbf{…}).', 'Escapes % & _ # $ { } in the cells. Turn it off if you write LaTeX in them ($x^2$, \\textbf{…}).')}>
                 <input type="checkbox" checked={escape()} onChange={(e) => setEscape(e.target.checked)} />
-                <span class="wz-hint">escapar % &amp; _ $ … (quítalo si escribes LaTeX)</span>
+                <span class="wz-hint">{tr('escapar % & _ $ … (quítalo si escribes LaTeX)', 'escape % & _ $ … (untick it if you write LaTeX)')}</span>
               </Field>
               <Show when={align().includes('p')}>
-                <Field label="Ancho de ¶"><input type="text" value={pWidth()} onInput={(e) => setPWidth(e.target.value)} placeholder="3cm" /></Field>
+                <Field label={tr('Ancho de ¶', '¶ width')}><input type="text" value={pWidth()} onInput={(e) => setPWidth(e.target.value)} placeholder="3cm" /></Field>
               </Show>
             </div>
             <div class="wz-col">
-              <Field label="Colocación">
+              <Field label={tr('Colocación', 'Placement')}>
                 <select value={float()} onChange={(e) => setFloat(e.target.value)}>
-                  <For each={FLOATS}>{(f) => <option value={f[0]}>{f[1]}</option>}</For>
-                  <option value="none">Solo el tabular (sin entorno table)</option>
+                  <For each={FLOATS()}>{(f) => <option value={f[0]}>{f[1]}</option>}</For>
+                  <option value="none">{tr('Solo el tabular (sin entorno table)', 'Only the tabular (no table environment)')}</option>
                 </select>
               </Field>
-              <Field label="Título">
-                <input type="text" value={caption()} disabled={float() === 'none'} onInput={(e) => setCaption(e.target.value)} placeholder="Descripción de la tabla" />
+              <Field label={tr('Título', 'Caption')}>
+                <input type="text" value={caption()} disabled={float() === 'none'} onInput={(e) => setCaption(e.target.value)} placeholder={tr('Descripción de la tabla', 'Description of the table')} />
                 <select class="wz-short" value={captionPos()} disabled={float() === 'none'} onChange={(e) => setCaptionPos(e.target.value)}>
-                  <option value="top">arriba</option>
-                  <option value="bottom">abajo</option>
+                  <option value="top">{tr('arriba', 'above')}</option>
+                  <option value="bottom">{tr('abajo', 'below')}</option>
                 </select>
               </Field>
-              <Field label="Etiqueta">
-                <input type="text" value={label()} disabled={float() === 'none'} onInput={(e) => setLabel(e.target.value)} placeholder="mi-tabla → \ref{tab:mi-tabla}" />
-                <button class="wz-browse" disabled={float() === 'none' || !caption().trim()} title="Proponer una etiqueta a partir del título"
-                  onClick={(e) => { e.preventDefault(); setLabel(slugLabel(caption())); }}>Del título</button>
+              <Field label={tr('Etiqueta', 'Label')}>
+                <input type="text" value={label()} disabled={float() === 'none'} onInput={(e) => setLabel(e.target.value)} placeholder={tr('mi-tabla → \\ref{tab:mi-tabla}', 'my-table → \\ref{tab:my-table}')} />
+                <button class="wz-browse" disabled={float() === 'none' || !caption().trim()} title={tr('Proponer una etiqueta a partir del título', 'Suggest a label from the caption')}
+                  onClick={(e) => { e.preventDefault(); setLabel(slugLabel(caption())); }}>{tr('Del título', 'From the caption')}</button>
               </Field>
-              <Field label="Tamaño de letra">
+              <Field label={tr('Tamaño de letra', 'Font size')}>
                 <select value={size()} onChange={(e) => setSize(e.target.value)}>
-                  <option value="">Normal</option>
-                  <option value="small">Pequeña (\small)</option>
-                  <option value="footnotesize">Más pequeña (\footnotesize)</option>
-                  <option value="scriptsize">Mínima (\scriptsize)</option>
+                  <option value="">{tr('Normal', 'Normal')}</option>
+                  <option value="small">{tr('Pequeña (\\small)', 'Small (\\small)')}</option>
+                  <option value="footnotesize">{tr('Más pequeña (\\footnotesize)', 'Smaller (\\footnotesize)')}</option>
+                  <option value="scriptsize">{tr('Mínima (\\scriptsize)', 'Smallest (\\scriptsize)')}</option>
                 </select>
               </Field>
-              <Field label="Si no cabe" title="Reduce la tabla al ancho del texto solo cuando es más ancha">
+              <Field label={tr('Si no cabe', 'If it does not fit')} title={tr('Reduce la tabla al ancho del texto solo cuando es más ancha', 'Shrinks the table to the text width only when it is wider')}>
                 <input type="checkbox" checked={fit()} onChange={(e) => setFit(e.target.checked)} />
-                <span class="wz-hint">reducirla al ancho del texto</span>
+                <span class="wz-hint">{tr('reducirla al ancho del texto', 'shrink it to the text width')}</span>
               </Field>
             </div>
           </div>
-          <pre class="wz-code">{code()}</pre>
-          <Needs list={tablePackages(options())} />
-          <StyleButtons key="tableStyle" get={styleNow} reset={resetStyle} />
+          <CodeBox kind="tables" code={code} edited={edited} setEdited={setEdited} />
+          <Show when={!usingTpl()}><Needs list={tablePackages(options())} /></Show>
+          <Show when={!usingTpl()}><StyleButtons key="tableStyle" get={styleNow} reset={resetStyle} /></Show>
         </div>
         <div class="cfg-footer">
-          <button onClick={() => setTableOpen(false)}>Cancelar</button>
-          <button class="primary" onClick={insert}>Insertar tabla</button>
+          <button onClick={() => setTableOpen(false)}>{tr('Cancelar', 'Cancel')}</button>
+          <button class="primary" onClick={insert}>{tr('Insertar tabla', 'Insert table')}</button>
         </div>
       </div>
     </div>
@@ -350,7 +459,7 @@ function Thumb(props) {
 
 function FigureWizard() {
   const [pos, startDrag] = useDrag();
-  const [images, setImages] = createSignal([{ path: '', caption: '' }]);
+  const [images, setImages] = createSignal([{ path: figureStartPath || '', caption: '' }]);
   const st = savedStyle('figureStyle');
   const [unit, setUnit] = createSignal(pick(st, 'unit', 'textwidth', isOneOf('textwidth', 'cm', 'natural')));
   const [width, setWidth] = createSignal(pick(st, 'width', 0.8, isNum(0.05, 1)));
@@ -391,17 +500,30 @@ function FigureWizard() {
     images: images(), unit: unit(), width: unit() === 'cm' ? widthCm() : width(), height: height(), angle: angle(),
     perRow: perRow(), float: float(), centering: centered(), caption: caption().trim(), captionPos: captionPos(), label: label().trim(),
   });
-  const code = createMemo(() => figureLatex(options()));
-  const insert = () => { insertSnippet(code() + '\n'); setFigureOpen(false); };
+  if (figureStartPath && !label()) setLabel(slugLabel(baseName(figureStartPath)));
+  const [tpl, setTpl] = createSignal(general.figureTemplate || '');
+  const [edited, setEdited] = createSignal(null);
+  const tplText = () => (templates('figures').find((x) => x.name === tpl()) || {}).text;
+  // A template holds ONE image; subfigures use the assistant's own layout.
+  const usingTpl = () => !!(tpl() && tplText() != null && !many());
+  const parts = () => figureParts(options());
+  const code = createMemo(() => (usingTpl() ? fillTemplate(tplText(), parts()) : figureLatex(options())));
+  const insert = () => { insertSnippet((edited() ?? code()) + '\n'); setFigureOpen(false); };
+  const templateText = () => {
+    if (edited() != null) return templatize(edited(), parts());
+    const p = { ...parts(), caption: parts().caption || SENT_CAP, label: parts().label || SENT_LAB };
+    return templatize(usingTpl() ? fillTemplate(tplText(), p) : figureLatex({ ...options(), caption: p.caption, label: p.label }), p);
+  };
 
   return (
     <div class="cfg-overlay">
       <div class="cfg-modal wz-modal wz-wide" style={pos() ? { left: pos().x + 'px', top: pos().y + 'px', transform: 'none' } : undefined}>
         <div class="cfg-titlebar" onPointerDown={startDrag}>
-          <span>Asistente de figura</span>
-          <button class="cfg-close" onClick={() => setFigureOpen(false)}>✕</button>
+          <span>{tr('Asistente de figura', 'Figure assistant')}</span>
+          <button class="cfg-close" title={tr('Cerrar', 'Close')} onClick={() => setFigureOpen(false)}>✕</button>
         </div>
         <div class="wz-body">
+          <TemplateBar kind="figures" selected={tpl} setSelected={setTpl} templateText={templateText} discard={() => setEdited(null)} />
           <div class="wz-images">
             <Index each={images()}>
               {(im, i) => (
@@ -410,16 +532,16 @@ function FigureWizard() {
                   <div class="wz-image-fields">
                     <div class="wz-row">
                       <input type="text" value={im().path} spellcheck={false} onInput={(e) => setImage(i, { path: e.target.value })}
-                        placeholder="ruta/imagen.png (relativa a la carpeta del documento raíz)" />
-                      <button class="wz-browse" onClick={() => browse(i)}>Examinar…</button>
+                        placeholder={tr('ruta/imagen.png (relativa a la carpeta del documento raíz)', 'path/image.png (relative to the main document\\\'s folder)')} />
+                      <button class="wz-browse" onClick={() => browse(i)}>{tr('Examinar…', 'Browse…')}</button>
                       <Show when={images().length > 1}>
-                        <button class="wz-browse" title="Quitar esta imagen" onClick={() => setImages(images().filter((_, k) => k !== i))}>✕</button>
+                        <button class="wz-browse" title={tr('Quitar esta imagen', 'Remove this image')} onClick={() => setImages(images().filter((_, k) => k !== i))}>✕</button>
                       </Show>
                     </div>
                     <Show when={many()}>
                       <div class="wz-row">
                         <input type="text" value={im().caption} onInput={(e) => setImage(i, { caption: e.target.value })}
-                          placeholder={`Título de la subfigura (${String.fromCharCode(97 + i)})`} />
+                          placeholder={tr(`Título de la subfigura (${String.fromCharCode(97 + i)})`, `Subfigure caption (${String.fromCharCode(97 + i)})`)} />
                       </div>
                     </Show>
                   </div>
@@ -427,20 +549,20 @@ function FigureWizard() {
               )}
             </Index>
             <button class="wz-browse wz-add" disabled={images().length >= 8}
-              title="Varias imágenes se colocan una junto a otra, cada una con su título: (a), (b)…"
-              onClick={() => setImages([...images(), { path: '', caption: '' }])}>+ Añadir otra imagen (subfiguras)</button>
+              title={tr('Varias imágenes se colocan una junto a otra, cada una con su título: (a), (b)…', 'Several images go side by side, each with its caption: (a), (b)…')}
+              onClick={() => setImages([...images(), { path: '', caption: '' }])}>{tr('+ Añadir otra imagen (subfiguras)', '+ Add another image (subfigures)')}</button>
           </div>
           <div class="wz-cols">
             <div class="wz-col">
               <Show when={!many()} fallback={
-                <Field label="Por fila"><input type="number" min="1" max="4" value={perRow()} onChange={(e) => setPerRow(Math.max(1, Math.min(4, +e.target.value || 1)))} />
-                  <span class="wz-hint">imágenes en cada fila</span></Field>
+                <Field label={tr('Por fila', 'Per row')}><input type="number" min="1" max="4" value={perRow()} onChange={(e) => setPerRow(Math.max(1, Math.min(4, +e.target.value || 1)))} />
+                  <span class="wz-hint">{tr('imágenes en cada fila', 'images per row')}</span></Field>
               }>
-                <Field label="Ancho">
+                <Field label={tr('Ancho', 'Width')}>
                   <select class="wz-short" value={unit()} onChange={(e) => setUnit(e.target.value)}>
-                    <option value="textwidth">% del texto</option>
+                    <option value="textwidth">{tr('% del texto', '% of text')}</option>
                     <option value="cm">cm</option>
-                    <option value="natural">original</option>
+                    <option value="natural">{tr('original', 'original')}</option>
                   </select>
                   <Show when={unit() === 'textwidth'}>
                     <input type="range" min="0.1" max="1" step="0.05" value={width()} onInput={(e) => setWidth(+e.target.value)} />
@@ -452,42 +574,42 @@ function FigureWizard() {
                   </Show>
                 </Field>
               </Show>
-              <Field label="Alto máximo" title="0 = sin límite. Con ancho y alto a la vez la imagen conserva su proporción (keepaspectratio).">
+              <Field label={tr('Alto máximo', 'Max height')} title={tr('0 = sin límite. Con ancho y alto a la vez la imagen conserva su proporción (keepaspectratio).', '0 = no limit. With both width and height the image keeps its proportions (keepaspectratio).')}>
                 <input type="number" min="0" max="40" step="0.5" value={height()} onChange={(e) => setHeight(Math.max(0, +e.target.value || 0))} />
-                <span class="wz-hint">cm (0 = sin límite)</span>
+                <span class="wz-hint">{tr('cm (0 = sin límite)', 'cm (0 = no limit)')}</span>
               </Field>
-              <Field label="Rotación">
+              <Field label={tr('Rotación', 'Rotation')}>
                 <input type="number" min="-180" max="180" step="90" value={angle()} onChange={(e) => setAngle(+e.target.value || 0)} />
-                <span class="wz-hint">grados</span>
+                <span class="wz-hint">{tr('grados', 'degrees')}</span>
               </Field>
-              <Field label="Centrada"><input type="checkbox" checked={centered()} onChange={(e) => setCentered(e.target.checked)} /></Field>
+              <Field label={tr('Centrada', 'Centred')}><input type="checkbox" checked={centered()} onChange={(e) => setCentered(e.target.checked)} /></Field>
             </div>
             <div class="wz-col">
-              <Field label="Colocación">
+              <Field label={tr('Colocación', 'Placement')}>
                 <select value={float()} onChange={(e) => setFloat(e.target.value)}>
-                  <For each={FLOATS}>{(f) => <option value={f[0]}>{f[1]}</option>}</For>
-                  <option value="none">Solo la imagen (sin entorno figure)</option>
+                  <For each={FLOATS()}>{(f) => <option value={f[0]}>{f[1]}</option>}</For>
+                  <option value="none">{tr('Solo la imagen (sin entorno figure)', 'Only the image (no figure environment)')}</option>
                 </select>
               </Field>
-              <Field label="Pie de figura">
-                <input type="text" value={caption()} disabled={float() === 'none'} onInput={(e) => setCaption(e.target.value)} placeholder="Descripción de la figura" />
+              <Field label={tr('Pie de figura', 'Caption')}>
+                <input type="text" value={caption()} disabled={float() === 'none'} onInput={(e) => setCaption(e.target.value)} placeholder={tr('Descripción de la figura', 'Description of the figure')} />
                 <select class="wz-short" value={captionPos()} disabled={float() === 'none'} onChange={(e) => setCaptionPos(e.target.value)}>
-                  <option value="bottom">abajo</option>
-                  <option value="top">arriba</option>
+                  <option value="bottom">{tr('abajo', 'below')}</option>
+                  <option value="top">{tr('arriba', 'above')}</option>
                 </select>
               </Field>
-              <Field label="Etiqueta">
-                <input type="text" value={label()} disabled={float() === 'none'} onInput={(e) => setLabel(e.target.value)} placeholder="mi-figura → \ref{fig:mi-figura}" />
+              <Field label={tr('Etiqueta', 'Label')}>
+                <input type="text" value={label()} disabled={float() === 'none'} onInput={(e) => setLabel(e.target.value)} placeholder={tr('mi-figura → \\ref{fig:mi-figura}', 'my-figure → \\ref{fig:my-figure}')} />
               </Field>
             </div>
           </div>
-          <pre class="wz-code">{code()}</pre>
-          <Needs list={figurePackages(options())} />
-          <StyleButtons key="figureStyle" get={styleNow} reset={resetStyle} />
+          <CodeBox kind="figures" code={code} edited={edited} setEdited={setEdited} />
+          <Show when={!usingTpl()}><Needs list={figurePackages(options())} /></Show>
+          <Show when={!usingTpl()}><StyleButtons key="figureStyle" get={styleNow} reset={resetStyle} /></Show>
         </div>
         <div class="cfg-footer">
-          <button onClick={() => setFigureOpen(false)}>Cancelar</button>
-          <button class="primary" onClick={insert}>Insertar figura</button>
+          <button onClick={() => setFigureOpen(false)}>{tr('Cancelar', 'Cancel')}</button>
+          <button class="primary" onClick={insert}>{tr('Insertar figura', 'Insert figure')}</button>
         </div>
       </div>
     </div>

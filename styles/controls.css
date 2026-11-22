@@ -102,7 +102,6 @@ select {
    the theme (VS Code: dropdown.listBackground #1F1F1F in dark). */
 select { color-scheme: light; }
 [data-theme="dark"] select,
-[data-theme="blue"] select { color-scheme: dark; }
 select option {
   background-color: var(--theme-panel-bg);
   color: var(--theme-text);
@@ -355,3 +354,51 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 1px; }
 .cfg-footer button:disabled,
 .cfg-btn:disabled,
 .wz-browse:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- Pyx's own list for every <select> (select-popup.js) ----------
+   Same surface as the ribbon's menus; above any dialog. */
+.pyx-select-menu {
+  z-index: 20000;
+  min-width: 120px;
+  padding: 4px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--ctl-font, 12px);
+}
+.pyx-select-item {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 22px 2px 24px;
+  position: relative;
+  border-radius: 3px;
+  color: var(--theme-text);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+.pyx-select-item.selected::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 7px;
+  height: 4px;
+  margin-top: -3px;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+.pyx-select-item.active { background: var(--theme-accent); color: #fff; }
+.pyx-select-item.disabled { opacity: 0.45; }
+.pyx-select-item.in-group { padding-left: 32px; }
+.pyx-select-item.in-group.selected::before { left: 17px; }
+.pyx-select-group {
+  padding: 6px 10px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--theme-text-secondary);
+}
+select.pyx-select-open { border-color: var(--ctl-focus); }

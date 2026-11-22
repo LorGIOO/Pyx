@@ -25,13 +25,24 @@ type Grid = HashMap<(u32, u32), Value>; // (row, col) -> value, 1-based
 struct Book {
     names: Vec<String>,
     sheets: HashMap<String, Grid>,
+    /// Names defined in Excel (Formulas -> Name Manager), lowercase -> "Hoja1!$B$2".
+    defined: HashMap<String, String>,
+}
+
+/// The UI language, for the messages that end up in the problems panel.
+static EN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn set_english(en: bool) {
+    EN.store(en, std::sync::atomic::Ordering::Relaxed);
+}
+fn tr(es: String, en: String) -> String {
+    if EN.load(std::sync::atomic::Ordering::Relaxed) { en } else { es }
 }
 
 type Stamp = (u128, u64);
 static CACHE: Mutex<Option<HashMap<String, (Stamp, Arc<Book>)>>> = Mutex::new(None);
 
 fn stamp(p: &Path) -> Result<Stamp, String> {
-    let m = std::fs::metadata(p).map_err(|_| format!("No existe {}.", p.display()))?;
+    let m = std::fs::metadata(p).map_err(|_| tr(format!("No existe {}.", p.display()), format!("{} does not exist.", p.display())))?;
     let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
     Ok((t, m.len()))
 }
@@ -48,9 +59,9 @@ fn load(path: &str) -> Result<Arc<Book>, String> {
     let book = match ext.as_str() {
         "xlsx" | "xlsm" => read_xlsx(p)?,
         "csv" | "txt" | "tsv" => read_csv(p)?,
-        "xls" => return Err("El formato .xls antiguo no se puede leer: guárdalo como .xlsx desde Excel.".into()),
-        "ods" => return Err("Las hojas .ods no se pueden leer: guárdala como .xlsx.".into()),
-        _ => return Err(format!("{} no es un libro de Excel (.xlsx) ni un .csv.", p.display())),
+        "xls" => return Err(tr("El formato .xls antiguo no se puede leer: guárdalo como .xlsx desde Excel.".into(), "The old .xls format cannot be read: save it as .xlsx from Excel.".into())),
+        "ods" => return Err(tr("Las hojas .ods no se pueden leer: guárdala como .xlsx.".into(), ".ods sheets cannot be read: save it as .xlsx.".into())),
+        _ => return Err(tr(format!("{} no es un libro de Excel (.xlsx) ni un .csv.", p.display()), format!("{} is neither an Excel workbook (.xlsx) nor a .csv.", p.display()))),
     };
     let book = Arc::new(book);
     if let Ok(mut c) = CACHE.lock() {
@@ -188,9 +199,9 @@ fn sheet_cells(xml: &str, strings: &[String]) -> Grid {
 }
 
 fn read_xlsx(p: &Path) -> Result<Book, String> {
-    let f = std::fs::File::open(p).map_err(|e| format!("No se pudo abrir {}: {e}", p.display()))?;
-    let mut z = zip::ZipArchive::new(f).map_err(|_| format!("{} no es un .xlsx válido.", p.display()))?;
-    let wb = zip_text(&mut z, "xl/workbook.xml").ok_or("El libro no tiene xl/workbook.xml.")?;
+    let f = std::fs::File::open(p).map_err(|e| tr(format!("No se pudo abrir {}: {e}", p.display()), format!("Could not open {}: {e}", p.display())))?;
+    let mut z = zip::ZipArchive::new(f).map_err(|_| tr(format!("{} no es un .xlsx válido.", p.display()), format!("{} is not a valid .xlsx.", p.display())))?;
+    let wb = zip_text(&mut z, "xl/workbook.xml").ok_or_else(|| tr("El libro no tiene xl/workbook.xml.".into(), "The workbook has no xl/workbook.xml.".into()))?;
     let rels = zip_text(&mut z, "xl/_rels/workbook.xml.rels").unwrap_or_default();
     let strings = zip_text(&mut z, "xl/sharedStrings.xml").map(|s| shared_strings(&s)).unwrap_or_default();
     // rId -> target part
@@ -213,11 +224,33 @@ fn read_xlsx(p: &Path) -> Result<Book, String> {
     let mut sheets = HashMap::new();
     let mut wr = Reader::from_str(&wb);
     let mut order = Vec::new();
+    let mut defined = HashMap::new();
+    let mut in_name: Option<(String, String)> = None; // (name, text so far)
     loop {
         match wr.read_event() {
             Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.local_name().as_ref() == b"sheet" => {
                 if let (Some(n), Some(id)) = (attr(&e, b"name"), attr(&e, b"id")) {
                     order.push((n, id));
+                }
+            }
+            // <definedName name="Caudal">Datos!$B$4</definedName> (built-in
+            // ones like _xlnm.Print_Area are skipped)
+            Ok(Event::Start(e)) if e.local_name().as_ref() == b"definedName" => {
+                in_name = attr(&e, b"name").filter(|n| !n.starts_with("_xlnm.")).map(|n| (n, String::new()));
+            }
+            Ok(Event::Text(t)) if in_name.is_some() => {
+                if let Some((_, buf)) = in_name.as_mut() {
+                    buf.push_str(&String::from_utf8_lossy(t.as_ref()));
+                }
+            }
+            Ok(Event::GeneralRef(r)) if in_name.is_some() => {
+                if let Some((_, buf)) = in_name.as_mut() {
+                    buf.push_str(&entity(r.as_ref()));
+                }
+            }
+            Ok(Event::End(e)) if e.local_name().as_ref() == b"definedName" => {
+                if let Some((n, txt)) = in_name.take() {
+                    defined.insert(n.to_lowercase(), txt.trim().to_string());
                 }
             }
             Ok(Event::Eof) | Err(_) => break,
@@ -230,7 +263,7 @@ fn read_xlsx(p: &Path) -> Result<Book, String> {
         names.push(n.clone());
         sheets.insert(n, grid);
     }
-    Ok(Book { names, sheets })
+    Ok(Book { names, sheets, defined })
 }
 
 /* ---------------- .csv ---------------- */
@@ -260,7 +293,7 @@ fn csv_value(field: &str, decimal_comma: bool) -> Option<Value> {
 }
 
 fn read_csv(p: &Path) -> Result<Book, String> {
-    let text = decode(&std::fs::read(p).map_err(|e| format!("No se pudo leer {}: {e}", p.display()))?);
+    let text = decode(&std::fs::read(p).map_err(|e| tr(format!("No se pudo leer {}: {e}", p.display()), format!("Could not read {}: {e}", p.display())))?);
     let sample: String = text.lines().take(20).collect::<Vec<_>>().join("\n");
     let count = |c: char| sample.matches(c).count();
     let delim = [';', '\t', '|', ',']
@@ -302,7 +335,7 @@ fn read_csv(p: &Path) -> Result<Book, String> {
         }
     }
     push(row, col, &mut field, &mut g);
-    Ok(Book { names: vec![String::new()], sheets: HashMap::from([(String::new(), g)]) })
+    Ok(Book { names: vec![String::new()], sheets: HashMap::from([(String::new(), g)]), defined: HashMap::new() })
 }
 
 /* ---------------- addresses ---------------- */
@@ -315,7 +348,7 @@ fn parse_ref(r: &str) -> Result<(Option<String>, (u32, u32), (u32, u32)), String
         None => (None, r),
     };
     let cells = cells.replace('$', "");
-    let bad = || format!("«{r}» no es una dirección de Excel (E4, E4:F8 o Hoja2!B2:D5).");
+    let bad = || tr(format!("«{r}» no es una dirección de Excel (E4, E4:F8, Hoja2!B2:D5) ni un nombre definido en el libro."), format!("“{r}” is not an Excel address (E4, E4:F8, Sheet2!B2:D5) nor a name defined in the workbook."));
     let mut parts = cells.split(':');
     let a = cell_pos(parts.next().unwrap_or("").trim()).ok_or_else(bad)?;
     let b = match parts.next() {
@@ -346,21 +379,31 @@ pub fn values(path: &str, sheet: Option<String>, refs: &[String]) -> Result<Vec<
         .iter()
         .map(|r| {
             let fail = |e: String| Cells { ok: false, grid: vec![], error: e };
-            let (s, (r1, c1), (r2, c2)) = match parse_ref(r) {
+            // An address, or else a name defined in the workbook.
+            let parsed = parse_ref(r).or_else(|e| match book.defined.get(&r.trim().to_lowercase()) {
+                Some(target) => parse_ref(target),
+                None => Err(e),
+            });
+            let (s, (r1, c1), (r2, c2)) = match parsed {
                 Ok(x) => x,
                 Err(e) => return fail(e),
             };
             let name = s.or_else(|| default.clone()).unwrap_or_else(|| book.names.first().cloned().unwrap_or_default());
             let Some(grid) = book.sheets.get(&name) else {
-                return fail(format!("No hay ninguna hoja «{name}». Hojas: {}.", book.names.join(", ")));
+                return fail(tr(format!("No hay ninguna hoja «{name}». Hojas: {}.", book.names.join(", ")), format!("There is no sheet “{name}”. Sheets: {}.", book.names.join(", "))));
             };
             if (r2 - r1 + 1) as u64 * (c2 - c1 + 1) as u64 > 200_000 {
-                return fail(format!("El rango {r} es demasiado grande."));
+                return fail(tr(format!("El rango {r} es demasiado grande."), format!("The range {r} is too large.")));
             }
             let rows = (r1..=r2).map(|row| (c1..=c2).map(|col| grid.get(&(row, col)).cloned().unwrap_or(Value::Null)).collect()).collect();
             Cells { ok: true, grid: rows, error: String::new() }
         })
         .collect())
+}
+
+/// The sheet names of a workbook, in order (a CSV has one, unnamed).
+pub fn sheet_names(path: &str) -> Result<Vec<String>, String> {
+    Ok(load(path)?.names.clone())
 }
 
 #[cfg(test)]
@@ -379,7 +422,7 @@ mod tests {
         let mut z = zip::ZipWriter::new(f);
         let o = zip::write::SimpleFileOptions::default();
         let put = |z: &mut zip::ZipWriter<std::fs::File>, n: &str, s: &str| { z.start_file(n, o).unwrap(); z.write_all(s.as_bytes()).unwrap(); };
-        put(&mut z, "xl/workbook.xml", r#"<?xml version="1.0"?><workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Datos" sheetId="1" r:id="rId1"/><sheet name="Cargas &amp; usos" sheetId="2" r:id="rId2"/></sheets></workbook>"#);
+        put(&mut z, "xl/workbook.xml", r#"<?xml version="1.0"?><workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Datos" sheetId="1" r:id="rId1"/><sheet name="Cargas &amp; usos" sheetId="2" r:id="rId2"/></sheets><definedNames><definedName name="Caudal">Datos!$E$4</definedName><definedName name="Usos">'Cargas &amp; usos'!$B$2:$C$2</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">Datos!$A$1:$F$9</definedName></definedNames></workbook>"#);
         put(&mut z, "xl/_rels/workbook.xml.rels", r#"<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="/xl/worksheets/sheet2.xml"/></Relationships>"#);
         put(&mut z, "xl/sharedStrings.xml", r#"<sst><si><t>S275</t></si><si><r><t>I+D </t></r><r><t>&amp; Co</t></r></si></sst>"#);
         put(&mut z, "xl/worksheets/sheet1.xml", r#"<worksheet><sheetData><row r="4"><c r="E4"><v>12.5</v></c><c r="F4" t="s"><v>0</v></c></row><row r="5"><c r="E5"><f>E4*2</f><v>25</v></c><c r="F5" t="s"><v>1</v></c></row></sheetData></worksheet>"#);
@@ -400,6 +443,18 @@ mod tests {
         assert_eq!(v[4].grid, vec![vec![serde_json::json!("sobrecarga"), serde_json::json!(3.75)]]);
         assert!(!v[5].ok && v[5].error.contains("Datos"));
         assert!(!v[6].ok);
+    }
+
+    #[test]
+    fn resolves_names_defined_in_the_workbook_and_lists_sheets() {
+        let p = tmp("nombres.xlsx");
+        xlsx(&p);
+        let ps = p.to_string_lossy().to_string();
+        let v = values(&ps, None, &["Caudal".into(), "usos".into(), "Nada".into()]).unwrap();
+        assert_eq!(v[0].grid, vec![vec![serde_json::json!(12.5)]]);
+        assert_eq!(v[1].grid, vec![vec![serde_json::json!("sobrecarga"), serde_json::json!(3.75)]]);
+        assert!(!v[2].ok);
+        assert_eq!(sheet_names(&ps).unwrap(), vec!["Datos".to_string(), "Cargas & usos".to_string()]);
     }
 
     #[test]

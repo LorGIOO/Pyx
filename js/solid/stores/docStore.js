@@ -200,6 +200,16 @@ function syncActiveIndex() {
     : (state.documents.length ? 0 : -1);
 }
 
+/** Move the tab at `from` so that it ends up at index `to` (tab reordering).
+ *  Panes point at documents by id, so only the active index needs fixing. */
+export function moveDocument(from, to) {
+  const n = state.documents.length;
+  if (from === to || from < 0 || from >= n || to < 0 || to >= n) return;
+  const [doc] = state.documents.splice(from, 1);
+  state.documents.splice(to, 0, doc);
+  syncActiveIndex();
+}
+
 /** Make a pane the focused one (and the tab bar follow its document). */
 export function focusPane(paneId) {
   if (state.activePaneId === paneId) return;
@@ -369,8 +379,8 @@ async function openPathNow(path, background = false) {
   if (!background) import('../../compile/compiler.js').then((m) => { m.showSavedPdf(); m.prewarmActive(); }).catch(() => {});
   } catch (e) {
     // Say why. A damaged .pltx used to open silently as raw bytes.
-    await messageDialog(`No se pudo abrir «${baseName(path)}».\n\n${String((e && e.message) || e)}`,
-      { title: 'No se pudo abrir el documento', kind: 'error' }).catch(() => {});
+    await messageDialog(t(`No se pudo abrir «${baseName(path)}».\n\n${String((e && e.message) || e)}`, `Could not open “${baseName(path)}”.\n\n${String((e && e.message) || e)}`),
+      { title: t('No se pudo abrir el documento', 'Could not open the document'), kind: 'error' }).catch(() => {});
   }
 }
 
@@ -456,8 +466,8 @@ async function saveFailed(doc, e, interactive = true) {
   // while a drive is away: the log carries it and the document stays marked.
   if (!interactive) return false;
   try {
-    await messageDialog(`No se pudo guardar «${doc.fileName}».\n\n${msg}`,
-      { title: 'El documento NO se ha guardado', kind: 'error' });
+    await messageDialog(t(`No se pudo guardar «${doc.fileName}».\n\n${msg}`, `Could not save “${doc.fileName}”.\n\n${msg}`),
+      { title: t('El documento NO se ha guardado', 'The document was NOT saved'), kind: 'error' });
   } catch (_) { /* no dialog here: the log still carries it */ }
   return false;
 }
@@ -474,6 +484,8 @@ async function saveFailed(doc, e, interactive = true) {
  * Exported for the compiler, which also saves the sources it builds from. */
 export function markSavedIfUnchanged(doc, textWritten) {
   if (!doc) return false;
+  // Whoever cares about a file being written (the custom theme's theme.css…).
+  try { window.dispatchEvent(new CustomEvent('pyx:file-saved', { detail: { path: doc.path } })); } catch (_) { /* no window */ }
   let now;
   try { now = getDocContent(doc.id); } catch (_) { return false; }
   if (now !== textWritten) {

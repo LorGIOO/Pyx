@@ -32,7 +32,8 @@ export const NOPROSE = new RegExp(
   'bibliographystyle|bibliography|addbibresource|url|href|hyperref|' +
   'begin|end|pyfile|py|textcolor|definecolor|color|thispagestyle|pagestyle|' +
   'renewcommand|providecommand|newcommand|def|let|graphicspath|geometry|' +
-  'setlength|setcounter|usetikzlibrary|lstinputlisting|lstset|verb' +
+  'setlength|setcounter|usetikzlibrary|lstinputlisting|lstset|verb|' +
+  'hoja|celda|pynotebook|subfile|pyif' +
   ')(?![a-zA-Z])\\*?\\s*(?:\\[[^\\]]*\\])?\\s*(?:\\{[^{}]*\\})?',
   'g',
 );

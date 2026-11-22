@@ -6,13 +6,14 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen as tauriListen, emitTo as tauriEmitTo } from '@tauri-apps/api/event';
 import * as dialog from '@tauri-apps/plugin-dialog';
+import { t } from './i18n.js';
 
 export function isTauri() {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
 function notDesktop(feature) {
-  return Promise.reject(new Error(`${feature} requiere la app de escritorio (npm run tauri:dev).`));
+  return Promise.reject(new Error(t(`${feature} requiere la app de escritorio (npm run tauri:dev).`, `${feature} needs the desktop app (npm run tauri:dev).`)));
 }
 
 /* A shared session as a GUEST runs none of the document's code on this
@@ -85,12 +86,12 @@ export async function openFileDialog() {
       // `.sty` (and its siblings `.cls`/`.bib`) are project SOURCES that stay
       // in the user's folder — the only build-adjacent files Pyx never moves —
       // so they have to be openable and editable like any other source.
-      { name: 'Documentos Pyx', extensions: ['pltx', 'tex', 'sty', 'cls', 'bib'] },
+      { name: t('Documentos Pyx', 'Pyx documents'), extensions: ['pltx', 'tex', 'sty', 'cls', 'bib'] },
       { name: 'Pyx', extensions: ['pltx'] },
       { name: 'LaTeX', extensions: ['tex'] },
-      { name: 'Paquetes y clases', extensions: ['sty', 'cls'] },
-      { name: 'Bibliografía', extensions: ['bib'] },
-      { name: 'Texto', extensions: ['txt'] },
+      { name: t('Paquetes y clases', 'Packages and classes'), extensions: ['sty', 'cls'] },
+      { name: t('Bibliografía', 'Bibliography'), extensions: ['bib'] },
+      { name: t('Texto', 'Text'), extensions: ['txt'] },
     ],
   });
 }
@@ -106,7 +107,7 @@ export async function openExeDialog() {
     multiple: false,
     filters: [
       { name: 'Python', extensions: ['exe'] },
-      { name: 'Todos', extensions: ['*'] },
+      { name: t('Todos', 'All'), extensions: ['*'] },
     ],
   });
 }
@@ -115,8 +116,20 @@ export async function openImageDialog() {
   return dialog.open({
     multiple: false,
     filters: [
-      { name: 'Imágenes', extensions: ['png', 'jpg', 'jpeg', 'pdf', 'eps', 'svg'] },
-      { name: 'Todos', extensions: ['*'] },
+      { name: t('Imágenes', 'Images'), extensions: ['png', 'jpg', 'jpeg', 'pdf', 'eps', 'svg'] },
+      { name: t('Todos', 'All'), extensions: ['*'] },
+    ],
+  });
+}
+/** «Insertar archivo»: any file a document can call (Excel, CSV, notebook,
+ *  Python, PDF, image, LaTeX, bibliography). */
+export async function openInsertableDialog() {
+  if (!isTauri()) return null;
+  return dialog.open({
+    multiple: false,
+    filters: [
+      { name: 'Excel / CSV / Jupyter / Python / PDF / …', extensions: ['xlsx', 'xlsm', 'csv', 'ipynb', 'py', 'pdf', 'png', 'jpg', 'jpeg', 'svg', 'eps', 'gif', 'tex', 'pltx', 'bib'] },
+      { name: '*', extensions: ['*'] },
     ],
   });
 }
@@ -124,9 +137,9 @@ export async function saveFileDialog(defaultName, pltxOnly = false) {
   if (!isTauri()) return null;
   // Documents with Python cells are .pltx only — don't offer a .tex option.
   const filters = pltxOnly
-    ? [{ name: 'Documento Pyx', extensions: ['pltx'] }]
+    ? [{ name: t('Documento Pyx', 'Pyx document'), extensions: ['pltx'] }]
     : [
-        { name: 'Documento Pyx', extensions: ['pltx'] },
+        { name: t('Documento Pyx', 'Pyx document'), extensions: ['pltx'] },
         { name: 'LaTeX', extensions: ['tex'] },
       ];
   return dialog.save({ defaultPath: defaultName, filters });
@@ -134,11 +147,11 @@ export async function saveFileDialog(defaultName, pltxOnly = false) {
 /** A Pyx settings file (config.json) to save or to open. */
 export async function saveJsonDialog(defaultName) {
   if (!isTauri()) return null;
-  return dialog.save({ defaultPath: defaultName, filters: [{ name: 'Configuración de Pyx', extensions: ['json'] }] });
+  return dialog.save({ defaultPath: defaultName, filters: [{ name: t('Configuración de Pyx', 'Pyx settings'), extensions: ['json'] }] });
 }
 export async function openJsonDialog() {
   if (!isTauri()) return null;
-  const r = await dialog.open({ multiple: false, filters: [{ name: 'Configuración de Pyx', extensions: ['json'] }] });
+  const r = await dialog.open({ multiple: false, filters: [{ name: t('Configuración de Pyx', 'Pyx settings'), extensions: ['json'] }] });
   return typeof r === 'string' ? r : null;
 }
 export async function messageDialog(message, opts) {
@@ -156,7 +169,7 @@ export async function askDialog(message, opts = {}) {
  *  'yes' | 'no' | 'cancel'; closing the dialog (Esc, its X) is 'cancel', and
  *  so is any answer that is not recognised: the caller is about to close or
  *  replace unsaved work, so doubt must never read as consent. */
-export async function choiceDialog(message, { title, kind = 'warning', yes = 'Sí', no = 'No', cancel = 'Cancelar' } = {}) {
+export async function choiceDialog(message, { title, kind = 'warning', yes = t('Sí', 'Yes'), no = t('No', 'No'), cancel = t('Cancelar', 'Cancel') } = {}) {
   if (!isTauri()) return window.confirm(message) ? 'yes' : 'cancel';
   // The plugin answers with the LABEL of a custom button (or the stock
   // 'Yes' / 'No' / 'Cancel' where the platform ignores custom texts).
@@ -233,7 +246,7 @@ export async function saveImageDialog(defaultName) {
   if (!isTauri()) return null;
   return dialog.save({
     defaultPath: defaultName,
-    filters: [{ name: 'Imagen PNG', extensions: ['png'] }],
+    filters: [{ name: t('Imagen PNG', 'PNG image'), extensions: ['png'] }],
   });
 }
 export async function pathExists(path) {
@@ -308,6 +321,10 @@ export const openViewerWindow = (path) => invoke('open_viewer_window', { path: e
 export const readDir = (path) => invoke('read_dir', { path });
 // Cells of an Excel workbook or a CSV, for \hoja / \celda (sheets.rs).
 export const sheetValues = (path, sheet, refs) => invoke('sheet_values', { path, sheet, refs });
+// The sheet names of a workbook, in order (a CSV has a single unnamed one).
+export const sheetNames = (path) => invoke('sheet_names', { path });
+// Tell the Rust side the UI language (its messages reach the problems panel).
+export const setUiLang = (lang) => (isTauri() ? invoke('set_ui_lang', { lang }).catch(() => {}) : Promise.resolve());
 // Every source file under a folder, with its text (.pltx: its document source).
 export const projectTexts = (root) => invoke('project_texts', { root });
 // Batched {mtime, size} for several files — lets the compiler skip re-reading

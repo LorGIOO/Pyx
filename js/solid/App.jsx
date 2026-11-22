@@ -10,6 +10,7 @@ import StatusBar from './components/StatusBar.jsx';
 import ConfigDialog from './components/ConfigDialog.jsx';
 import ContextMenu from './components/ContextMenu.jsx';
 import Wizards from './components/Wizards.jsx';
+import InsertFileDialog from './components/InsertFileDialog.jsx';
 import NewDocDialog, { openNewDoc } from './components/NewDocDialog.jsx';
 import SetupDialog from './components/SetupDialog.jsx';
 import MacrosDialog from './components/MacrosDialog.jsx';
@@ -119,6 +120,7 @@ export default function App() {
       <ConfigDialog />
       <ContextMenu />
       <Wizards />
+      <InsertFileDialog />
       <NewDocDialog />
       <SetupDialog />
       <MacrosDialog />

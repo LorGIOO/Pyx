@@ -235,6 +235,18 @@ async fn sheet_values(path: String, sheet: Option<String>, refs: Vec<String>) ->
     tauri::async_runtime::spawn_blocking(move || sheets::values(&path, sheet, &refs)).await.map_err(|e| e.to_string())?
 }
 
+/// The sheets of a workbook, for the «Insertar archivo» dialog (sheets.rs).
+#[tauri::command]
+async fn sheet_names(path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || sheets::sheet_names(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// The UI language, for messages written by the Rust side.
+#[tauri::command]
+fn set_ui_lang(lang: String) {
+    sheets::set_english(lang == "en");
+}
+
 /// The settings file (config.rs): its text, or null when there is none.
 #[tauri::command]
 async fn config_read() -> Option<String> {
@@ -251,6 +263,30 @@ async fn config_write(text: String) -> Result<(), String> {
 #[tauri::command]
 fn config_path() -> String {
     config::config_file().to_string_lossy().to_string()
+}
+
+/// Pyx's own files next to config.json: theme.css, templates/…, macros.json,
+/// symbols.json (config.rs). `name` is relative to that folder.
+#[tauri::command]
+async fn userfile_read(name: String) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || config::read_file(&name)).await.ok().flatten()
+}
+#[tauri::command]
+async fn userfile_write(name: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || config::write_file(&name, &text)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn userfile_delete(name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || config::delete_file(&name)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn userfile_list(dir: String) -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(move || config::list_files(&dir)).await.unwrap_or_default()
+}
+/// The folder itself (absolute), to open it or to open one of its files.
+#[tauri::command]
+fn userfile_dir() -> String {
+    config::config_dir().to_string_lossy().to_string()
 }
 
 /// List the font FAMILIES installed on the system, for the editor's font
@@ -1485,8 +1521,15 @@ pub fn run() {
             build_dir,
             config_read,
             sheet_values,
+            sheet_names,
+            set_ui_lang,
             config_write,
             config_path,
+            userfile_read,
+            userfile_write,
+            userfile_delete,
+            userfile_list,
+            userfile_dir,
             copy_file,
             synctex_edit,
             synctex_view,

@@ -1,5 +1,6 @@
 import { createSignal, onMount } from 'solid-js';
 import { saveImageDialog, writeBinaryFile } from '../../../core/platform.js';
+import { t } from '../../../core/i18n.js';
 
 // Image viewer rendered as a document tab (NOT an auxiliary window): wheel
 // zoom at the cursor, drag pan, pixel-coordinate readout, fit/100% controls.
@@ -79,7 +80,7 @@ export default function ImageViewerPane(props) {
         <span class="viewer-zoom">{zoomPct()}%</span>
         <button class="pv-btn" title="Acercar" onClick={() => center(1.2)}>+</button>
         <button class="viewer-btn" onClick={fit}>Ajustar</button>
-        <button class="viewer-btn" title="Guardar la imagen como PNG" onClick={saveAs}>Guardar…</button>
+        <button class="viewer-btn" title={t('Guardar la imagen como PNG', 'Save the image as PNG')} onClick={saveAs}>{t('Guardar…', 'Save…')}</button>
         <span class="viewer-coord">{coord()}</span>
       </div>
       <div class="viewer-viewport" ref={viewport}>

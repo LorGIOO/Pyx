@@ -12,6 +12,7 @@ import { compileActive, cancelCompile } from '../../../../compile/compiler.js';
 import { rerender } from '../../../../pdf/preview.js';
 import { comboOf } from '../../../stores/keysStore.js';
 import { openTableWizard, openFigureWizard } from '../../Wizards.jsx';
+import { openInsertFile } from '../../InsertFileDialog.jsx';
 import {
   STRUCTURE, FONT_SIZES, LABELS, ALIGN, LISTS, runSnippet,
 } from '../../../../data/latex-snippets.js';
@@ -160,7 +161,10 @@ export default function HomeTab() {
         {/* Both insert into the open document: with none, the assistant had
             nowhere to put its LaTeX and stayed on screen doing nothing. */}
         <RibbonButton icon={icons.table} label={t('Tabla', 'Table')} disabled={!hasDoc()} title={t('Asistente de tabla', 'Table wizard')} onClick={openTableWizard} />
-        <RibbonButton icon={icons.image} label={t('Imagen', 'Image')} disabled={!hasDoc()} title={t('Insertar imagen / figura', 'Insert image / figure')} onClick={openFigureWizard} />
+        <RibbonButton icon={icons.image} label={t('Imagen', 'Image')} disabled={!hasDoc()} title={t('Insertar imagen / figura', 'Insert image / figure')} onClick={() => openFigureWizard()} />
+        <RibbonButton icon={icons.attach} label={t('Archivo', 'File')} disabled={!hasDoc()}
+          title={t('Insertar archivo: Excel, CSV, Jupyter, Python, PDF, imagen, LaTeX… (también puedes arrastrarlo al editor)', 'Insert file: Excel, CSV, Jupyter, Python, PDF, image, LaTeX… (you can also drag it onto the editor)')}
+          onClick={() => openInsertFile()} />
       </RibbonGroup>
 
       <RibbonGroup id="table" icon={icons.table} label={t('Tabla', 'Table')}>

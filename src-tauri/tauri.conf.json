@@ -30,7 +30,9 @@
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https:; img-src 'self' blob: data: https:; font-src 'self' data: https:; media-src 'self' blob: data:; connect-src 'self' ipc: http://ipc.localhost https: wss: ws://localhost:* ws://127.0.0.1:*",
-      "dangerousDisableAssetCspModification": ["style-src"]
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {
@@ -44,17 +46,24 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "icons/pltx.ico": "pltx.ico"
+      "icons/pltx.ico": "pltx.ico",
+      "../Manual de usuario/Manual de usuario de Pyx.pdf": "manual/Manual de usuario de Pyx.pdf",
+      "../LICENSE": "LICENSE.txt",
+      "resources/ejemplos/": "ejemplos/"
     },
     "fileAssociations": [
       {
-        "ext": ["pltx"],
+        "ext": [
+          "pltx"
+        ],
         "name": "Pyx Document",
         "description": "Documento Pyx (LaTeX + Python)",
         "role": "Editor"
       },
       {
-        "ext": ["tex"],
+        "ext": [
+          "tex"
+        ],
         "name": "LaTeX Document",
         "description": "Documento LaTeX (Pyx)",
         "role": "Editor"

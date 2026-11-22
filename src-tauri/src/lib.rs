@@ -5,6 +5,7 @@ mod runtime;
 mod synctex;
 mod update;
 mod workspace;
+mod config;
 
 use kernel::KernelState;
 use tauri::{Emitter, Manager};
@@ -225,6 +226,41 @@ async fn build_dir(path: String) -> Result<String, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The settings file (config.rs): its text, or null when there is none.
+#[tauri::command]
+async fn config_read() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(config::read).await.ok().flatten()
+}
+
+/// Write the settings file (config.rs).
+#[tauri::command]
+async fn config_write(text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || config::write(&text)).await.map_err(|e| e.to_string())?
+}
+
+/// A file shipped with Pyx in its installation folder (the user manual, the
+/// example projects, the licence): its absolute path, or an error when this
+/// build does not carry it (a development run).
+#[tauri::command]
+fn resource_path(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    if name.split(['/', '\\']).any(|part| part == "..") {
+        return Err("Ruta no válida".into());
+    }
+    let dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+    let p = dir.join(&name);
+    if p.exists() {
+        Ok(p.to_string_lossy().to_string())
+    } else {
+        Err(format!("Esta instalación no incluye {name}."))
+    }
+}
+
+/// Where the settings file is (for «Abrir la carpeta de la configuración»).
+#[tauri::command]
+fn config_path() -> String {
+    config::config_file().to_string_lossy().to_string()
 }
 
 /// List the font FAMILIES installed on the system, for the editor's font
@@ -1457,6 +1493,10 @@ pub fn run() {
             chktex_lint,
             collab_restrict,
             build_dir,
+            config_read,
+            config_write,
+            config_path,
+            resource_path,
             copy_file,
             synctex_edit,
             synctex_view,

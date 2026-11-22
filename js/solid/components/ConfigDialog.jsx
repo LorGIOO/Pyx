@@ -514,6 +514,28 @@ const FIELDS = () => [
   },
 ];
 
+
+/** The settings file: open its folder, export it, import one. */
+async function configFileAction(what) {
+  const P = await import('../../core/platform.js');
+  const C = await import('../../core/config-file.js');
+  try {
+    if (what === 'open') {
+      await P.revealInExplorer(await P.invoke('config_path'));
+    } else if (what === 'export') {
+      const to = await P.saveJsonDialog('pyx-config.json');
+      if (to) await P.writeTextFile(to, C.exportConfigText());
+    } else if (what === 'import') {
+      const from = await P.openJsonDialog();
+      if (!from) return;
+      if (C.importConfigText(await P.readTextFile(from))) location.reload();
+      else await P.messageDialog('Ese archivo no es una configuración de Pyx.', { title: 'Importar', kind: 'error' });
+    }
+  } catch (e) {
+    await P.messageDialog(String(e), { title: 'Configuración', kind: 'error' });
+  }
+}
+
 export default function ConfigDialog() {
   const [pos, setPos] = createSignal(null);
   const [cat, setCat] = createSignal('general');
@@ -844,6 +866,16 @@ export default function ConfigDialog() {
                 <p class="cfg-hint">
                   {state.updateStatus || tr('Si hay una versión nueva, Pyx la descarga, comprueba que es la publicada (SHA-256), la instala y se vuelve a abrir solo, en Windows, macOS y Linux (AppImage). Solo pregunta si hay documentos sin guardar.',
                     'If there is a new version, Pyx downloads it, checks it is the published one (SHA-256), installs it and reopens by itself, on Windows, macOS and Linux (AppImage). It only asks if there are unsaved documents.')}
+                </p>
+                <div class="cfg-section">{tr('Archivo de configuración', 'Settings file')}</div>
+                <div class="cfg-row" style={{ gap: '6px', 'flex-wrap': 'wrap' }}>
+                  <button class="ctl-btn" onClick={() => configFileAction('open')}>{tr('Abrir la carpeta', 'Open the folder')}</button>
+                  <button class="ctl-btn" onClick={() => configFileAction('export')}>{tr('Exportar…', 'Export…')}</button>
+                  <button class="ctl-btn" onClick={() => configFileAction('import')}>{tr('Importar…', 'Import…')}</button>
+                </div>
+                <p class="cfg-hint">
+                  {tr('Toda la configuración se guarda también, legible, en config.json (en Windows, %APPDATA%\\Pyx). Si Pyx pierde sus datos, se recupera de ahí; exportada, se lleva a otro ordenador.',
+                    'All settings are also saved, readable, in config.json (on Windows, %APPDATA%\\Pyx). If Pyx loses its data they come back from there; exported, they move to another computer.')}
                 </p>
               </Show>
 

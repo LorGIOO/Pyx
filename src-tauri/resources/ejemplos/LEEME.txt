@@ -1,0 +1,12 @@
+Proyectos de ejemplo de Pyx (datos ficticios).
+
+Descomprime uno donde quieras, abre en Pyx el archivo principal que indica
+su LEEME.md y pulsa «Compilar y ver» (Ctrl+Mayús+B).
+
+  00-plantilla                         plantilla vacía con .sty y capítulos
+  01-memoria-de-calculo                memoria completa: CSV, Excel, handcalcs, pint, Jupyter
+  02-handcalcs-y-unidades              handcalcs y unidades con pint
+  03-cuaderno-de-jupyter               un informe que solo llama a un cuaderno
+  04-tablas-graficas-y-condicionales   tablas de pandas, gráficas y \pyif
+
+También en https://lorgioo.github.io/Pyx-web/ejemplos/

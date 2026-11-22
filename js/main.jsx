@@ -1,4 +1,5 @@
 import { render } from 'solid-js/web';
+import { initConfigFile } from './core/config-file.js';
 import { onMount } from 'solid-js';
 import App from './solid/App.jsx';
 import PreviewPane from './solid/components/PreviewPane.jsx';
@@ -268,6 +269,10 @@ if (viewerBoot) {
       try { await openPath(p); } catch (_) { /* unreadable — skip it */ }
     }
   }
+
+  // Settings mirrored to config.json; restored from it when the WebView's
+  // storage came back empty (then a reload, so every store reads them).
+  initConfigFile().then((restored) => { if (restored) location.reload(); }).catch(() => {});
 
   render(() => <App />, document.getElementById('app-root'));
 

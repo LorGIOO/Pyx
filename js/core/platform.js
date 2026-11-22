@@ -131,6 +131,16 @@ export async function saveFileDialog(defaultName, pltxOnly = false) {
       ];
   return dialog.save({ defaultPath: defaultName, filters });
 }
+/** A Pyx settings file (config.json) to save or to open. */
+export async function saveJsonDialog(defaultName) {
+  if (!isTauri()) return null;
+  return dialog.save({ defaultPath: defaultName, filters: [{ name: 'Configuración de Pyx', extensions: ['json'] }] });
+}
+export async function openJsonDialog() {
+  if (!isTauri()) return null;
+  const r = await dialog.open({ multiple: false, filters: [{ name: 'Configuración de Pyx', extensions: ['json'] }] });
+  return typeof r === 'string' ? r : null;
+}
 export async function messageDialog(message, opts) {
   if (!isTauri()) { alert(message); return; }
   return dialog.message(message, opts);

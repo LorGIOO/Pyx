@@ -25,6 +25,10 @@ const ExpectingBadBoxTextQuote = 5;
 const reLaTeXError = /^! (?:Lua|La)TeX Error(?: <\\directlua >:\d*)?: (.*)$/i;
 const rePDFLaTeXError = /^Error: (?:lua|pdf)latex (.*)$/i;
 const reTeXError = /^! (.*)$/;
+// The engines' own fatal errors: «!pdfTeX error: pdflatex (file x): Font x not
+// found», «xdvipdfmx:fatal: …» — no space after the «!», so reTeXError missed
+// them and a run that died on a missing font listed only its warnings.
+const reEngineFatal = /^(?:!(?:pdfTeX|LuaTeX|XeTeX) error:|.*xdvipdfmx:fatal:)\s*(.*)$/i;
 const reLineNumber = /^(\.{3} )?l\.(\d+)(.*)/;
 const reLaTeXWarning = /^(((! )?(La|pdf|Lua)TeX3?)|Package|Class|Module) .*Warning[^:]*:(.*)/i;
 const reNoFile = /^No file (.*)/;
@@ -307,7 +311,7 @@ export function parseLatexLog(log, opts = {}) {
         }
         // 3) errors (order matters: the generic "! ..." also catches package
         //    errors, exactly like TeXstudio — so the full text is preserved)
-        m = ln.match(reLaTeXError) || ln.match(rePDFLaTeXError) || ln.match(reTeXError);
+        m = ln.match(reLaTeXError) || ln.match(rePDFLaTeXError) || ln.match(reEngineFatal) || ln.match(reTeXError);
         if (m) {
           item.type = 'error';
           item.logline = n;

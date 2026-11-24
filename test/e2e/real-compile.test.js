@@ -25,7 +25,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = process.env.PYX_E2E_ROOT || '';
 const OUT = process.env.PYX_E2E_OUT || '';
 const KERNEL = path.resolve(__dirname, '../../src-tauri/python/kernel.py');
+// PYX_E2E_ENGINE=auto: no engine of the document's own (Pyx chooses).
 const ENGINE = process.env.PYX_E2E_ENGINE || 'xelatex';
+const DOC_ENGINE = ENGINE === 'auto' ? undefined : ENGINE;
 const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'pyx-e2e-'));
 
 /* ---------- the parts of the Rust side the compiler uses ---------- */
@@ -106,9 +108,9 @@ async function compileLatex(file, projectDir, engine, passes, jobname, searchDir
   let log = '';
   const t0 = Date.now();
   for (let pass = 1; pass <= Math.max(passes, 3); pass++) {
-    const r = spawnSync(ENGINE, ['-interaction=nonstopmode', '-synctex=1', `-output-directory=${outDir}`, `-jobname=${job}`, file],
+    const r = spawnSync(engine, ['-interaction=nonstopmode', '-synctex=1', `-output-directory=${outDir}`, `-jobname=${job}`, file],
       { cwd: projectDir, env, encoding: 'utf8', maxBuffer: 64 << 20 });
-    log += `===== Pasada ${pass} (${ENGINE}) =====\n${r.stdout}\n`;
+    log += `===== Pasada ${pass} (${engine}) =====\n${r.stdout}\n`;
     engineRuns.push({ file, pass, status: r.status });
     if (pass >= passes && !/Rerun to get|Label\(s\) may have changed|There were undefined references/.test(r.stdout)) break;
   }
@@ -215,7 +217,7 @@ describe.skipIf(!ROOT)('compilación real de un proyecto', () => {
     Object.assign(general, { warmEngine: false, liveDelay: 0, cellTimeout: 0, pdfFollowCursor: false, pythonPath: '' });
     const compiler = await import('../../js/compile/compiler.js');
     rootText = await sourceOf(ROOT);
-    state.documents = [{ id: 1, fileName: path.basename(ROOT), path: ROOT, modified: false, engine: ENGINE }];
+    state.documents = [{ id: 1, fileName: path.basename(ROOT), path: ROOT, modified: false, engine: DOC_ENGINE }];
     state.activeIndex = 0;
     state.panes = [{ id: 1, docId: 1 }];
     state.activePaneId = 1;

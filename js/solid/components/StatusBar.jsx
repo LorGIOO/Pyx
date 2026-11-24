@@ -1,6 +1,7 @@
 import { Show } from 'solid-js';
-import { state } from '../../core/state.js';
+import { state, activeDoc } from '../../core/state.js';
 import { t } from '../../core/i18n.js';
+import { general } from '../stores/settingsStore.js';
 import { wordCount } from '../stores/structureStore.js';
 import { icons } from './ribbon/icons.js';
 import { cancelCompile } from '../../compile/compiler.js';
@@ -57,9 +58,14 @@ export default function StatusBar() {
         <span class="label">Python:</span>
         <span class="value">{shortExe(state.env.python)}</span>
       </div>
-      <div class="status-item status-path status-engine" title={state.env.latex || ''}>
+      {/* The engine the active document compiles with: what its last compile
+          used, else what it would use (its own choice, the default, the first
+          installed). It used to show the first engine installed, whatever the
+          settings said. */}
+      <div class="status-item status-path status-engine"
+        title={t('Motor LaTeX de este documento (Configuración → Compilación)', 'LaTeX engine of this document (Settings → Compilation)')}>
         <span class="label">{t('Motor:', 'Engine:')}</span>
-        <span class="value">{shortExe(state.env.latex)}</span>
+        <span class="value">{activeDoc()?.lastEngine || activeDoc()?.engine || general.defaultEngine || shortExe(state.env.latex)}</span>
       </div>
       <Show when={state.missingModules.length}>
         <button class="status-item status-missing" type="button"

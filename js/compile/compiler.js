@@ -8,6 +8,7 @@ import {
   pltxRead, fileStamps, buildDirFor, createDir, compileCancel, readSources, sheetValues,
 } from '../core/platform.js';
 import { sheetRequests, resolveSheets, gridTeX, requestKey } from './sheets.js';
+import { chooseEngine, engineShim } from './engine.js';
 import { relativeTo, normalizePath, samePath } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
@@ -1500,6 +1501,27 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     use.floatBarrier = general.floatBarrier !== false;
     const shim = safetyPreamble(use);
 
+    /* The engine (compile/engine.js): this document's choice, a % !TeX
+     * program line, what the source needs (pdfTeX primitives, fontspec,
+     * \directlua…), the default, the first installed — never one that is not
+     * installed. Decided here, before the copies are written, because an
+     * engine other than pdfTeX gets a line of compatibility for pdfTeX-only
+     * primitives in front of the root document. */
+    const allText = [...files.values()].map((f) => f.content).join('\n');
+    const pick = chooseEngine({
+      docEngine: rootDoc.engine || doc.engine,
+      rootText: rootContent + '\n' + allText,
+      defaultEngine: general.defaultEngine,
+      installed: state.env.engines || [],
+    });
+    const engine = pick.engine;
+    // The status bar shows the engine this document really compiles with.
+    try { doc.lastEngine = engine; } catch (_) { /* a plain object */ }
+    if (pick.note) {
+      problems += `\n[${t('Motor', 'Engine')}] ${t(`${pick.note.split(' → ')[0]} no está instalado: se compila con ${engine}.`, `${pick.note.split(' → ')[0]} is not installed: compiling with ${engine}.`)}`;
+    }
+    const compat = engineShim(engine, allText);
+
     /* \hoja / \celda: read every cell the project places, one call per
      * workbook and sheet, before the copies are written. A chapter with no
      * \hoja of its own before its cells uses the main document's first one. */
@@ -1636,6 +1658,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
         // It is relative, so the engine resolves it through TEXINPUTS.
         return `\\${cmd}{${buildRel.get(child)}}`;
       });
+      // pdfTeX-only primitives made harmless for another engine: one line of
+      // TeX in front of the first line, so no line number moves.
+      if (compat && path === rootPath) processed = compat + processed;
       if (shim && path === rootPath) {
         const inj = injectPreamble(processed, shim);
         if (inj) {
@@ -1732,14 +1757,7 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // front; otherwise the kept .aux settles them and latex.rs adds a pass
     // only when TeX asks for one.
     const passes = fresh && usesRefs ? 2 : 1;
-    // % !TeX program = pdflatex — the document names its own engine, like in
-    // TeXstudio. An explicit per-document choice (Configuración) still wins.
-    const magicEngine = (
-      /^\s*%\s*!TeX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex|tectonic)\s*$/im.exec(rootContent)
-      || []
-    )[1];
-    const engine = rootDoc.engine || doc.engine || (magicEngine || '').toLowerCase()
-      || general.defaultEngine || state.env.latex || 'xelatex';
+    // (The engine was chosen above, before the copies were written.)
 
     // Nothing the engine reads changed: running it again would burn seconds to
     // produce the same bytes. Skipped ONLY when all of this holds —

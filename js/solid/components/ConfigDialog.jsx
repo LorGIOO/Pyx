@@ -378,8 +378,10 @@ const FIELDS = () => [
       ['', tr('Automático (el primero que haya instalado)', 'Automatic (the first one installed)')],
       ['xelatex', 'XeLaTeX'], ['pdflatex', 'pdfLaTeX'], ['lualatex', 'LuaLaTeX'], ['tectonic', 'Tectonic'],
     ],
-    hint: ['El motor con el que se compila todo documento que no pida otro. Tiene prioridad, por este orden: el motor elegido para el documento abierto (más abajo), una línea «% !TeX program = pdflatex» en el documento raíz y, por último, este.',
-      'The engine every document compiles with unless it asks for another. In order of priority: the engine chosen for the open document (below), a "% !TeX program = pdflatex" line in the root document and, last, this one.'],
+    // The status bar shows the new engine at once (not the last compile's).
+    after: () => state.documents.forEach((d) => { d.lastEngine = undefined; }),
+    hint: ['El motor con el que se compila todo documento que no pida otro. Tiene prioridad, por este orden: el motor elegido para el documento abierto (más abajo), una línea «% !TeX program = pdflatex» en el documento raíz, lo que el documento necesite (órdenes de pdfTeX como \\pdfgentounicode → pdfLaTeX; fontspec o unicode-math → XeLaTeX; \\directlua → LuaLaTeX) y, por último, este. Un motor que no esté instalado se sustituye por uno que sí.',
+      'The engine every document compiles with unless it asks for another. In order of priority: the engine chosen for the open document (below), a "% !TeX program = pdflatex" line in the root document, what the document needs (pdfTeX commands such as \\pdfgentounicode → pdfLaTeX; fontspec or unicode-math → XeLaTeX; \\directlua → LuaLaTeX) and, last, this one. An engine that is not installed is replaced by one that is.'],
   },
   {
     cat: 'compile', sec: ['Al guardar', 'On save'], key: 'compileOnSave', type: 'check',
@@ -626,7 +628,8 @@ export default function ConfigDialog() {
 
   const colorVal = (t) => (settings[t.key] && settings[t.key].color) || defaultColor(t);
   const engines = () => (state.env.engines && state.env.engines.length ? state.env.engines : ['xelatex', 'pdflatex', 'lualatex', 'tectonic']);
-  const setEngine = (e) => { const d = activeDoc(); if (d) d.engine = e.target.value; };
+  // '' = no choice of its own: the default engine (or what the document needs).
+  const setEngine = (e) => { const d = activeDoc(); if (d) { d.engine = e.target.value || undefined; d.lastEngine = undefined; } };
 
   /* ---------- generic option rows ---------- */
   const fLabel = (f) => tr(f.label, f.en || f.label);
@@ -918,7 +921,8 @@ export default function ConfigDialog() {
                 <div class="cfg-row">
                   <span class="cfg-label">{tr('Motor de este documento', 'Engine for this document')}</span>
                   <select class="cfg-select" disabled={!activeDoc()}
-                    value={activeDoc()?.engine || state.env.latex || 'xelatex'} onChange={setEngine}>
+                    value={activeDoc()?.engine || ''} onChange={setEngine}>
+                    <option value="">{tr('El de por defecto (o el que el documento necesite)', 'The default one (or the one the document needs)')}</option>
                     <For each={engines()}>{(e) => <option value={e}>{e}</option>}</For>
                   </select>
                 </div>

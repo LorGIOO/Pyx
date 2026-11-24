@@ -1417,6 +1417,9 @@ fn spawn_warm(engine_cmd: &str, dir: &Path, out_dir: &Path, job: &str, build: &P
         })
         .collect();
     let mut cmd = Command::new(engine_cmd);
+    if let Some(a) = miktex_installer_arg(engine_cmd) {
+        cmd.arg(a);
+    }
     cmd.current_dir(dir)
         .arg("-interaction=nonstopmode")
         .arg("-synctex=1")
@@ -2334,8 +2337,21 @@ fn settle_pdf(
 fn first_tex_error(log: &str) -> Option<String> {
     let mut lines = log.lines();
     while let Some(l) = lines.next() {
-        let Some(msg) = l.strip_prefix("! ") else { continue };
+        // pdfTeX / LuaTeX / XeTeX's own fatal errors have no space after the
+        // «!»: «!pdfTeX error: pdflatex (file ec-qtmr): Font … not found».
+        let msg = if let Some(m) = l.strip_prefix("! ") {
+            m
+        } else if let Some(m) = ["!pdfTeX error:", "!LuaTeX error:", "!XeTeX error:"].iter().find_map(|p| l.strip_prefix(p)) {
+            m
+        } else if let Some(i) = l.find("xdvipdfmx:fatal:") {
+            &l[i + "xdvipdfmx:fatal:".len()..]
+        } else {
+            continue;
+        };
         let msg = msg.trim().trim_end_matches('.').to_string();
+        if msg.is_empty() || msg.starts_with("==> Fatal error") {
+            continue;
+        }
         let at = lines
             .by_ref()
             .take(12)
@@ -2346,7 +2362,46 @@ fn first_tex_error(log: &str) -> Option<String> {
             None => msg,
         });
     }
-    None
+    // Nothing in TeX's own format: the last thing the engine said before it
+    // gave up, so the reason is never just «it stopped».
+    let all: Vec<&str> = log.lines().collect();
+    let stop = all.iter().rposition(|l| l.contains("Fatal error occurred") || l.contains("Emergency stop") || l.contains("No pages of output"))?;
+    let said: Vec<&str> = all[..stop]
+        .iter()
+        .rev()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('(') && !l.starts_with('<') && !l.starts_with('[') && !l.starts_with(')'))
+        .take(2)
+        .collect();
+    (!said.is_empty()).then(|| said.into_iter().rev().collect::<Vec<_>>().join(" · "))
+}
+
+/// The engine could not find a font that the document's packages ask for:
+/// with MiKTeX that is usually a package installed while its font map was
+/// not refreshed (pdfTeX reads fonts through the maps).
+fn font_problem(log: &str) -> bool {
+    let l = log.to_ascii_lowercase();
+    (l.contains("!pdftex error") && (l.contains("font") || l.contains(".pfb") || l.contains(".map")))
+        || l.contains("mktexpk: don't know how to create")
+        || (l.contains("font ") && l.contains("not loadable: metric data not found"))
+}
+
+/// MiKTeX installs a missing package the moment a document asks for it, but
+/// in nonstop mode (Pyx's) only when told so: otherwise the run just stops at
+/// «File `marvosym.sty' not found». TeX Live and Tectonic ignore nothing here:
+/// the flag is only added next to a MiKTeX engine.
+fn miktex_installer_arg(engine_cmd: &str) -> Option<&'static str> {
+    let dir = Path::new(engine_cmd).parent()?;
+    dir.join(if cfg!(windows) { "initexmf.exe" } else { "initexmf" }).is_file().then_some("--enable-installer")
+}
+
+/// MiKTeX's own tool to rebuild its file database and font maps, next to the
+/// engine (None for TeX Live and Tectonic, which need nothing of the sort).
+fn miktex_initexmf(engine: &str) -> Option<PathBuf> {
+    let exe = resolve_engine(engine)?;
+    let dir = Path::new(&exe).parent()?;
+    let p = dir.join(if cfg!(windows) { "initexmf.exe" } else { "initexmf" });
+    p.is_file().then_some(p)
 }
 
 /// Why a run that ended on its own left no PDF, from what its last pass said.
@@ -2581,7 +2636,33 @@ pub fn compile_with(
             None,
         ))
     } else {
-        compile_locked(seq, path, project_dir, engine, passes, &opts)
+        let first = compile_locked(seq, path, project_dir, engine, passes, &opts);
+        // A font MiKTeX has but cannot find: refresh its file database and
+        // font maps (as «MiKTeX Console → Tasks» would) and compile once more.
+        match &first {
+            Ok((r, _)) if r.outcome == "sin-pdf" && font_problem(&r.log) && !FONT_MAPS_DONE.swap(true, Ordering::SeqCst) => {
+                if let Some(tool) = miktex_initexmf(engine) {
+                    let mut log = String::from("===== Pyx: falta una fuente: se actualizan los mapas de fuentes de MiKTeX =====\n");
+                    for args in [["--update-fndb"], ["--mkmaps"]] {
+                        let mut c = Command::new(&tool);
+                        c.args(args);
+                        crate::quiet(&mut c);
+                        let ok = c.output().map(|o| o.status.success()).unwrap_or(false);
+                        log.push_str(&format!("initexmf {}: {}\n", args[0], if ok { "hecho" } else { "falló" }));
+                    }
+                    match compile_locked(seq, path, project_dir, engine, passes, &opts) {
+                        Ok((mut r2, w)) => {
+                            r2.log = format!("{log}\n{}", r2.log);
+                            Ok((r2, w))
+                        }
+                        e => e,
+                    }
+                } else {
+                    first
+                }
+            }
+            _ => first,
+        }
     };
     if let Ok((r, _)) = res.as_mut() {
         r.gen = opts.gen;
@@ -2591,6 +2672,9 @@ pub fn compile_with(
     log_compile(path, &res, seq, opts.gen);
     res
 }
+
+/// The MiKTeX font maps are refreshed at most once per session.
+static FONT_MAPS_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `compile_with` the way the tests call it: `warm` both uses the paused
 /// engine and leaves the next one paused before returning.
@@ -2784,6 +2868,9 @@ fn compile_locked(
         // errors and still emits a PDF when it can; the problems stay visible
         // in the log panel. Halting on the first error made documents that
         // "work" in TeXstudio produce nothing here.
+        if let Some(a) = miktex_installer_arg(&engine_cmd) {
+            cmd.arg(a);
+        }
         cmd.current_dir(dir)
             .arg("-interaction=nonstopmode")
             .arg("-synctex=1")
@@ -3248,6 +3335,21 @@ Texto del capitulo dos.
     }
 
     /// Timing, not a check: `cargo test -- --ignored warm_benchmark --nocapture`.
+    #[test]
+    #[ignore]
+    fn compile_a_given_document() {
+        // PYX_DOC=/path/doc.tex PYX_ENGINE=pdflatex cargo test --lib compile_a_given_document -- --ignored --nocapture
+        let _turn = engine_turn();
+        let Ok(doc) = std::env::var("PYX_DOC") else { return };
+        let engine = std::env::var("PYX_ENGINE").unwrap_or_else(|_| "pdflatex".into());
+        let dir = Path::new(&doc).parent().unwrap().to_string_lossy().to_string();
+        for (i, warm) in [false, true, true].into_iter().enumerate() {
+            let r = compile(&doc, &dir, &engine, 1, None, &[], i == 0, warm).unwrap();
+            println!("=== run {i} warm={warm}: pdf={:?} outcome={} stopped={:?} reason={}", r.pdf_path, r.outcome, r.stopped, r.reason);
+            if r.pdf_path.is_none() { println!("{}", &r.log[r.log.len().saturating_sub(4000)..]); }
+        }
+    }
+
     #[test]
     #[ignore]
     fn warm_benchmark() {
@@ -4228,6 +4330,13 @@ Texto del capitulo dos.
         assert_eq!(first_tex_error("! Emergency stop.\n").as_deref(), Some("Emergency stop"));
         assert!(first_tex_error("todo bien\n").is_none());
         assert!(no_pdf_reason("No pages of output.\n", "xelatex").contains("ninguna página"));
+        // pdfTeX's own fatal errors (no space after «!») are named.
+        let r = no_pdf_reason("!pdfTeX error: pdflatex.exe (file SourceSansPro-Regular-tlf-t1): Font SourceSansPro-Regular-tlf-t1 at 600 not found\n ==> Fatal error occurred, no output PDF file produced!\n", "pdflatex");
+        assert!(r.contains("SourceSansPro"), "{r}");
+        assert!(font_problem("!pdfTeX error: pdflatex (file x): Font x not found"));
+        // Nothing in TeX's format: what the engine said last.
+        let r = no_pdf_reason("algo raro pasó con el mapa\nEmergency stop.\n", "pdflatex");
+        assert!(r.contains("algo raro"), "{r}");
         assert!(!no_pdf_reason("", "xelatex").is_empty(), "sin PDF siempre hay un motivo");
     }
 

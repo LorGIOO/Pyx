@@ -438,3 +438,7 @@
 .app-dialog-input { width: 100%; box-sizing: border-box; height: 28px; padding: 0 8px; }
 .app-dialog-foot { gap: 8px; }
 .app-dialog-foot button.danger { color: #e5484d; }
+
+/* «Comparar versiones» */
+.compare-modal { width: min(640px, calc(100vw - 32px)); }
+.compare-file { font-weight: 600; color: var(--theme-text); }

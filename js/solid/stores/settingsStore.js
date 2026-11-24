@@ -241,6 +241,8 @@ export const GENERAL_SECTIONS = {
     // After a background compile, scroll the PDF to what is being edited
     // when it is out of view (commands.js followCursorInPdf).
     pdfFollowCursor: true,
+    // todonotes' \\todo{…}: 'wide' = a wider page that fits them, 'hidden' = off.
+    todoNotes: 'wide',
     loupeZoom: 3,
     selSyncPdfToCode: false,
     // Button that drags the page: 'middle' (the wheel button) or 'right'

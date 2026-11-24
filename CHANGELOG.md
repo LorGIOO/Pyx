@@ -2,9 +2,33 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
-## [2.2.2] — 2026-11-24
+## [2.3.0] — 2026-11-24
+
+La 2.2.2 se retiró (le faltaba el instalador de Windows): sus correcciones
+están aquí.
+
+### Añadido
+
+- **Comparar versiones** (Archivo → Revisar), como latexdiff y sin instalar
+  nada: crea `<documento>-diff.tex` con lo añadido y lo borrado marcados, lo
+  abre y lo compila. La versión anterior puede ser otro archivo (`.tex` o
+  `.pltx`) o lo último guardado en el disco. Estilos **UNDERLINE** (añadido en
+  azul subrayado, borrado en rojo tachado), **CFONT**, **CCHANGEBAR** (barra
+  en el margen) y **BOLD**. Con «Varios archivos» expande `\input`,
+  `\include` y `\subfile` antes de comparar (`--flatten`). Compara también
+  dentro de títulos, pies de figura y notas (el índice y los marcadores
+  muestran el título nuevo, limpio) y lista al final los cambios en las celdas
+  de Python.
+- **Notas `\todo` (todonotes) enteras.** Si el documento usa `todonotes`, la
+  página se ensancha 6 cm a la derecha, una línea punteada marca dónde acaba la
+  hoja original y las notas caben en el margen (también en páginas pares a
+  doble cara). El botón de notas del visor las oculta (`todonotes` con
+  `disable`) y la página vuelve a su tamaño; se imprimen tal como se ven.
 
 ### Corregido
+
+- Hacer zoom con la rueda mientras se arrastra con el clic derecho ya no
+  salta a las primeras páginas.
 
 - **Documentos de pdfLaTeX sin PDF.** Pyx elige ahora el motor que el
   documento necesita: órdenes de pdfTeX (`\pdfgentounicode`,

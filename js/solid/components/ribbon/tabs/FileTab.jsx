@@ -6,6 +6,7 @@ import { t } from '../../../../core/i18n.js';
 import { openDocument, saveActive, saveActiveAs, closeActive } from '../../../stores/docStore.js';
 import { openNewDoc } from '../../NewDocDialog.jsx';
 import { openProjectFolder, closeProjectFolder, projectFolder } from '../../../stores/projectStore.js';
+import { openCompare } from '../../CompareDialog.jsx';
 
 export default function FileTab() {
   const hasDoc = () => state.documents.length > 0;
@@ -20,6 +21,11 @@ export default function FileTab() {
       <RibbonGroup id="save" icon={icons.save} label={t('Guardar', 'Save')}>
         <RibbonButton icon={icons.save} label={t('Guardar', 'Save')} disabled={!hasDoc()} onClick={() => saveActive()} />
         <RibbonButton icon={icons.saveAs} label={t('Guardar como', 'Save as')} disabled={!hasDoc()} onClick={() => saveActiveAs()} />
+      </RibbonGroup>
+      <RibbonGroup id="review" icon={icons.compare} label={t('Revisar', 'Review')}>
+        <RibbonButton icon={icons.compare} label={t('Comparar versiones', 'Compare versions')} disabled={!hasDoc()}
+          title={t('Un documento con los cambios entre una versión anterior y la actual (como latexdiff)', 'A document with the changes between an older version and the current one (like latexdiff)')}
+          onClick={() => openCompare()} />
       </RibbonGroup>
       <RibbonGroup id="session" icon={icons.clear} label={t('Sesión', 'Session')}>
         <RibbonButton icon={icons.clear} label={t('Cerrar', 'Close')} disabled={!hasDoc()} onClick={() => closeActive()} />

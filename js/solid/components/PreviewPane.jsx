@@ -24,6 +24,7 @@ import { icons as ICO } from './ribbon/icons.js';
 import PdfOutline from './PdfOutline.jsx';
 import { createAnchoredPopup } from './createAnchoredPopup.js';
 import { t as tr } from '../../core/i18n.js';
+import { general, setGeneral } from '../stores/settingsStore.js';
 
 // Viewer toolbar icons — same hand as the ribbon and the notebook cells:
 // a 16x16 box, 1.2px strokes, no fills unless the shape IS a solid. The
@@ -61,6 +62,7 @@ const ic = {
   underline: `<svg ${S}><path d="M4.8 2.8v4.4a3.2 3.2 0 0 0 6.4 0V2.8M3.6 13.4h8.8"/></svg>`,
   strike: `<svg ${S}><path d="M11 4.4C10.4 3.3 9.3 2.8 8 2.8c-1.8 0-3 .9-3 2.2 0 .7.3 1.2.9 1.6M5 11c.5 1.4 1.7 2.2 3.2 2.2 1.9 0 3.1-1 3.1-2.4 0-.5-.1-.9-.4-1.2M2.4 8h11.2"/></svg>`,
   ellipse: `<svg ${S}><ellipse cx="8" cy="8" rx="5.8" ry="4.4"/></svg>`,                    // codicon: circle-large
+  todo: `<svg ${S}><rect x="1.5" y="2" width="9" height="12" rx="1"/><path d="M3.5 5h5M3.5 7.5h5M3.5 10h3"/><path d="M10.5 4.5h3.5v4h-3.5"/></svg>`, // a page with a note beside it
   note: `<svg ${S}><path d="M3 3h10a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H8.2L5 13.6v-2.4H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`, // codicon: comment
   redo: `<svg ${S}><path d="M13.5 6.4h-7a3.8 3.8 0 0 0 0 7.6H10"/><path d="m10.4 3.3 3.1 3.1-3.1 3.1"/></svg>`,
   copyList: `<svg ${S}><rect x="5" y="4.5" width="8.5" height="9.5" rx="1"/><path d="M3 11.5V3a1 1 0 0 1 1-1h7M7 8h4.5M7 10.5h4.5"/></svg>`, // codicon: copy
@@ -463,6 +465,15 @@ export default function PreviewPane() {
         <Btn icon={ic.draw} title={tr('Anotar / dibujar sobre el PDF', 'Annotate / draw on the PDF')} active={annotBarOpen()}
           disabled={!hasPdf()}
           onClick={() => { const o = !annotBarOpen(); setAnnotBarOpen(o); setAnnotTool(o ? 'pen' : ''); }} />
+        {/* \todo notes (todonotes): on a wider page, or hidden. Recompiles. */}
+        <Btn icon={ic.todo} title={general.todoNotes === 'hidden'
+          ? tr('Notas \\todo ocultas — pulsa para mostrarlas en una página más ancha', '\\todo notes hidden — click to show them on a wider page')
+          : tr('Notas \\todo visibles en una página más ancha (la línea punteada es el borde real) — pulsa para ocultarlas', '\\todo notes shown on a wider page (the dotted line is the real edge) — click to hide them')}
+          active={general.todoNotes !== 'hidden'}
+          onClick={() => {
+            setGeneral({ todoNotes: general.todoNotes === 'hidden' ? 'wide' : 'hidden' });
+            import('../../compile/compiler.js').then((m) => m.compileActive(true)).catch(() => {});
+          }} />
         <Btn icon={ic.contrast} title={tr('Modo noche — folio oscuro; los colores y las imágenes se conservan', 'Night mode — dark paper; colours and images are kept')} active={invert()} onClick={() => setInvert(!invert())} />
         <Btn icon={ic.max} title={tr('Ampliar visor (ocultar el editor)', 'Maximize the viewer (hide the editor)')} active={state.viewerMaximized}
           onClick={() => (state.viewerMaximized = !state.viewerMaximized)} />

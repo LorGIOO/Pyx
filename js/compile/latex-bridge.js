@@ -685,7 +685,7 @@ const MISSING_FILE_GUARDS = [
   String.raw`\@ifundefined{verbatim@input}{}{\@ifundefined{Pyx@verbatim@input}{\let\Pyx@verbatim@input\verbatim@input\def\verbatim@input#1#2{\IfFileExists{#2}{\Pyx@verbatim@input{#1}{#2}}{\endgroup\Pyx@missing{#2}}}}{}}`,
 ];
 
-export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, usesSheets = false, floatBarrier = false }) {
+export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, usesSheets = false, floatBarrier = false, todoWide = false }) {
   const guards = [];
   const seen = new Set();
   // A \py{} can expand to an \includegraphics — `figtex()` in the kernel
@@ -750,6 +750,30 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender,
       + '\\@ifundefined{subsection}{}{\\let\\Pyx@subsection\\subsection\\renewcommand\\subsection{\\@fb@secFB\\Pyx@subsection}}'
       + '\\@ifundefined{subsubsection}{}{\\let\\Pyx@subsubsection\\subsubsection\\renewcommand\\subsubsection{\\@fb@secFB\\Pyx@subsubsection}}'
       + '}}}{}}}');
+  }
+  if (todoWide) {
+    // todonotes' \todo{…} in the margin: the paper grows 6 cm on the right so
+    // a note is never cut at the edge of the page; the text does not move
+    // (its width and position are already fixed), a dotted line marks where
+    // the real page ends, and every note goes to the right-hand margin.
+    // Nothing happens when the document hides its notes ([disable]) or with
+    // the notes hidden from Pyx's viewer (that passes [disable]).
+    guards.push('\\@ifpackageloaded{todonotes}{\\@ifpackagewith{todonotes}{disable}{}{'
+      + '\\newdimen\\Pyx@pagew\\Pyx@pagew=\\paperwidth'
+      + '\\newdimen\\Pyx@extra\\Pyx@extra=6cm'
+      + '\\advance\\paperwidth by \\Pyx@extra'
+      + '\\@mparswitchfalse\\normalmarginpar'
+      + '\\AtBeginDocument{'
+      // the right margin: of odd pages, or the narrower of odd and even ones
+      + '\\dimen@=\\dimexpr\\Pyx@pagew-1in-\\hoffset-\\oddsidemargin-\\textwidth\\relax'
+      + '\\if@twoside\\dimen@ii=\\dimexpr\\Pyx@pagew-1in-\\hoffset-\\evensidemargin-\\textwidth\\relax'
+      + '\\ifdim\\dimen@ii<\\dimen@\\dimen@=\\dimen@ii\\fi\\fi'
+      + '\\setlength\\marginparwidth{\\dimexpr\\dimen@-2\\marginparsep+\\Pyx@extra-0.6cm\\relax}'
+      + '\\ifdefined\\pdfpagewidth\\global\\pdfpagewidth=\\paperwidth\\fi'
+      + '\\ifdefined\\pagewidth\\global\\pagewidth=\\paperwidth\\fi}'
+      + '\\ifdefined\\AddToHook\\AddToHook{shipout/background}{\\put(\\Pyx@pagew,0){\\color{gray}'
+      + '\\multiput(0,0)(0,-6pt){400}{\\rule[-3pt]{0.4pt}{3pt}}}}\\fi'
+      + '}}{}');
   }
   // LAST: the hooks wrap whatever the guards above may have just loaded
   // (graphicx, listings).

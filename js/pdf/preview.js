@@ -1549,6 +1549,8 @@ function attachEvents(el) {
 
   // Interacting with the PDF makes it the search target (Ctrl+F).
   el.addEventListener('pointerdown', () => setLastArea('pdf'), { capture: true, passive: true });
+  // The page being dragged (right / middle button, or the hand tool).
+  let panning = false, sx = 0, sy = 0, sl = 0, st = 0;
   el.addEventListener('wheel', () => setLastArea('pdf'), { capture: true, passive: true });
 
   el.addEventListener('scroll', scheduleVisible, { passive: true });
@@ -1581,6 +1583,11 @@ function attachEvents(el) {
       e.preventDefault();
       const factor = Math.exp(-e.deltaY * (e.deltaMode === 0 ? 0.0022 : 0.05));
       zoomAtPoint(factor, e.clientX, e.clientY);
+      // The right button that zooms is also the one that drags the page: the
+      // drag starts again from HERE. It kept the scroll position of the
+      // moment the button went down, so the first move after zooming in
+      // jumped back to it — at the new size, pages earlier in the document.
+      if (panning) { sx = e.clientX; sy = e.clientY; sl = el.scrollLeft; st = el.scrollTop; }
     }
   }, { passive: false });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1613,7 +1620,6 @@ function attachEvents(el) {
 
   // Pan (hand tool / middle button) and the loupe (magnifier tool or
   // double-click), held; release hides the loupe.
-  let panning = false, sx = 0, sy = 0, sl = 0, st = 0;
   let lastDownT = 0, lastDownX = 0, lastDownY = 0, loupeUsedAt = 0;
   el.addEventListener('pointerdown', (e) => {
     // Ctrl+click → SyncTeX inverse search: open the source at this exact spot.

@@ -214,7 +214,7 @@ describe.skipIf(!ROOT)('compilación real de un proyecto', () => {
   it(`compila ${path.basename(ROOT)} sin errores`, async () => {
     const { state } = await import('../../js/core/state.js');
     const { general } = await import('../../js/solid/stores/settingsStore.js');
-    Object.assign(general, { warmEngine: false, liveDelay: 0, cellTimeout: 0, pdfFollowCursor: false, pythonPath: '' });
+    Object.assign(general, { warmEngine: false, liveDelay: 0, cellTimeout: 0, pdfFollowCursor: false, pythonPath: '' }, JSON.parse(process.env.PYX_E2E_GENERAL || '{}'));
     const compiler = await import('../../js/compile/compiler.js');
     rootText = await sourceOf(ROOT);
     state.documents = [{ id: 1, fileName: path.basename(ROOT), path: ROOT, modified: false, engine: DOC_ENGINE }];

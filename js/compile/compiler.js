@@ -315,7 +315,7 @@ const isPltx = (p) => /\.pltx$/i.test(p || ''); // ZIP container — never write
 // Read a source file from DISK for compiling. A container .pltx must go
 // through pltx_read (its zip bytes are not text); legacy/plain files read
 // as text. Every disk read in this module uses this — never readTextFile.
-async function readSourceFile(path) {
+export async function readSourceFile(path) {
   if (isPltx(path)) {
     // Only the document source (read_sources): the container's saved results
     // — megabytes of figures — and its build artifacts are not inflated just
@@ -336,7 +336,7 @@ async function readSourceFile(path) {
 // (`sig`: every candidate's path, mtime and size) and what was found.
 const scanCache = new Map(); // doc path -> { sig, found }
 
-async function resolveRootPath(doc, content) {
+export async function resolveRootPath(doc, content) {
   if (!doc.path || /\\documentclass/.test(content)) return doc.path;
   const hit = rootCache.get(doc.id);
   if (hit && Date.now() - hit.at < 20000) return hit.path;
@@ -1499,6 +1499,9 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
       }
     }
     use.floatBarrier = general.floatBarrier !== false;
+    // \todo notes (todonotes): shown on a wider page, or hidden from the viewer.
+    const usesTodo = [...files.values()].some((f) => /\{[^}]*\btodonotes\b/.test(f.content));
+    use.todoWide = usesTodo && general.todoNotes !== 'hidden';
     const shim = safetyPreamble(use);
 
     /* The engine (compile/engine.js): this document's choice, a % !TeX
@@ -1520,7 +1523,10 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     if (pick.note) {
       problems += `\n[${t('Motor', 'Engine')}] ${t(`${pick.note.split(' → ')[0]} no está instalado: se compila con ${engine}.`, `${pick.note.split(' → ')[0]} is not installed: compiling with ${engine}.`)}`;
     }
-    const compat = engineShim(engine, allText);
+    const compat = engineShim(engine, allText)
+      // Notes hidden from the viewer: todonotes' own [disable], as if the
+      // document asked for it — the page and the text go back to normal.
+      + (usesTodo && general.todoNotes === 'hidden' ? '\\PassOptionsToPackage{disable}{todonotes}' : '');
 
     /* \hoja / \celda: read every cell the project places, one call per
      * workbook and sheet, before the copies are written. A chapter with no

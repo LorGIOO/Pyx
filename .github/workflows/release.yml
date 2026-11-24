@@ -28,7 +28,43 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
+  # UN solo borrador para los tres sistemas. Antes cada runner lo buscaba y,
+  # si no existía, lo creaba: dos que llegaban a la vez creaban DOS borradores
+  # con la misma etiqueta y los instaladores se repartían entre ellos (la
+  # 2.2.2 se quedó sin el de Windows en el suyo). Aquí se crea primero, se
+  # borran los duplicados de intentos anteriores y los runners suben a ESTE
+  # por su id.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.r.outputs.id }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY: |
+            Instaladores: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`), y el **manual de usuario** de esta versión en PDF, en español y en inglés (*user manual*).
+
+            Novedades de esta versión en el [CHANGELOG](https://github.com/LorGIOO/Pyx/blob/main/CHANGELOG.md).
+
+            No hace falta instalar nada más: si el equipo no tiene Python o LaTeX, Pyx ofrece prepararlos al arrancar (Python con uv, LaTeX con Tectonic), dentro de su propia carpeta. Si ya tienes Python, MiKTeX, MacTeX o TeX Live, Pyx los usa.
+        run: |
+          api="repos/$GITHUB_REPOSITORY/releases"
+          ids=$(gh api --paginate "$api?per_page=100" --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .id")
+          keep=""
+          for id in $ids; do
+            if [ -z "$keep" ]; then keep=$id
+            else echo "Borrador duplicado $id: borrado"; gh api -X DELETE "$api/$id"; fi
+          done
+          if [ -z "$keep" ]; then
+            keep=$(gh api -X POST "$api" -f tag_name="$RELEASE_TAG" -f target_commitish="$GITHUB_SHA" \
+              -f name="Pyx $RELEASE_TAG" -f body="$BODY" -F draft=true -F prerelease=false --jq .id)
+          fi
+          echo "Release $RELEASE_TAG: $keep"
+          echo "id=$keep" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -95,18 +131,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: 'Pyx ${{ env.RELEASE_TAG }}'
-          # Sobre ESTE commit: lo que se lanzó a mano crea aquí la etiqueta.
-          releaseCommitish: ${{ github.sha }}
-          releaseBody: |
-            Instaladores: Windows (`.exe`), macOS (`.dmg`, universal Intel+Apple Silicon) y Linux (`.deb` / `.rpm` / `.AppImage`), y el **manual de usuario** de esta versión en PDF, en español y en inglés (*user manual*).
-
-            Novedades de esta versión en el [CHANGELOG](https://github.com/LorGIOO/Pyx/blob/main/CHANGELOG.md).
-
-            No hace falta instalar nada más: si el equipo no tiene Python o LaTeX, Pyx ofrece prepararlos al arrancar (Python con uv, LaTeX con Tectonic), dentro de su propia carpeta. Si ya tienes Python, MiKTeX, MacTeX o TeX Live, Pyx los usa.
-          releaseDraft: true
-          prerelease: false
+          # El borrador que creó `prepare`: los tres sistemas suben al mismo.
+          releaseId: ${{ needs.prepare.outputs.release_id }}
           args: ${{ matrix.args }}
 
       # ---- Windows: firma y antivirus, antes de que nadie lo descargue ----
@@ -192,7 +218,7 @@ jobs:
   # bien, este paso la publica. Si alguno falla, el borrador se queda sin
   # publicar, que es exactamente lo que debe pasar.
   publish:
-    needs: build
+    needs: [prepare, build]
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:

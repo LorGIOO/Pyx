@@ -9,7 +9,7 @@
 Un editor de LaTeX con celdas de Python dentro. Escribes el informe, calculas en él<br>
 y el PDF sale con los números ya puestos. Cambias un dato y todo se actualiza.
 
-[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.2.1-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
+[![Descargar para Windows](https://img.shields.io/badge/Descargar_para_Windows-2.2.2-007ACC?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LorGIOO/Pyx/releases/latest)
 &nbsp;
 [![Manual de usuario](https://img.shields.io/badge/Manual_de_usuario-PDF-1F2937?style=for-the-badge)](Manual%20de%20usuario/Manual%20de%20usuario%20de%20Pyx.pdf)
 &nbsp;
@@ -94,8 +94,8 @@ Si no tienes Python o LaTeX, Pyx los prepara en su carpeta con un clic, sin toca
 
 | Sistema | Archivo |
 |---|---|
-| **Windows** 10/11 (64 bits) | [`Pyx_2.2.1_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
-| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.2.1_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
+| **Windows** 10/11 (64 bits) | [`Pyx_2.2.2_x64-setup.exe`](https://github.com/LorGIOO/Pyx/releases/latest) — no pide permisos de administrador |
+| **macOS** 11+ (Intel y Apple Silicon) | [`Pyx_2.2.2_universal.dmg`](https://github.com/LorGIOO/Pyx/releases/latest) |
 | **Linux** | [`.deb`, `.rpm` o `.AppImage`](https://github.com/LorGIOO/Pyx/releases/latest) |
 
 Si ya tienes Python (Anaconda, python.org…) o LaTeX (MiKTeX, TeX Live, MacTeX), Pyx los usa. Si no, al arrancar ofrece prepararlos. Las versiones nuevas se instalan desde **Configuración → General → Buscar actualizaciones**.

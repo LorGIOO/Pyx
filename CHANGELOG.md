@@ -2,6 +2,27 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [2.2.2] — 2026-11-24
+
+### Corregido
+
+- **Documentos de pdfLaTeX sin PDF.** Pyx elige ahora el motor que el
+  documento necesita: órdenes de pdfTeX (`\pdfgentounicode`,
+  `\input glyphtounicode`…) → pdfLaTeX; `fontspec`, `unicode-math` o
+  `polyglossia` → XeLaTeX; `\directlua` → LuaLaTeX. Manda antes el motor
+  elegido para el documento o una línea `% !TeX program = …`. Un motor que no
+  está instalado se sustituye por otro y se avisa.
+- Las órdenes de pdfTeX ya no detienen XeLaTeX, LuaLaTeX ni Tectonic: en
+  ellos no hacen nada.
+- La barra de estado muestra el motor con el que compila el documento (antes,
+  siempre el primero instalado) y cambia al cambiar el motor por defecto. «Motor
+  de este documento» tiene la opción «El de por defecto».
+- Los errores fatales del motor (`!pdfTeX error: … Font … not found` y
+  similares) aparecen en Problemas y como motivo de «No hay PDF nuevo»; si no
+  hay un error reconocible, se muestra lo último que dijo el motor.
+- MiKTeX instala solo los paquetes que faltan al compilar, y si no encuentra
+  una fuente instalada, Pyx actualiza sus mapas de fuentes y compila otra vez.
+
 ## [2.2.1] — 2026-11-23
 
 ### Añadido

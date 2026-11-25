@@ -121,6 +121,11 @@ export async function openImageDialog() {
     ],
   });
 }
+/** An .svg drawing (Mis símbolos → SVG…). */
+export async function openSvgDialog() {
+  if (!isTauri()) return null;
+  return dialog.open({ multiple: false, filters: [{ name: 'SVG', extensions: ['svg'] }] });
+}
 /** «Insertar archivo»: any file a document can call (Excel, CSV, notebook,
  *  Python, PDF, image, LaTeX, bibliography). */
 export async function openInsertableDialog() {

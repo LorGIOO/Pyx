@@ -226,6 +226,12 @@ const FIELDS = () => [
       'Without wrapping, long lines run off to the right and the editor scrolls horizontally, as in TeXstudio.'],
   },
   {
+    cat: 'editor', sec: ['Escritura', 'Typing'], key: 'renderSymbols', type: 'check',
+    label: 'Mostrar los comandos de símbolo como el símbolo (\\textordfeminine → ª)', en: 'Show symbol commands as the symbol (\\textordfeminine → ª)', after: EDIT,
+    hint: ['El comando vuelve a verse en cuanto el cursor lo toca; el texto del documento no cambia. También dibuja tus símbolos creados desde un SVG.',
+      'The command shows again as soon as the cursor touches it; the document\'s text does not change. It also draws your symbols made from an SVG.'],
+  },
+  {
     cat: 'editor', sec: ['Escritura', 'Typing'], key: 'matchBrackets', type: 'check',
     label: 'Emparejar paréntesis y llaves', en: 'Parentheses matching', after: EDIT,
   },

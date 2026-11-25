@@ -18,6 +18,7 @@ vi.mock('../js/core/platform.js', async (orig) => ({
     return null;
   },
   messageDialog: async (text) => { h.dialogs.push(text); },
+  askDialog: async (text) => { h.dialogs.push(text); return false; },
   openExternal: (url) => { h.opened.push(url); },
 }));
 vi.mock('../js/solid/stores/docStore.js', () => ({ resolveUnsaved: async () => h.unsaved }));

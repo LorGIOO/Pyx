@@ -685,7 +685,7 @@ const MISSING_FILE_GUARDS = [
   String.raw`\@ifundefined{verbatim@input}{}{\@ifundefined{Pyx@verbatim@input}{\let\Pyx@verbatim@input\verbatim@input\def\verbatim@input#1#2{\IfFileExists{#2}{\Pyx@verbatim@input{#1}{#2}}{\endgroup\Pyx@missing{#2}}}}{}}`,
 ];
 
-export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, usesSheets = false, floatBarrier = false, todoWide = false }) {
+export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender, usesSheets = false, floatBarrier = false, todoWide = false, extra = '' }) {
   const guards = [];
   const seen = new Set();
   // A \py{} can expand to an \includegraphics — `figtex()` in the kernel
@@ -751,28 +751,59 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender,
       + '\\@ifundefined{subsubsection}{}{\\let\\Pyx@subsubsection\\subsubsection\\renewcommand\\subsubsection{\\@fb@secFB\\Pyx@subsubsection}}'
       + '}}}{}}}');
   }
+  // Pages with margin notes (todonotes) listed in the .aux by an earlier run:
+  // defined always, so an .aux written with the notes shown never stops a
+  // run with them hidden.
+  guards.push('\\providecommand\\Pyx@notepage[1]{}');
+  // todonotes' own names in Spanish («Por hacer» instead of «Todo list»).
+  guards.push('\\@ifpackageloaded{todonotes}{\\AtBeginDocument{\\edef\\Pyx@es{\\detokenize{spanish}}\\edef\\Pyx@l{\\expandafter\\detokenize\\expandafter{\\languagename}}\\ifx\\Pyx@l\\Pyx@es'
+    + '\\ifdefined\\@todonotes@SetTodoListName\\@todonotes@SetTodoListName{Por hacer}\\@todonotes@SetMissingFigureText{Figura}'
+    + '\\@todonotes@SetMissingFigureUp{Falta}\\@todonotes@SetMissingFigureDown{figura}\\fi\\fi}}{}');
   if (todoWide) {
-    // todonotes' \todo{…} in the margin: the paper grows 6 cm on the right so
-    // a note is never cut at the edge of the page; the text does not move
-    // (its width and position are already fixed), a dotted line marks where
-    // the real page ends, and every note goes to the right-hand margin.
-    // Nothing happens when the document hides its notes ([disable]) or with
-    // the notes hidden from Pyx's viewer (that passes [disable]).
+    // todonotes' \todo{…} in the margin. The PAPER does not change — not its
+    // size, nor the margins, the text, the header or the footer (geometry
+    // computes the layout at \begin{document} from \paperwidth: widening the
+    // paper had moved and recentred everything). Only the pages that carry a
+    // margin note (not inline notes, not \missingfigure) are made wider in the
+    // PDF, on the right, by just what the note needs; a dotted line marks
+    // where the real page ends. The page of a note is known in the same run
+    // (an e-TeX mark next to the note, read when the page is shipped) and,
+    // for notes inside floats or boxes where a mark cannot travel, from the
+    // .aux of the previous run. Nothing happens when the document hides its
+    // notes ([disable]) or when they are hidden from Pyx's viewer.
     guards.push('\\@ifpackageloaded{todonotes}{\\@ifpackagewith{todonotes}{disable}{}{'
-      + '\\newdimen\\Pyx@pagew\\Pyx@pagew=\\paperwidth'
-      + '\\newdimen\\Pyx@extra\\Pyx@extra=6cm'
-      + '\\advance\\paperwidth by \\Pyx@extra'
+      + '\\newdimen\\Pyx@pagew\\newdimen\\Pyx@extra\\newcount\\Pyx@noten\\newmarks\\Pyx@notes'
       + '\\@mparswitchfalse\\normalmarginpar'
-      + '\\AtBeginDocument{'
+      + '\\gdef\\Pyx@notepages{,}\\gdef\\Pyx@notepage#1{\\xdef\\Pyx@notepages{\\Pyx@notepages#1,}}'
+      + '\\let\\Pyx@dmn\\@todonotes@drawMarginNoteWithLine'
+      + '\\def\\@todonotes@drawMarginNoteWithLine{\\global\\advance\\Pyx@noten\\@ne'
+      + '\\ifvmode\\marks\\Pyx@notes{\\the\\Pyx@noten}\\else\\vadjust{\\marks\\Pyx@notes{\\the\\Pyx@noten}}\\fi'
+      + '\\protected@write\\@auxout{}{\\string\\Pyx@notepage{\\the\\c@page}}\\Pyx@dmn}'
+      // the last note mark of this page differs from the last of the
+      // previous page (\\topmarks is not reliable inside LaTeX's output)
+      + '\\gdef\\Pyx@lastbot{}'
+      + '\\def\\Pyx@ifnotepage{\\edef\\Pyx@b{\\botmarks\\Pyx@notes}\\ifx\\Pyx@b\\Pyx@lastbot\\expandafter\\Pyx@inaux'
+      + '\\else\\global\\let\\Pyx@lastbot\\Pyx@b\\expandafter\\@firstoftwo\\fi}'
+      + '\\def\\Pyx@inaux{\\edef\\Pyx@c{,\\the\\c@page,}\\@expandtwoargs\\in@{\\Pyx@c}{\\Pyx@notepages}'
+      + '\\ifin@\\expandafter\\@firstoftwo\\else\\expandafter\\@secondoftwo\\fi}'
+      + '\\def\\Pyx@setpw#1{\\ifdefined\\pdfpagewidth\\global\\pdfpagewidth=#1\\fi\\ifdefined\\pagewidth\\global\\pagewidth=#1\\fi}'
+      + '\\AddToHook{begindocument/end}{\\global\\Pyx@pagew=\\paperwidth'
       // the right margin: of odd pages, or the narrower of odd and even ones
-      + '\\dimen@=\\dimexpr\\Pyx@pagew-1in-\\hoffset-\\oddsidemargin-\\textwidth\\relax'
-      + '\\if@twoside\\dimen@ii=\\dimexpr\\Pyx@pagew-1in-\\hoffset-\\evensidemargin-\\textwidth\\relax'
+      + '\\dimen@=\\dimexpr\\paperwidth-1in-\\hoffset-\\oddsidemargin-\\textwidth\\relax'
+      + '\\if@twoside\\dimen@ii=\\dimexpr\\paperwidth-1in-\\hoffset-\\evensidemargin-\\textwidth\\relax'
       + '\\ifdim\\dimen@ii<\\dimen@\\dimen@=\\dimen@ii\\fi\\fi'
-      + '\\setlength\\marginparwidth{\\dimexpr\\dimen@-2\\marginparsep+\\Pyx@extra-0.6cm\\relax}'
-      + '\\ifdefined\\pdfpagewidth\\global\\pdfpagewidth=\\paperwidth\\fi'
-      + '\\ifdefined\\pagewidth\\global\\pagewidth=\\paperwidth\\fi}'
-      + '\\ifdefined\\AddToHook\\AddToHook{shipout/background}{\\put(\\Pyx@pagew,0){\\color{gray}'
-      + '\\multiput(0,0)(0,-6pt){400}{\\rule[-3pt]{0.4pt}{3pt}}}}\\fi'
+      // the document's notes already fit in its margin: nothing to widen
+      + '\\ifdim\\dimexpr\\marginparsep+\\marginparwidth+0.3cm\\relax>\\dimen@'
+      // otherwise notes 4–5 cm wide (todonotes draws them as wide as
+      // \\marginparwidth) and the page grows by what they need
+      + '\\dimen@ii=\\marginparwidth\\ifdim\\dimen@ii<4cm\\dimen@ii=4cm\\fi\\ifdim\\dimen@ii>5cm\\dimen@ii=5cm\\fi'
+      + '\\global\\marginparwidth=\\dimen@ii'
+      + '\\global\\Pyx@extra=\\dimexpr\\marginparsep+\\dimen@ii+0.8cm-\\dimen@\\relax'
+      + '\\ifdim\\Pyx@extra<\\z@\\global\\Pyx@extra=\\z@\\fi\\else\\global\\Pyx@extra=\\z@\\fi}'
+      + '\\AddToHook{shipout/background}{\\ifdim\\Pyx@extra>\\z@\\Pyx@ifnotepage'
+      + '{\\Pyx@setpw{\\dimexpr\\Pyx@pagew+\\Pyx@extra\\relax}\\put(\\Pyx@pagew,0){\\color{gray}'
+      + '\\multiput(0,0)(0,-6pt){400}{\\rule[-3pt]{0.4pt}{3pt}}}}'
+      + '{\\Pyx@setpw{\\Pyx@pagew}}\\fi}'
       + '}}{}');
   }
   // LAST: the hooks wrap whatever the guards above may have just loaded
@@ -785,6 +816,7 @@ export function safetyPreamble({ envs, styles, usesPy, usesGraphics, usesRender,
     ...guards,
     '\\makeatother',
     '% ---- fin de las garantías de Pyx ----',
+    ...(extra ? [extra] : []),
   ].join('\n');
 }
 

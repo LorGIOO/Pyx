@@ -20,7 +20,7 @@
 // the AppImage. A .deb/.rpm install opens the release page instead (it
 // needs root to be replaced).
 import { state } from './state.js';
-import { invoke, isTauri, openExternal, messageDialog } from './platform.js';
+import { invoke, isTauri, openExternal, messageDialog, askDialog } from './platform.js';
 import { t } from './i18n.js';
 import { gv } from '../solid/stores/settingsStore.js';
 
@@ -121,7 +121,13 @@ export async function restartToUpdate() {
   } catch (e) {
     state.updateBusy = false;
     state.updateStatus = t('No se pudo actualizar.', 'Could not update.');
-    await messageDialog(t('No se pudo actualizar: ', 'Could not update: ') + reason(e));
+    // Never a dead end: the release page has the same installer, to run by hand.
+    const go = await askDialog(
+      t('No se pudo actualizar: ', 'Could not update: ') + reason(e)
+        + t('\n\n¿Abrir la página de descargas para instalarla a mano?', '\n\nOpen the download page to install it by hand?'),
+      { title: t('Actualizar Pyx', 'Update Pyx'), kind: 'warning' },
+    ).catch(() => false);
+    if (go) openExternal('https://github.com/LorGIOO/Pyx/releases/latest').catch(() => {});
     return 'error';
   }
 }
@@ -155,8 +161,10 @@ export async function installUpdate() {
     state.updateStatus = t(`Descargando Pyx ${u.latest}…`, `Downloading Pyx ${u.latest}…`);
     if (!(await prepare(u))) {
       // Said where the user is looking: the status bar button has no room.
-      await messageDialog(state.updateStatus || t('No se pudo descargar la actualización.', 'Could not download the update.'),
-        { title: t('Actualización', 'Update'), kind: 'warning' });
+      const go = await askDialog((state.updateStatus || t('No se pudo descargar la actualización.', 'Could not download the update.'))
+        + t('\n\n¿Abrir la página de descargas para instalarla a mano?', '\n\nOpen the download page to install it by hand?'),
+      { title: t('Actualización', 'Update'), kind: 'warning' }).catch(() => false);
+      if (go) openExternal(u.page || 'https://github.com/LorGIOO/Pyx/releases/latest').catch(() => {});
       return 'error';
     }
   }

@@ -25,6 +25,7 @@ import PdfOutline from './PdfOutline.jsx';
 import { createAnchoredPopup } from './createAnchoredPopup.js';
 import { t as tr } from '../../core/i18n.js';
 import { general, setGeneral } from '../stores/settingsStore.js';
+import { changes } from '../stores/structureStore.js';
 
 // Viewer toolbar icons — same hand as the ribbon and the notebook cells:
 // a 16x16 box, 1.2px strokes, no fills unless the shape IS a solid. The
@@ -62,6 +63,7 @@ const ic = {
   underline: `<svg ${S}><path d="M4.8 2.8v4.4a3.2 3.2 0 0 0 6.4 0V2.8M3.6 13.4h8.8"/></svg>`,
   strike: `<svg ${S}><path d="M11 4.4C10.4 3.3 9.3 2.8 8 2.8c-1.8 0-3 .9-3 2.2 0 .7.3 1.2.9 1.6M5 11c.5 1.4 1.7 2.2 3.2 2.2 1.9 0 3.1-1 3.1-2.4 0-.5-.1-.9-.4-1.2M2.4 8h11.2"/></svg>`,
   ellipse: `<svg ${S}><ellipse cx="8" cy="8" rx="5.8" ry="4.4"/></svg>`,                    // codicon: circle-large
+  diff: `<svg ${S}><path d="M4 2v6M1 5h6"/><path d="M9 11.5h6"/><path d="M2 13.5l12-11" opacity=".55"/></svg>`, // plus, minus
   todo: `<svg ${S}><rect x="1.5" y="2" width="9" height="12" rx="1"/><path d="M3.5 5h5M3.5 7.5h5M3.5 10h3"/><path d="M10.5 4.5h3.5v4h-3.5"/></svg>`, // a page with a note beside it
   note: `<svg ${S}><path d="M3 3h10a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H8.2L5 13.6v-2.4H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`, // codicon: comment
   redo: `<svg ${S}><path d="M13.5 6.4h-7a3.8 3.8 0 0 0 0 7.6H10"/><path d="m10.4 3.3 3.1 3.1-3.1 3.1"/></svg>`,
@@ -474,6 +476,17 @@ export default function PreviewPane() {
             setGeneral({ todoNotes: general.todoNotes === 'hidden' ? 'wide' : 'hidden' });
             import('../../compile/compiler.js').then((m) => m.compileActive(true)).catch(() => {});
           }} />
+        {/* A compared document (Comparar versiones): its corrections, or the current version alone. */}
+        <Show when={changes().length}>
+          <Btn icon={ic.diff} title={general.diffMarks === 'hidden'
+            ? tr('Correcciones ocultas: se ve la versión actual — pulsa para ver los cambios marcados', 'Corrections hidden: the current version shows — click to see the changes marked')
+            : tr('Correcciones visibles (añadido y borrado marcados) — pulsa para ver solo la versión actual', 'Corrections shown (added and deleted marked) — click to see the current version alone')}
+            active={general.diffMarks !== 'hidden'}
+            onClick={() => {
+              setGeneral({ diffMarks: general.diffMarks === 'hidden' ? 'shown' : 'hidden' });
+              import('../../compile/compiler.js').then((m) => m.compileActive(true)).catch(() => {});
+            }} />
+        </Show>
         <Btn icon={ic.contrast} title={tr('Modo noche — folio oscuro; los colores y las imágenes se conservan', 'Night mode — dark paper; colours and images are kept')} active={invert()} onClick={() => setInvert(!invert())} />
         <Btn icon={ic.max} title={tr('Ampliar visor (ocultar el editor)', 'Maximize the viewer (hide the editor)')} active={state.viewerMaximized}
           onClick={() => (state.viewerMaximized = !state.viewerMaximized)} />

@@ -172,6 +172,7 @@ export const GENERAL_SECTIONS = {
     lineWrap: true,
     wrapColumn: 0,           // 0 = no right-margin ruler
     matchBrackets: true,
+    renderSymbols: true,
     closeBrackets: true,
     showWhitespace: false,
     showTrailingWs: false,
@@ -243,6 +244,7 @@ export const GENERAL_SECTIONS = {
     pdfFollowCursor: true,
     // todonotes' \\todo{…}: 'wide' = a wider page that fits them, 'hidden' = off.
     todoNotes: 'wide',
+    diffMarks: 'shown',
     loupeZoom: 3,
     selSyncPdfToCode: false,
     // Button that drags the page: 'middle' (the wheel button) or 'right'

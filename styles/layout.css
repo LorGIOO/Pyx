@@ -1256,3 +1256,20 @@
 
 /* A file from the system is being dragged over the window. */
 body.pyx-file-over .editor-host { outline: 2px dashed var(--theme-accent); outline-offset: -4px; }
+
+/* «Por hacer» and «Cambios» in the TOC panel */
+.toc-group { margin-top: 10px; display: flex; align-items: center; gap: 6px; }
+.toc-count { font-weight: 400; opacity: .7; font-size: 11px; }
+.toc-row.todo, .toc-row.change { cursor: pointer; }
+.toc-row.todo-py .toc-kind { color: #3776ab; }
+.toc-row.todo-figure .toc-kind { color: #8a6dd1; }
+.toc-row.change-add .toc-kind, .toc-row.change-add .toc-title { color: #2563eb; }
+.toc-row.change-del .toc-kind, .toc-row.change-del .toc-title { color: #c62828; text-decoration: line-through; text-decoration-thickness: 1px; }
+.toc-row.change-del .toc-kind { text-decoration: none; }
+
+/* «Mis símbolos» drawn from an SVG: the drawing in the text's colour */
+.sym-svg { display: inline-block; width: 1.25em; height: 1.25em; background: currentColor;
+  -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center; vertical-align: middle; }
+.cm-sym-glyph { color: var(--theme-accent, #2563eb); padding: 0 1px; border-radius: 3px; background: rgba(37, 99, 235, 0.08); }
+.cm-sym-glyph .sym-svg { width: 1em; height: 1em; vertical-align: -0.12em; }

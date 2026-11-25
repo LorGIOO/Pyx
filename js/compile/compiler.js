@@ -9,6 +9,11 @@ import {
 } from '../core/platform.js';
 import { sheetRequests, resolveSheets, gridTeX, requestKey } from './sheets.js';
 import { chooseEngine, engineShim } from './engine.js';
+import { svgSymbolsUsed } from '../data/svg-symbols.js';
+
+// «Ocultar correcciones»: what was added stays, what was deleted goes.
+const DIFF_HIDE = '\\long\\def\\DIFadd#1{#1}\\long\\def\\DIFdel#1{}\\def\\DIFaddbegin{}\\def\\DIFaddend{}'
+  + '\\long\\def\\DIFdelbegin#1\\DIFdelend{}\\def\\DIFdelend{}\\long\\def\\DIFblock#1#2{}';
 import { relativeTo, normalizePath, samePath } from '../core/paths.js';
 import { execCellFor } from '../editor/cells.js';
 import { parseCells, parseCellsText, cellKey, markerId } from '../editor/cell-parse.js';
@@ -1502,6 +1507,13 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     // \todo notes (todonotes): shown on a wider page, or hidden from the viewer.
     const usesTodo = [...files.values()].some((f) => /\{[^}]*\btodonotes\b/.test(f.content));
     use.todoWide = usesTodo && general.todoNotes !== 'hidden';
+    // «Mis símbolos» drawn from an SVG that this project uses: defined here
+    // (TikZ, svg.path), so the document needs nothing of its own.
+    const svgUsed = svgSymbolsUsed([...files.values()].map((f) => f.content).join('\n'));
+    use.extra = svgUsed.length
+      ? '\\makeatletter\\@ifpackageloaded{graphicx}{}{\\RequirePackage{graphicx}}\\@ifpackageloaded{tikz}{}{\\RequirePackage{tikz}}\\makeatother'
+        + '\\usetikzlibrary{svg.path}\n' + svgUsed.map((x) => x.def).join('\n')
+      : '';
     const shim = safetyPreamble(use);
 
     /* The engine (compile/engine.js): this document's choice, a % !TeX
@@ -1526,7 +1538,11 @@ export async function compileActive(showViewer = true, { force = showViewer, fre
     const compat = engineShim(engine, allText)
       // Notes hidden from the viewer: todonotes' own [disable], as if the
       // document asked for it — the page and the text go back to normal.
-      + (usesTodo && general.todoNotes === 'hidden' ? '\\PassOptionsToPackage{disable}{todonotes}' : '');
+      + (usesTodo && general.todoNotes === 'hidden' ? '\\PassOptionsToPackage{disable}{todonotes}' : '')
+      // A document made by «Comparar versiones» with its corrections hidden:
+      // the current version alone. These come before the document's own
+      // \providecommand definitions, which then leave them alone.
+      + (general.diffMarks === 'hidden' && allText.includes('%DIF PREAMBLE EXTENSION ADDED BY PYX') ? DIFF_HIDE : '');
 
     /* \hoja / \celda: read every cell the project places, one call per
      * workbook and sheet, before the copies are written. A chapter with no

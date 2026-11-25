@@ -1,8 +1,8 @@
 import { createMemo, onMount, onCleanup, For, Show } from 'solid-js';
 import { state, activeDoc } from '../../core/state.js';
 import { t as tr } from '../../core/i18n.js';
-import { toc, todos, includes, crumbPath } from '../stores/structureStore.js';
-import { gotoLine } from '../../editor/commands.js';
+import { toc, todos, changes, includes, crumbPath } from '../stores/structureStore.js';
+import { gotoLine, forwardSearch } from '../../editor/commands.js';
 import SymbolPanel from './SymbolPanel.jsx';
 import { openPath } from '../stores/docStore.js';
 import { dirOf, joinPath } from '../../core/paths.js';
@@ -99,6 +99,13 @@ export default function SidePanel() {
     });
   });
 
+  // A note or a change: to its line in the code and, if the PDF is open,
+  // to the same place in the PDF (SyncTeX).
+  const goNote = (line) => { gotoLine(line); forwardSearch(line).catch?.(() => {}); };
+  const NOTE_ICON = { todo: '✎', figure: '▭', note: '%', py: '#' };
+  const noteTag = (td) => ({ todo: tr('Nota', 'Note'), figure: tr('Figura pendiente', 'Missing figure') }[td.kind]
+    || ({ TODO: tr('Por hacer', 'To do'), FIXME: tr('Corregir', 'Fix'), NOTA: tr('Nota', 'Note'), NOTE: tr('Nota', 'Note') }[td.tag] || td.tag));
+
   const openInclude = (target) => {
     const base = dirOf(activeDoc()?.path);
     if (base) openPath(joinPath(base, target));
@@ -136,13 +143,25 @@ export default function SidePanel() {
                 </For>
               </Show>
               <Show when={todos().length}>
-                <div class="sym-cat-name" style={{ 'margin-top': '10px' }}>TODO</div>
+                <div class="sym-cat-name toc-group">{tr('Por hacer', 'To do')} <span class="toc-count">{todos().length}</span></div>
                 <For each={todos()}>
                   {(td) => (
-                    <div class="toc-row todo" onClick={() => gotoLine(td.line)}
-                      title={tr(`Línea ${td.line}`, `Line ${td.line}`)}>
-                      <span class="toc-kind">!</span>
-                      <span class="toc-title">{td.text || td.tag}</span>
+                    <div class={`toc-row todo todo-${td.kind}`} onClick={() => goNote(td.line)}
+                      title={tr(`Línea ${td.line} — clic para ir a la nota en el código y en el PDF`, `Line ${td.line} — click to go to the note in the code and in the PDF`)}>
+                      <span class="toc-kind">{NOTE_ICON[td.kind] || '!'}</span>
+                      <span class="toc-title">{td.text || noteTag(td)}</span>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              <Show when={changes().length}>
+                <div class="sym-cat-name toc-group">{tr('Cambios', 'Changes')} <span class="toc-count">{changes().length}</span></div>
+                <For each={changes()}>
+                  {(ch) => (
+                    <div class={`toc-row change change-${ch.type}`} onClick={() => goNote(ch.line)}
+                      title={tr(`Línea ${ch.line} — clic para ir al cambio`, `Line ${ch.line} — click to go to the change`)}>
+                      <span class="toc-kind">{ch.type === 'add' ? '+' : '−'}</span>
+                      <span class="toc-title">{ch.text}</span>
                     </div>
                   )}
                 </For>

@@ -283,6 +283,16 @@ function readPadding() {
   padY = padTop + (parseFloat(cs.paddingBottom) || 0);
 }
 
+let usualW = 0, usualH = 0;
+/** A page of the usual height, wider than the usual page (grown to the right). */
+function isGrown(i, w) {
+  return usualW > 0 && w > usualW + 1 && Math.abs(pageHpx(i) - usualH) <= 1.5;
+}
+/** Left edge of page `i` in the sizer. */
+function pageLeft(i, w) {
+  return Math.round((innerW - (isGrown(i, w) ? usualW : w)) / 2);
+}
+
 /** Recompute every page's position from the page sizes and the current scale.
  *  O(n) in cheap arithmetic (no DOM touched), so it's fine on every zoom tick:
  *  7 000 pages is a few thousand additions — microseconds. */
@@ -290,10 +300,28 @@ function recomputeGeometry() {
   const n = pageCount();
   if (!n || !container || !sizer) return;
   let maxW = 0;
+  // The document's usual page (the most common size). A page of the same
+  // height made wider — the margin notes of todonotes, which widen only the
+  // pages that carry one — keeps its left edge where the usual page has it
+  // and grows to the right, instead of being centred on its own and
+  // shifting the page sideways. Any other size (an A3 plan) is centred.
+  const count = new Map();
+  for (let i = 0; i < n; i++) {
+    const k = Math.round(pageWpx(i)) + 'x' + Math.round(pageHpx(i));
+    count.set(k, (count.get(k) || 0) + 1);
+  }
+  let best = '', bestN = 0;
+  for (const [k, c] of count) if (c > bestN) { best = k; bestN = c; }
+  const [bw, bh] = best.split('x').map(Number);
+  usualW = bw || 0;
+  usualH = bh || 0;
+  let reach = 0; // how far an aligned wide page goes past the usual one
   for (let i = 0; i < n; i++) {
     const w = pageWpx(i);
-    if (w > maxW) maxW = w;
+    if (isGrown(i, w)) reach = Math.max(reach, w - usualW);
+    else if (w > maxW) maxW = w;
   }
+  maxW = Math.max(maxW, usualW + 2 * reach);
   // The sizer is at least as wide as the viewport, so narrow pages centre and
   // wide ones stay fully scrollable to their left edge.
   const availW = Math.max(0, container.clientWidth - padX);
@@ -356,7 +384,7 @@ function makeWrap(i) {
 /** Place a mounted page at its computed slot. */
 function placeWrap(i, wrap) {
   const w = pageWpx(i), h = pageHpx(i);
-  wrap.style.left = Math.round((innerW - w) / 2) + 'px';
+  wrap.style.left = pageLeft(i, w) + 'px';
   wrap.style.top = tops[i] + 'px';
   wrap.style.width = w + 'px';
   wrap.style.height = h + 'px';
@@ -639,8 +667,9 @@ function applyFit() {
   // Fit against the page under the cursor, so fitting inside a mixed-size
   // document uses the page you're actually looking at.
   const i = Math.max(0, Math.min(pageCount() - 1, currentVisiblePage() - 1));
-  const w = baseW[i], h = baseH[i];
   let s = getScale();
+  // A page grown for margin notes fits like the usual page.
+  const w = isGrown(i, pageWpx(i)) && s ? usualW / s : baseW[i], h = baseH[i];
   if (mode === 'width') s = availW / w;
   else if (mode === 'height') s = availH / h;
   else if (mode === 'page') s = Math.min(availW / w, availH / h);
@@ -1440,7 +1469,7 @@ function buildAnchor(clientX, clientY) {
   const i = indexAtY(contentY);
   if (i < 0) return null;
   const w = pageWpx(i), h = pageHpx(i);
-  const left = Math.round((innerW - w) / 2);
+  const left = pageLeft(i, w);
   return {
     i,
     fx: w ? (contentX - left) / w : 0,
@@ -1452,7 +1481,7 @@ function buildAnchor(clientX, clientY) {
 function applyAnchor(a) {
   if (!a || a.i >= pageCount()) return;
   const w = pageWpx(a.i), h = pageHpx(a.i);
-  const left = Math.round((innerW - w) / 2);
+  const left = pageLeft(a.i, w);
   container.scrollLeft = left + a.fx * w - a.offX;
   container.scrollTop = padTop + tops[a.i] + a.fy * h - a.offY;
 }

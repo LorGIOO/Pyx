@@ -74,21 +74,87 @@ export function parseTOC(src) {
   return out;
 }
 
-/** TODO entries (TeXstudio lists them in the structure): `% TODO …` comments
- * and \todo{…} commands, with their 1-based line. */
+/** The text of a balanced {…} group starting at `open` (the `{`), or null. */
+function groupAt(text, open) {
+  let depth = 0;
+  for (let k = open; k < text.length; k++) {
+    const c = text[k];
+    if (c === '\\') { k++; continue; }
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return text.slice(open + 1, k);
+  }
+  return null;
+}
+
+/** LaTeX markup out of a note's text, for the list. */
+const plain = (s) => String(s || '').replace(/\\[a-zA-Z@]+\*?\s*/g, '').replace(/[{}]/g, '').replace(/\s+/g, ' ').trim();
+
+const NOTE_TAG = /^(TODO|FIXME|POR\s+HACER|PENDIENTE|NOTA|NOTE|XXX)\b[:\s]*(.*)$/i;
+
+/** Notes to act on («Por hacer»), with their 1-based line:
+ *  - \todo[…]{…} (todonotes) and \missingfigure{…};
+ *  - `% TODO …`, `% FIXME …`, `% POR HACER …`, `% NOTA …` comments — also at
+ *    the end of a line with a \py{…} or a \celda{…}, to annotate a value;
+ *  - the same words in `# …` comments inside the Python cells.
+ *  kind: 'todo' | 'figure' | 'note' | 'py'. */
 export function parseTodos(src) {
   const out = [];
   let i = 0;
+  let inCell = false;
   for (const text of eachLine(src)) {
     i++;
-    // Cheap pre-filter: a TODO entry always needs a '%' or a '\'.
-    if (text.indexOf('%') < 0 && text.indexOf('\\') < 0) continue;
-    let m = text.match(/%\s*(TODO|FIXME)\b[:\s]*(.*)$/i);
-    if (!m) {
-      const c = text.match(/\\todo\s*(?:\[[^\]]*\])?\{([^}]*)\}/);
-      if (c) m = [null, 'TODO', c[1]];
+    if (/^\s*%#python\b/.test(text)) { inCell = true; continue; }
+    if (inCell) {
+      if (/^\s*%#end\b/.test(text)) { inCell = false; continue; }
+      const h = text.indexOf('#');
+      if (h >= 0) {
+        const m = text.slice(h + 1).trim().match(NOTE_TAG);
+        if (m) out.push({ kind: 'py', tag: m[1].toUpperCase(), text: m[2].trim(), line: i });
+      }
+      continue;
     }
-    if (m) out.push({ tag: m[1].toUpperCase(), text: (m[2] || '').trim(), line: i });
+    // Cheap pre-filter: a note always needs a '%' or a '\'.
+    if (text.indexOf('%') < 0 && text.indexOf('\\') < 0) continue;
+    const re = /\\(todo|missingfigure)\s*(?:\[[^\]]*\])?\s*\{/g;
+    let c;
+    while ((c = re.exec(text))) {
+      const body = groupAt(text, c.index + c[0].length - 1);
+      out.push({ kind: c[1] === 'todo' ? 'todo' : 'figure', tag: c[1] === 'todo' ? 'TODO' : 'FIG', text: plain(body ?? ''), line: i });
+    }
+    const pc = text.search(/(^|[^\\])%/);
+    if (pc >= 0) {
+      const m = text.slice(text.indexOf('%', pc) + 1).trim().match(NOTE_TAG);
+      if (m) {
+        const on = (text.slice(0, pc + 1).match(/\\(py|celda)\s*\{/) || [])[1];
+        out.push({ kind: 'note', tag: m[1].toUpperCase(), text: m[2].trim(), line: i, on: on || '' });
+      }
+    }
+  }
+  return out;
+}
+
+/** The changes of a document made by «Comparar versiones» (\DIFadd{…},
+ *  \DIFdel{…} and the [+ table] / [-- figure] blocks), with their line. */
+export function parseChanges(src) {
+  const out = [];
+  let i = 0;
+  let body = false;
+  for (const text of eachLine(src)) {
+    i++;
+    if (!body) { if (/\\begin\s*\{document\}/.test(text)) body = true; continue; }
+    if (text.indexOf('\\DIF') < 0) continue;
+    const re = /\\DIF(add|del)\s*\{|\\DIFblock\s*\{[^}]*\}\s*\{/g;
+    let c;
+    while ((c = re.exec(text))) {
+      const g = groupAt(text, c.index + c[0].length - 1);
+      const t = plain(g ?? '');
+      if (!t) continue;
+      const type = c[1] || (/^\s*(\+|added)/i.test(t) ? 'add' : 'del');
+      // one entry per run of the same kind on a line
+      const last = out[out.length - 1];
+      if (last && last.line === i && last.type === type && !c[0].startsWith('\\DIFblock')) last.text += ' ' + t;
+      else out.push({ type, text: t, line: i, block: c[0].startsWith('\\DIFblock') });
+    }
   }
   return out;
 }
@@ -214,6 +280,7 @@ function* countWordsSteps(src) {
 
 export const [toc, setToc] = createSignal([]);
 export const [todos, setTodos] = createSignal([]);
+export const [changes, setChanges] = createSignal([]);
 export const [includes, setIncludes] = createSignal([]);
 export const [wordCount, setWordCount] = createSignal(0);
 
@@ -234,7 +301,7 @@ export function scheduleDerived(src) {
   clearTimeout(deriveTimer);
   if (deriveHandle) { cancelIdle(deriveHandle); deriveHandle = 0; }
   if (!src) {
-    setToc([]); setTodos([]); setIncludes([]); setWordCount(0);
+    setToc([]); setTodos([]); setChanges([]); setIncludes([]); setWordCount(0);
     return;
   }
   const big = srcLength(src) > 2_000_000;
@@ -252,6 +319,7 @@ export function scheduleDerived(src) {
     const passes = [
       () => setToc(parseTOC(src)),
       () => setTodos(parseTodos(src)),
+      () => setChanges(parseChanges(src)),
       () => setIncludes(parseIncludes(src)),
     ];
     let words = null;

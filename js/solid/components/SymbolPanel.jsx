@@ -5,6 +5,8 @@ import { t as tr, lang } from '../../core/i18n.js';
 import { SYMBOL_CATEGORIES, insertText, previewSource } from '../../data/symbols.js';
 import { insertSnippet } from '../../editor/commands.js';
 import { readUserFile, writeUserFile, userDir } from '../../core/userfiles.js';
+import { mySymbols as mine, setMySymbols as setMine, svgToTikz, commandFromName } from '../../data/svg-symbols.js';
+import { openSvgDialog, readTextFile, messageDialog } from '../../core/platform.js';
 
 // The symbol palette of the side panel. Every symbol is drawn by KaTeX — the
 // same typography as the formulas in the PDF, not a system font guessing at
@@ -18,7 +20,16 @@ import { readUserFile, writeUserFile, userDir } from '../../core/userfiles.js';
 export const SYMBOLS_FILE = 'symbols.json';
 
 const cache = new Map();
-function render(cmd, glyph) {
+/** The drawing of an SVG symbol, as an image (its own colours dropped: it
+ *  takes the text's, as in the PDF). */
+export function svgImg(svg, cls = 'sym-svg') {
+  const mono = String(svg || '').replace(/(fill|stroke)="(?!none)[^"]*"/g, '$1="currentColor"');
+  const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(mono);
+  return `<span class="${cls}" style="-webkit-mask-image:url('${url}');mask-image:url('${url}')"></span>`;
+}
+
+function render(cmd, glyph, extra) {
+  if (extra && extra.svg) return svgImg(extra.svg);
   const key = cmd + '\u0000' + glyph;
   if (cache.has(key)) return cache.get(key);
   let html;
@@ -33,7 +44,6 @@ function render(cmd, glyph) {
   return html;
 }
 
-const [mine, setMine] = createSignal([]); // [[glyph, command, name?], …]
 let loaded = false;
 
 const SAMPLE = () => ({
@@ -57,7 +67,13 @@ export async function loadMySymbols() {
   try {
     const o = JSON.parse(text);
     const list = Array.isArray(o) ? o : (o && Array.isArray(o.symbols) ? o.symbols : []);
-    setMine(list.filter((it) => Array.isArray(it) && typeof it[1] === 'string' && it[1].trim()).map((it) => [String(it[0] || ''), it[1], it[2] ? String(it[2]) : '']));
+    setMine(list.filter((it) => Array.isArray(it) && typeof it[1] === 'string' && it[1].trim())
+      .map((it) => {
+        const row = [String(it[0] || ''), it[1], it[2] ? String(it[2]) : ''];
+        // a symbol drawn from an SVG: { svg, tikz }
+        if (it[3] && typeof it[3] === 'object' && it[3].tikz) row.push({ svg: String(it[3].svg || ''), tikz: String(it[3].tikz) });
+        return row;
+      }));
   } catch (_) {
     setMine([]);
   }
@@ -108,6 +124,23 @@ export default function SymbolPanel() {
     await saveMySymbols([...mine(), ['', cmd, newName().trim()]]);
     setNewCmd(''); setNewName(''); setAdding(false);
   };
+  // «SVG…»: a drawing becomes a command (\nombreDelArchivo), drawn with TikZ.
+  const addSvg = async () => {
+    const path = await openSvgDialog();
+    if (typeof path !== 'string' || !path) return;
+    try {
+      const svg = await readTextFile(path);
+      const { tikz } = svgToTikz(svg);
+      let cmd = newCmd().trim() && /^\\[A-Za-z]+$/.test(newCmd().trim()) ? newCmd().trim() : commandFromName(path);
+      const taken = new Set(mine().map((it) => it[1]));
+      // commands take letters only: \\flecha, \\flechaB, \\flechaC…
+      for (let k = 1, base = cmd; taken.has(cmd) && k < 26; k++) cmd = base + String.fromCharCode(65 + k);
+      await saveMySymbols([...mine(), ['', cmd, newName().trim() || path.replace(/^.*[\\/]/, ''), { svg, tikz }]]);
+      setNewCmd(''); setNewName(''); setAdding(false);
+    } catch (e) {
+      messageDialog(String((e && e.message) || e), { title: tr('Símbolo desde SVG', 'Symbol from SVG'), kind: 'warning' });
+    }
+  };
   const removeSymbol = (i) => saveMySymbols(mine().filter((_, k) => k !== i));
   const editFile = async () => {
     const dir = await userDir();
@@ -132,6 +165,7 @@ export default function SymbolPanel() {
               <Show when={cat.mine}>
                 <span class="sym-cat-actions" onClick={(e) => e.stopPropagation()}>
                   <button class="sym-mini" title={tr('Añadir un símbolo', 'Add a symbol')} onClick={() => setAdding(!adding())}>+</button>
+                  <button class="sym-mini" title={tr('Añadir un símbolo desde un dibujo .svg', 'Add a symbol from an .svg drawing')} onClick={() => { setAdding(true); addSvg(); }}>SVG</button>
                   <button class="sym-mini" title={tr('Editar symbols.json', 'Edit symbols.json')} onClick={editFile}>✎</button>
                 </span>
               </Show>
@@ -147,6 +181,9 @@ export default function SymbolPanel() {
                     <span class="sym-add-preview" innerHTML={render(newCmd().trim(), newCmd().trim())} />
                   </Show>
                   <button class="ctl-btn" onClick={addSymbol}>{tr('Añadir', 'Add')}</button>
+                  <button class="ctl-btn" onClick={addSvg}
+                    title={tr('Crear el símbolo a partir de un dibujo .svg: se convierte en un comando (el nombre de arriba o el del archivo) que se dibuja con TikZ, del tamaño y el color del texto', 'Make the symbol from an .svg drawing: it becomes a command (the name above or the file\'s) drawn with TikZ, the size and colour of the text')}>
+                    {tr('Desde SVG…', 'From SVG…')}</button>
                 </div>
               </Show>
               <Show when={cat.items.length} fallback={<div class="side-empty">{tr('Todavía no tienes símbolos propios: pulsa + para añadir uno.', 'No symbols of your own yet: press + to add one.')}</div>}>
@@ -157,7 +194,7 @@ export default function SymbolPanel() {
                         title={it[2] ? `${it[1]} — ${it[2]}` : it[1]}
                         onClick={() => insertSnippet(insertText(it[1]))}
                         onContextMenu={(e) => { if (cat.mine) { e.preventDefault(); removeSymbol(i()); } }}
-                        innerHTML={render(it[1], it[0])} />
+                        innerHTML={render(it[1], it[0], it[3])} />
                     )}
                   </For>
                 </div>

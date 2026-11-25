@@ -2,6 +2,42 @@
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [2.3.1] — 2026-11-25
+
+### Añadido
+
+- **Panel «Por hacer»** (Índice): las notas `\todo` y `\missingfigure`, los
+  comentarios `% TODO`, `% FIXME`, `% POR HACER` o `% NOTA` (también al final
+  de una línea con un `\py{…}` o un `\celda{…}`, para anotar un valor) y los
+  `# TODO` de las celdas de Python. Un clic lleva a la nota en el código y en
+  el PDF.
+- **Cambios** en el mismo panel, en un documento hecho con «Comparar
+  versiones»: cada añadido y cada borrado, con un clic para ir a él.
+- **Botón de correcciones** en el visor de un documento comparado: con los
+  cambios marcados o solo la versión actual.
+- **Símbolos desde un SVG** (Mis símbolos → SVG): el dibujo se convierte en un
+  comando que se dibuja con TikZ, del tamaño y el color del texto, sin
+  instalar nada.
+- **Comandos de símbolo dibujados en el editor**: `\textordfeminine` se ve
+  «ª», `\S` «§», `\textdegree` «°»…, y tus símbolos SVG como su dibujo. El
+  comando vuelve al tocarlo con el cursor (Configuración → Editor).
+
+### Corregido
+
+- **Notas `\todo`:** el papel ya no cambia de tamaño, así que márgenes,
+  cabecera y pie se quedan donde estaban. Solo se ensanchan, hacia la
+  derecha y lo justo, las páginas con una nota al margen (no las de una
+  `\missingfigure` ni las notas en línea). En el visor, esas páginas se
+  alinean con las demás en lugar de centrarse solas. Las notas miden entre
+  4 y 5 cm (antes, casi todo el margen ampliado). Con `babel` en español,
+  la lista se llama «Por hacer».
+- **Actualizar en Windows:** «Acceso denegado» al abrir el instalador. La
+  descarga se guarda en `%LOCALAPPDATA%\Pyx\update`, no en la carpeta
+  temporal, donde algunos antivirus no dejan ejecutar programas. Si el
+  antivirus aún lo retiene, Pyx lo reintenta y lo abre por el shell de
+  Windows. Si nada funciona, dice el código de error y dónde está el
+  instalador, y ofrece la página de descargas.
+
 ## [2.3.0] — 2026-11-24
 
 La 2.2.2 se retiró (le faltaba el instalador de Windows): sus correcciones

@@ -46,6 +46,7 @@ import {
 import { bookmarks, toggleBookmarkAtCursor, nextBookmark, prevBookmark } from './bookmarks.js';
 import { calcCompletions, pyBraceTrigger } from './autocomplete.js';
 import { pyGhost } from './py-ghost.js';
+import { symbolRender } from './symbol-render.js';
 import { cellGhost } from './cell-ghost.js';
 import { pyLint } from './py-lint.js';
 import { latexLint } from './latex-lint-ext.js';
@@ -157,6 +158,8 @@ function editorOptions() {
   // lives here so switching it off in Configuración drops the decorations at
   // once: the plugin recomputes only on edits, never on a plain settings read.
   if (gv('pyGhost') !== false) ext.push(pyGhost, cellGhost);
+  // \textordfeminine as «ª», and «Mis símbolos» from an SVG as their drawing.
+  if (gv('renderSymbols') !== false) ext.push(symbolRender);
   // "Zoom con Ctrl + rueda" is NOT an editor extension: main.jsx swallows every
   // Ctrl+wheel in the capture phase (WebView2 would otherwise zoom the whole
   // interface), and CodeMirror ignores any event already defaultPrevented. The

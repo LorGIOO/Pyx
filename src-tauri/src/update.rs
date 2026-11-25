@@ -409,6 +409,16 @@ fn work_dir() -> PathBuf {
             return c.join("Pyx").join("update");
         }
     }
+    // Windows: under %LOCALAPPDATA%\Pyx, not %TEMP%. Several antivirus
+    // programs (Kaspersky among them) refuse to RUN a program from the
+    // temporary folder: the installer was there, and «Actualizar» ended in
+    // «Acceso denegado (os error 5)».
+    #[cfg(windows)]
+    {
+        if let Some(l) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).filter(|p| p.is_absolute()) {
+            return l.join("Pyx").join("update");
+        }
+    }
     std::env::temp_dir().join("pyx-update")
 }
 
@@ -473,7 +483,19 @@ fn download_at(ep: &Endpoints, dir: &Path, asset: Asset) -> Result<(), String> {
             let _ = std::fs::remove_file(&part);
             return Err("El paquete descargado no coincide con el publicado (SHA-256): no se ha instalado.".into());
         }
-        std::fs::rename(&part, &file).map_err(|e| format!("No se pudo guardar la actualización: {e}"))?;
+        if std::fs::rename(&part, &file).is_err() {
+            // A file of that name still held by someone (an antivirus
+            // scanning it, an installer left open): the package goes under a
+            // name of its own instead of failing.
+            let alt = dir.join(format!("{}-{}", std::process::id(), asset.name));
+            std::fs::rename(&part, &alt)
+                .or_else(|_| std::fs::copy(&part, &alt).map(|_| ()))
+                .map_err(|e| format!("No se pudo guardar la actualización en {} ({}).", dir.display(), os_error(&e)))?;
+            if let Ok(mut g) = READY.lock() {
+                *g = Some((kind, alt));
+            }
+            return Ok(());
+        }
     }
     if let Ok(mut g) = READY.lock() {
         *g = Some((kind, file));
@@ -517,7 +539,23 @@ pub fn launch(reopen: bool) -> Result<(), String> {
 
 const NOT_HERE: &str = "Esta actualización es para otro sistema.";
 
-/// Run Tauri's NSIS installer (Windows) — what Pyx has always done.
+/// An OS error with its code, the way the user can look it up.
+fn os_error(e: &std::io::Error) -> String {
+    match e.raw_os_error() {
+        Some(c) => format!("{e} — código {c}"),
+        None => e.to_string(),
+    }
+}
+
+/// Run Tauri's NSIS installer (Windows).
+///
+/// «Acceso denegado» (error 5) and «el archivo está en uso» (32) come from an
+/// antivirus that is still scanning the installer Pyx has just written, or
+/// that will not let a program start one: the start is tried again for a few
+/// seconds, then through the Windows shell (ShellExecute, the same as a double
+/// click, which also asks for permission when the installation needs it,
+/// error 740). Only if all of that fails does it say so, with the code and the
+/// folder where the installer is, to open it by hand.
 #[cfg(windows)]
 fn install_nsis(file: &Path, reopen: bool) -> Result<(), String> {
     // /P: passive (progress only, no questions) · /UPDATE: an update, not a
@@ -526,11 +564,40 @@ fn install_nsis(file: &Path, reopen: bool) -> Result<(), String> {
     if reopen {
         args.push("/R");
     }
-    Command::new(file)
-        .args(args)
-        .spawn()
-        .map_err(|e| format!("No se pudo iniciar el instalador: {e}"))?;
-    Ok(())
+    let mut last = None;
+    for attempt in 0..6 {
+        match Command::new(file).args(&args).spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                let code = e.raw_os_error();
+                last = Some(e);
+                if !matches!(code, Some(5) | Some(32) | Some(33)) || attempt == 5 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(800 * (attempt + 1)));
+            }
+        }
+    }
+    // Through the shell: what a double click on the installer does.
+    let quoted = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let ps = format!(
+        "Start-Process -FilePath {} -ArgumentList {}",
+        quoted(&file.to_string_lossy()),
+        quoted(&args.join(" "))
+    );
+    let mut c = Command::new("powershell");
+    c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &ps]);
+    crate::quiet(&mut c);
+    if let Ok(out) = c.output() {
+        if out.status.success() {
+            return Ok(());
+        }
+    }
+    let why = last.map(|e| os_error(&e)).unwrap_or_default();
+    Err(format!(
+        "Windows no dejó abrir el instalador ({why}). Suele ser el antivirus: ábrelo tú con doble clic, está en {}",
+        file.display()
+    ))
 }
 #[cfg(not(windows))]
 fn install_nsis(_file: &Path, _reopen: bool) -> Result<(), String> {

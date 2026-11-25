@@ -300,6 +300,8 @@ if (viewerBoot) {
     // Updates: checked at start-up and every two hours, downloaded in the
     // background, installed when Pyx closes (core/updates.js).
     import('./core/updates.js').then((m) => m.startAutoUpdate()).catch(() => {});
+    // «Mis símbolos»: the editor draws them and the compiler defines the SVG ones.
+    import('./solid/components/SymbolPanel.jsx').then((m) => m.loadMySymbols()).catch(() => {});
     // Anything the OS delivered before the listener above existed (a cold
     // start always beats the webview).
     //
